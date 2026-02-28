@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import time
+import datetime
 import requests as http_requests
 import anthropic
 from mcp import ClientSession, StdioServerParameters
@@ -409,11 +410,15 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
 
                             yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
 
-                            # After save_audit_results, emit audit_saved to the browser
-                            # _pending_audit is set by /api/audit/save (called by the MCP tool)
-                            global _pending_audit
-                            if tool_name == "save_audit_results" and not is_error and _pending_audit:
-                                audit_payload = json.dumps({"type": "audit_saved", "audit": _pending_audit})
+                            # After save_audit_results, emit audit_saved directly from tool_input.
+                            # Using tool_input avoids a race condition where _pending_audit (set via
+                            # the MCP tool's HTTP POST back to /api/audit/save) may not yet be
+                            # processed by the event loop when this check runs.
+                            if tool_name == "save_audit_results" and not is_error:
+                                audit_data = dict(tool_input)
+                                if not audit_data.get("timestamp"):
+                                    audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+                                audit_payload = json.dumps({"type": "audit_saved", "audit": audit_data})
                                 yield f"data: {audit_payload}\n\n"
                                 log.info("audit_saved event streamed to browser")
                                 _pending_audit = None
