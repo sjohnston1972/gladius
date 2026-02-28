@@ -304,13 +304,33 @@ def _nvd_parse(item: dict) -> dict:
             score = cvss.get("baseScore", "N/A")
             sev   = cvss.get("baseSeverity", "N/A")
             break
-    descs = cve.get("descriptions", [])
-    desc  = next((d["value"] for d in descs if d["lang"] == "en"), "")
+    descs  = cve.get("descriptions", [])
+    desc   = next((d["value"] for d in descs if d["lang"] == "en"), "")
     cve_id = cve.get("id", "")
+
+    # Extract vendor — prefer CPE data, fall back to sourceIdentifier domain
+    vendor = ""
+    for cfg in cve.get("configurations", []):
+        for node in cfg.get("nodes", []):
+            for match in node.get("cpeMatch", []):
+                parts = match.get("criteria", "").split(":")
+                if len(parts) > 3 and parts[3] not in ("*", "-", ""):
+                    vendor = parts[3].replace("_", " ").title()
+                    break
+            if vendor:
+                break
+        if vendor:
+            break
+    if not vendor:
+        src = cve.get("sourceIdentifier", "")
+        if "@" in src:
+            vendor = src.split("@")[1].split(".")[0].title()
+
     return {
         "id":          cve_id,
         "score":       score,
         "severity":    sev,
+        "vendor":      vendor or "—",
         "published":   cve.get("published", "")[:10],
         "description": desc[:250] + ("…" if len(desc) > 250 else ""),
         "url":         f"https://nvd.nist.gov/vuln/detail/{cve_id}",
