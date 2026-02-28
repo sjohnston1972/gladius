@@ -3423,9 +3423,13 @@ ${cves.length ? `<!-- CVE TAB -->
       const isCve = isCveFinding(f);
       const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
       const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
+      const preview = (f.impact || '').slice(0, 100);
       return `<div class="finding-item" style="cursor:pointer" onclick="openDetail(${i})">
         <div class="severity-badge ${cls}">${label}</div>
-        <div class="finding-text"><strong>${f.title || ''}</strong>${f.description || ''}</div>
+        <div class="finding-text">
+          <strong>${f.title || ''}</strong>
+          ${preview ? `<span style="display:block;font-size:12px;color:var(--text-dim);margin-top:2px;line-height:1.4">${preview}${f.impact.length > 100 ? '…' : ''}</span>` : ''}
+        </div>
       </div>`;
     }).join('');
   }
@@ -3464,15 +3468,53 @@ ${cves.length ? `<!-- CVE TAB -->
     const findings = window._dashFindings || [];
     const f = findings[index];
     if (!f) return;
+    const isCve = f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
     const sev = f.severity || 'LOW';
-    const cls = sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
-    const label = sev === 'MEDIUM' ? 'MED' : sev;
+    const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
+    const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
     const badge = document.getElementById('detail-severity');
     if (badge) { badge.textContent = label; badge.className = `severity-badge ${cls}`; }
     setEl('detail-title', f.title || 'Finding');
-    setEl('detail-description', f.description || 'No description available.');
-    setEl('detail-ref', f.ref || 'No reference recorded.');
-    setEl('detail-remediation', f.remediation || 'Consult the Gladius agent for remediation advice.');
+
+    // Build body dynamically from audit schema fields
+    const body = document.getElementById('detail-body-inner');
+    if (body) {
+      const sec = (lbl, content) =>
+        `<div><div class="detail-section-label">${lbl}</div>${content}</div>`;
+      const prose = txt =>
+        `<div class="detail-description">${txt}</div>`;
+      const code = txt =>
+        `<pre style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 14px;font-family:var(--font-mono);font-size:12px;color:var(--accent);white-space:pre-wrap;word-break:break-all;margin:0">${txt}</pre>`;
+      const link = (url, display) =>
+        `<div class="detail-ref"><a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${display || url} ↗</a></div>`;
+
+      let html = '';
+
+      if (f.category)
+        html += `<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase">${f.category}</div>`;
+
+      if (isCve && f.cve_id)
+        html += sec('CVE ID', link(`https://nvd.nist.gov/vuln/detail/${f.cve_id}`, f.cve_id));
+
+      if (f.impact)
+        html += sec('Impact', prose(f.impact));
+
+      if (f.fix)
+        html += sec('Remediation', prose(f.fix));
+
+      if (f.commands) {
+        const cmds = Array.isArray(f.commands)
+          ? f.commands.join('\n')
+          : String(f.commands).replace(/,\s*/g, '\n');
+        html += sec('Commands', code(cmds));
+      }
+
+      if (f.ref)
+        html += sec('Reference', link(f.ref));
+
+      body.innerHTML = html || prose('<span style="color:var(--text-dim)">No details recorded for this finding.</span>');
+    }
+
     window._currentFinding = f;
     document.getElementById('detail-overlay').classList.add('active');
     document.getElementById('detail-panel').classList.add('active');
@@ -3487,10 +3529,20 @@ ${cves.length ? `<!-- CVE TAB -->
     const f = window._currentFinding;
     if (!f) return;
     closeDetail();
-    const chatNavItem = document.querySelectorAll('.nav-item')[1];
-    showPage('chat', chatNavItem);
-    chatInput.value = `Investigate the finding: ${f.severity} — ${f.title}. ${f.description} What is the exact remediation for this?`;
-    setTimeout(sendMessage, 100);
+    const isCve = f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    // Pull device context from most recent audit
+    let deviceCtx = '';
+    try {
+      const latest = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+      if (latest) deviceCtx = ` on ${latest.device} (${latest.ip}, ${latest.ios})`;
+    } catch(e) {}
+    let prompt;
+    if (isCve) {
+      prompt = `Investigate ${f.cve_id || f.title}${deviceCtx}. Impact: ${f.impact || ''}. Recommended fix: ${f.fix || ''}. Ref: ${f.ref || ''}. Can you confirm if this device is likely affected and what the exact remediation steps are?`;
+    } else {
+      prompt = `Investigate the ${f.severity} finding "${f.title}"${deviceCtx}. Impact: ${f.impact || ''}. Suggested fix: ${f.fix || ''}.${f.commands ? ` Commands: ${f.commands}.` : ''} Ref: ${f.ref || ''}. Can you confirm the remediation and provide exact Cisco IOS commands?`;
+    }
+    sendQuick(prompt);
   }
 
   // ── Activity log writer (called from chat/tool events) ────────────────────
@@ -3742,20 +3794,7 @@ ${cves.length ? `<!-- CVE TAB -->
       <div class="detail-title" id="detail-title">Finding</div>
       <button class="detail-close" onclick="closeDetail()">✕</button>
     </div>
-    <div class="detail-body">
-      <div>
-        <div class="detail-section-label">Description</div>
-        <div class="detail-description" id="detail-description"></div>
-      </div>
-      <div>
-        <div class="detail-section-label">Reference</div>
-        <div class="detail-ref" id="detail-ref"></div>
-      </div>
-      <div>
-        <div class="detail-section-label">Remediation</div>
-        <div class="detail-description" id="detail-remediation"></div>
-      </div>
-    </div>
+    <div class="detail-body" id="detail-body-inner"></div>
     <div class="detail-footer">
       <button class="btn btn-primary" style="flex:1" onclick="investigateInChat()">Investigate in Agent →</button>
       <button class="btn btn-ghost" onclick="closeDetail()">Close</button>
