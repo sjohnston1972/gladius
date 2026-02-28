@@ -700,7 +700,7 @@
   .activity-text .hi { color: var(--accent); }
 
   /* ── AUDIT PAGE ── */
-  #page-audit {
+  #page-nmap {
     display: none;
     padding: 20px;
     gap: 16px;
@@ -708,7 +708,7 @@
     flex-direction: column;
   }
 
-  #page-audit.active { display: flex; }
+  #page-nmap.active { display: flex; }
 
   .audit-controls {
     background: var(--bg-card);
@@ -1681,12 +1681,12 @@
     </div>
   </div>
 
-  <!-- Audit Nav -->
+  <!-- NMAP Nav -->
   <div class="sidebar-section">
-    <div class="sidebar-label">Audit</div>
-    <div class="nav-item" onclick="showPage('audit', this)" title="Run Audit">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c.6 5.2-4.9 10-9 10S3 17.2 3 12C3 6.8 6.8 3 12 3s9 4.8 9 9z"/></svg>
-      <span>Audit</span>
+    <div class="sidebar-label">Network</div>
+    <div class="nav-item" onclick="showPage('nmap', this)" title="NMAP Scanner">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+      <span>NMAP</span>
     </div>
     <div class="nav-item" onclick="showPage('reports', this)" title="Reports">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
@@ -1859,45 +1859,44 @@
       </div>
     </div>
 
-    <!-- AUDIT PAGE -->
-    <div id="page-audit" class="page">
-      <div class="audit-controls">
-        <div class="form-group">
-          <label class="form-label">Target Device IP</label>
-          <input type="text" class="form-input" placeholder="192.168.20.18" id="audit-host">
+    <!-- NMAP PAGE -->
+    <div id="page-nmap" class="page">
+      <div class="audit-controls" style="flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:180px">
+          <label class="form-label">Target — IP / Hostname / CIDR</label>
+          <input type="text" class="form-input" style="width:100%" placeholder="192.168.1.0/24" id="nmap-target" onkeydown="if(event.key==='Enter')launchNmapScan()">
         </div>
         <div class="form-group">
-          <label class="form-label">Benchmark</label>
-          <select class="form-select" id="audit-benchmark">
-            <option>CIS IOS XE 17.x</option>
-            <option>CIS IOS XE 16.x</option>
-            <option>NIST 800-53</option>
-            <option>CIS NX-OS</option>
-            <option>CIS ASA</option>
-            <option>Full (All Frameworks)</option>
+          <label class="form-label">Scan Profile</label>
+          <select class="form-select" id="nmap-profile" onchange="document.getElementById('nmap-custom-grp').style.display=this.value==='custom'?'flex':'none'">
+            <option value="quick">Quick Scan</option>
+            <option value="service">Service Detection</option>
+            <option value="full_port">Full Port Scan</option>
+            <option value="os_detection">OS Detection</option>
+            <option value="vuln_scripts">Vuln Scripts</option>
+            <option value="custom">Custom</option>
           </select>
         </div>
         <div class="form-group">
-          <label class="form-label">Depth</label>
-          <select class="form-select">
-            <option>Standard</option>
-            <option>Deep (incl. CVE lookup)</option>
-            <option>Quick Scan</option>
-          </select>
+          <label class="form-label">Ports (optional)</label>
+          <input type="text" class="form-input" placeholder="22,80,443" id="nmap-ports" style="width:130px">
         </div>
-        <button class="btn btn-primary" onclick="launchAudit()">▶ LAUNCH AUDIT</button>
-        <button class="btn btn-ghost">SCHEDULE</button>
+        <div class="form-group" id="nmap-custom-grp" style="display:none">
+          <label class="form-label">Custom Args</label>
+          <input type="text" class="form-input" placeholder="-sS -T4 --open" id="nmap-args" style="width:160px">
+        </div>
+        <button class="btn btn-primary" id="nmap-launch-btn" onclick="launchNmapScan()">▶ LAUNCH SCAN</button>
       </div>
 
-      <div class="panel scanning" id="audit-panel" style="flex:1">
+      <div class="panel scanning" id="nmap-panel" style="flex:1">
         <div class="panel-header">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          <div class="panel-title" id="audit-panel-title">AWAITING TARGET</div>
-          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="audit-status">Configure a device above and launch</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
+          <div class="panel-title" id="nmap-panel-title">NMAP SCANNER</div>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="nmap-status">Configure a target above and launch</span>
         </div>
-        <div class="panel-body" id="audit-output" style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary);line-height:2">
-          <span style="color:var(--text-dim)">// Output will appear here when audit runs via Claude Code agent</span><br>
-          <span style="color:var(--text-dim)">// Use the Agent Chat tab to interact directly with Gladius</span>
+        <div class="panel-body" id="nmap-output" style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary);line-height:1.9;white-space:pre-wrap;overflow-y:auto">
+          <span style="color:var(--text-dim)">// Select a scan profile, enter a target, and hit LAUNCH SCAN</span>
+          <span style="color:var(--text-dim)">// Gladius will invoke nmap via the MCP server and stream results here</span>
         </div>
       </div>
     </div>
@@ -2125,7 +2124,7 @@
     const labels = {
       dashboard: 'DASHBOARD',
       chat: 'AGENT CHAT',
-      audit: 'RUN AUDIT',
+      nmap: 'NMAP SCANNER',
       reports: 'REPORTS',
       cve: 'CVE LOOKUP',
       settings: 'CONFIGURATION'
@@ -3201,18 +3200,93 @@ ${cves.length ? `<!-- CVE TAB -->
     return `[AUDIT HISTORY — last ${recent.length} audits]\n${lines}\n[END AUDIT HISTORY]`;
   }
 
-  // ── AUDIT ──
+  // ── NMAP ──
 
-  function launchAudit() {
-    const host = document.getElementById('audit-host').value || '192.168.20.18';
-    const benchmark = document.getElementById('audit-benchmark').value;
-    document.getElementById('audit-panel-title').textContent = `AUDITING — ${host}`;
-    document.getElementById('audit-status').textContent = 'Running...';
-    const out = document.getElementById('audit-output');
-    out.innerHTML = `<span style="color:var(--accent)">// Audit command ready for Claude Code:</span><br><br>`;
-    out.innerHTML += `<span style="color:var(--text-primary)">Connect to ${host}, run a full security audit against ${benchmark}, cross-reference all findings against the knowledge base, check for CVEs against the detected IOS version, and email a comprehensive report to stevie.johnston@gmail.com</span><br><br>`;
-    out.innerHTML += `<span style="color:var(--text-dim)">// Paste this into Claude Code to execute live against the device</span>`;
-    document.getElementById('audit-status').textContent = 'Command generated';
+  let _nmapRunning = false;
+
+  async function launchNmapScan() {
+    if (_nmapRunning) return;
+    const target  = (document.getElementById('nmap-target')?.value  || '').trim();
+    const profile = document.getElementById('nmap-profile')?.value  || 'quick';
+    const ports   = (document.getElementById('nmap-ports')?.value   || '').trim();
+    const custom  = (document.getElementById('nmap-args')?.value    || '').trim();
+    const out     = document.getElementById('nmap-output');
+    const btn     = document.getElementById('nmap-launch-btn');
+    const status  = document.getElementById('nmap-status');
+
+    if (!target) {
+      if (out) out.innerHTML = '<span style="color:var(--warn)">// Enter a target IP, hostname, or CIDR range first</span>';
+      return;
+    }
+
+    _nmapRunning = true;
+    if (btn)    { btn.textContent = '⏳ SCANNING…'; btn.disabled = true; }
+    if (status) status.textContent = `Scanning ${target}…`;
+    document.getElementById('nmap-panel-title').textContent = `SCANNING — ${target}`;
+
+    const profileLabels = {
+      quick: 'quick scan', service: 'service detection scan',
+      full_port: 'full port scan', os_detection: 'OS detection scan',
+      vuln_scripts: 'vulnerability scripts scan', custom: 'custom scan',
+    };
+    let prompt = `Run an nmap ${profileLabels[profile] || profile} on ${target} using the run_nmap_scan tool.`;
+    if (ports)  prompt += ` Limit to ports: ${ports}.`;
+    if (custom && profile === 'custom') prompt += ` Use these additional args: ${custom}.`;
+    prompt += ` After the scan completes, summarise: open ports, detected services and versions, OS if identified, and any notable security observations or CVE-relevant findings.`;
+
+    if (out) out.innerHTML =
+      `<span style="color:var(--accent)">// SCAN INITIATED — ${target} [${profile.toUpperCase()}]</span>\n` +
+      `<span style="color:var(--text-dim)">// Gladius agent is invoking nmap via MCP…</span>\n\n`;
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '', agentText = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim());
+            if (ev.type === 'text') {
+              agentText += ev.content;
+              out.innerHTML =
+                `<span style="color:var(--accent)">// SCAN COMPLETE — ${target}</span>\n\n` +
+                agentText;
+            } else if (ev.type === 'tool_start') {
+              const label = ev.tool === 'run_nmap_scan'
+                ? `<span style="color:var(--warn)">▶ nmap running against ${target}…</span>\n`
+                : `<span style="color:var(--text-dim)">  [${ev.tool}]</span>\n`;
+              out.innerHTML += label;
+            } else if (ev.type === 'tool_done' && ev.tool === 'run_nmap_scan') {
+              out.innerHTML += `<span style="color:var(--success)">✓ nmap complete — parsing results…</span>\n\n`;
+            } else if (ev.type === 'error') {
+              out.innerHTML += `\n<span style="color:var(--danger)">// Error: ${ev.content}</span>`;
+            }
+          } catch(e) { /* skip malformed lines */ }
+        }
+      }
+      if (status) status.textContent = 'Scan complete';
+      document.getElementById('nmap-panel-title').textContent = `SCAN RESULTS — ${target}`;
+    } catch(e) {
+      if (out) out.innerHTML += `\n<span style="color:var(--danger)">// Scan failed: ${e.message}</span>`;
+      if (status) status.textContent = 'Scan failed';
+    } finally {
+      _nmapRunning = false;
+      if (btn) { btn.textContent = '▶ LAUNCH SCAN'; btn.disabled = false; }
+    }
   }
 
   // ── HEALTH MONITORING ──

@@ -169,6 +169,39 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="run_nmap_scan",
+            description=(
+                "Run an nmap network scan against a target IP, hostname, or CIDR range. "
+                "Use to discover open ports, running services, OS fingerprints, and known vulnerabilities. "
+                "Profiles: quick (fast top ports), service (version detection), full_port (all 65535 ports), "
+                "os_detection (OS fingerprint), vuln_scripts (NSE vuln scripts), custom (supply your own args)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Target IP address, hostname, or CIDR range e.g. 192.168.1.1 or 10.0.0.0/24"
+                    },
+                    "profile": {
+                        "type": "string",
+                        "description": "Scan profile to use",
+                        "enum": ["quick", "service", "full_port", "os_detection", "vuln_scripts", "custom"],
+                        "default": "quick"
+                    },
+                    "ports": {
+                        "type": "string",
+                        "description": "Optional port range e.g. 22,80,443 or 1-1024"
+                    },
+                    "args": {
+                        "type": "string",
+                        "description": "Additional nmap flags — only used with the custom profile e.g. -sS -T4 --open"
+                    }
+                },
+                "required": ["target"]
+            }
+        ),
+        types.Tool(
             name="save_audit_results",
             description="Save completed audit results to the Gladius dashboard. Call this at the end of every audit.",
             inputSchema={
@@ -205,6 +238,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _get_cve_details(**arguments)
     elif name == "send_email":
         return await _send_email(**arguments)
+    elif name == "run_nmap_scan":
+        return await _run_nmap_scan(**arguments)
     elif name == "save_audit_results":
         return await _save_audit_results(**arguments)
     else:
@@ -517,6 +552,70 @@ async def _send_email(subject: str, body: str, recipient: str = None, is_html: b
     except Exception as e:
         return [types.TextContent(type="text", text=f"ERROR: Email failed: {e}")]
 
+
+
+async def _run_nmap_scan(
+    target: str,
+    profile: str = "quick",
+    ports: str = None,
+    args: str = None,
+) -> list[types.TextContent]:
+    """Run nmap against the given target and return raw output."""
+    import re
+    import asyncio
+    import shlex
+
+    # Whitelist target characters — IPs, hostnames, CIDR, IPv6 brackets
+    if not re.match(r'^[a-zA-Z0-9.\-_/\[\]:]+$', target):
+        return [types.TextContent(type="text", text="ERROR: Invalid target — only IPs, hostnames, and CIDR ranges are accepted.")]
+
+    profile_flags: dict[str, list[str]] = {
+        "quick":        ["-T4", "-F"],
+        "service":      ["-sV", "-T4"],
+        "full_port":    ["-p-", "-T4"],
+        "os_detection": ["-O", "-T4"],
+        "vuln_scripts": ["--script", "vuln", "-T4"],
+        "custom":       [],
+    }
+    flags = list(profile_flags.get(profile, ["-T4", "-F"]))
+
+    if ports and re.match(r'^[\d,\-]+$', ports):
+        flags += ["-p", ports]
+
+    if profile == "custom" and args:
+        try:
+            extra = shlex.split(args)
+            # Allow only recognised nmap-style tokens (flags and plain values)
+            safe  = [t for t in extra if re.match(r'^[-a-zA-Z0-9.,_/]+$', t)]
+            flags.extend(safe)
+        except Exception:
+            pass
+
+    cmd = ["nmap"] + flags + [target]
+    log.info(f"nmap: {' '.join(cmd)}")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return [types.TextContent(type="text", text="ERROR: nmap timed out after 5 minutes.")]
+
+        output = stdout.decode("utf-8", errors="replace").strip()
+        if not output:
+            output = stderr.decode("utf-8", errors="replace").strip() or f"nmap exited {proc.returncode} with no output."
+        return [types.TextContent(type="text", text=output)]
+
+    except FileNotFoundError:
+        return [types.TextContent(type="text", text="ERROR: nmap not found. Rebuild the MCP container — the dockerfile now installs it.")]
+    except Exception as e:
+        log.error(f"nmap error: {e}")
+        return [types.TextContent(type="text", text=f"ERROR: {e}")]
 
 
 async def _save_audit_results(device: str, ip: str, findings: list, score: dict,
