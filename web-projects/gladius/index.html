@@ -3505,42 +3505,56 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   // ── Hook tool events into activity log ───────────────────────────────────
-  // Called from the SSE stream handler when tool_start fires
+  // Tracks the active device across tool calls within one SSE session
+  let _sessionDevice = null; // { name, ip } — set on connect, cleared on disconnect
+
+  function _deviceTag() {
+    if (!_sessionDevice) return '';
+    const parts = [_sessionDevice.name, _sessionDevice.ip].filter(Boolean);
+    return parts.length ? ` [${parts.join(' · ')}]` : '';
+  }
+
   function onToolStart(toolName, input) {
     let text, hi;
     switch(toolName) {
       case 'connect_to_device':
+        _sessionDevice = { name: null, ip: input.host || null };
         text = `SSH connect → ${input.host || '?'}`;
         hi = input.host || null;
         break;
       case 'run_show_command':
-        text = `▶ ${input.command || 'show command'}`;
-        hi = input.command || null;
+        text = `▶ ${input.command || 'show command'}${_deviceTag()}`;
+        hi = _sessionDevice?.ip || null;
         break;
-      case 'push_config':
-        const cmds = (input.commands || []).length;
-        text = `Config pushed — ${cmds} command${cmds !== 1 ? 's' : ''}`;
-        hi = null;
+      case 'push_config': {
+        const cmds = input.commands_count ?? (input.commands || []).length;
+        text = `Config pushed — ${cmds} command${cmds !== 1 ? 's' : ''}${_deviceTag()}`;
+        hi = _sessionDevice?.ip || null;
         break;
+      }
       case 'disconnect_device':
-        text = 'SSH session closed';
-        hi = null;
+        text = `SSH session closed${_deviceTag()}`;
+        hi = _sessionDevice?.ip || null;
+        _sessionDevice = null;
         break;
-      case 'query_knowledge_base':
-        text = `KB queried — “${(input.query || '').slice(0, 40)}${(input.query||'').length > 40 ? '…' : ''}”`;
+      case 'query_knowledge_base': {
+        const q = (input.query || '').trim();
+        text = `KB queried — “${q.slice(0, 50)}${q.length > 50 ? '…' : ''}”${_deviceTag()}`;
         hi = 'KB';
         break;
-      case 'query_nvd':
+      }
+      case 'query_nvd': {
         const nvdParts = [];
         if (input.search_term) nvdParts.push(input.search_term);
         if (input.cisco_only)  nvdParts.push('Cisco PSIRT');
         if (input.days_back)   nvdParts.push(`last ${input.days_back}d`);
         if (input.severity)    nvdParts.push(input.severity);
-        text = `NVD query — ${nvdParts.join(', ') || 'CVE lookup'}`;
+        text = `NVD query — ${nvdParts.join(', ') || 'CVE lookup'}${_deviceTag()}`;
         hi = 'NVD';
         break;
+      }
       case 'get_cve_details':
-        text = `CVE lookup — ${input.cve_id || '?'}`;
+        text = `CVE lookup — ${input.cve_id || '?'}${_deviceTag()}`;
         hi = input.cve_id || 'NVD';
         break;
       case 'send_email':
@@ -3548,11 +3562,13 @@ ${cves.length ? `<!-- CVE TAB -->
         hi = input.recipient || null;
         break;
       case 'save_audit_results':
-        text = `Audit results saved — ${input.device || ''} (${(input.findings || []).length} findings)`;
+        // Update session device name now that we know it
+        if (_sessionDevice && input.device) _sessionDevice.name = input.device;
+        text = `Audit results saved — ${input.device || _sessionDevice?.ip || '?'} · ${input.ip || ''} (${input.findings_count ?? '?'} findings)`;
         hi = input.device || null;
         break;
       default:
-        text = `Tool: ${toolName}`;
+        text = `Tool: ${toolName}${_deviceTag()}`;
         hi = null;
     }
     logActivity(text, hi);

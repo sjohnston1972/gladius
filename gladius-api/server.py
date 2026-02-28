@@ -474,7 +474,14 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
                                 "input": tool_input,
                             })
 
-                            yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name})}\n\n"
+                            # Strip bulky fields before sending input to the browser
+                            _STRIP = {'findings', 'attachment_html', 'body', 'commands'}
+                            slim_input = {k: v for k, v in tool_input.items() if k not in _STRIP}
+                            if 'commands' in tool_input:
+                                slim_input['commands_count'] = len(tool_input['commands'])
+                            if 'findings' in tool_input:
+                                slim_input['findings_count'] = len(tool_input['findings'])
+                            yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name, 'input': slim_input})}\n\n"
                             log.info(f"Tool call: {tool_name}({tool_input})")
 
                             try:
