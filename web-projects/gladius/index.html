@@ -1838,11 +1838,10 @@
           <div class="msg agent">
             <div class="msg-avatar agent">G</div>
             <div>
-              <div class="msg-bubble">
-                Gladius online. I have access to your network via 8 MCP tools — SSH connectivity, NIST/CIS knowledge base (1833 vectors), NVD vulnerability database, and email reporting.<br><br>
-                Tell me what to audit, or give me a command.
+              <div class="msg-bubble" id="welcome-bubble">
+                Gladius online. Connecting to MCP server…
               </div>
-              <div class="msg-meta">GLADIUS · 20:44:01</div>
+              <div class="msg-meta" id="welcome-meta">GLADIUS · —</div>
             </div>
           </div>
         </div>
@@ -2091,12 +2090,12 @@
           <div>
             <div class="form-label" style="margin-bottom:8px">MCP Server</div>
             <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">network-audit-mcp · docker exec -i network-audit-mcp python /app/server.py</div>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● CONNECTED · 8 tools loaded</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px" id="settings-mcp-status">● CONNECTED · — tools loaded</div>
           </div>
           <div>
             <div class="form-label" style="margin-bottom:8px">Knowledge Base</div>
             <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">chroma-db:8000 · collection: network_security_guidelines</div>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● READY · 1833 vectors · all-MiniLM-L6-v2</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px" id="settings-kb-status">● READY · — vectors · all-MiniLM-L6-v2</div>
           </div>
           <div>
             <div class="form-label" style="margin-bottom:8px">Email Agent</div>
@@ -3662,6 +3661,55 @@ ${cves.length ? `<!-- CVE TAB -->
   renderQuickCmds();
   loadDashboard();
   renderReports();
+  initWelcome();
+
+  async function initWelcome() {
+    const now = new Date();
+    const ts  = now.toTimeString().slice(0,8);
+    const meta = document.getElementById('welcome-meta');
+    const bubble = document.getElementById('welcome-bubble');
+    if (meta) meta.textContent = `GLADIUS · ${ts}`;
+
+    try {
+      const [healthRes, kbRes] = await Promise.all([
+        fetch('/api/health'),
+        fetch('/api/kb/stats'),
+      ]);
+      const health = healthRes.ok ? await healthRes.json() : {};
+      const kb     = kbRes.ok    ? await kbRes.json()     : {};
+
+      const tools      = health.tools || [];
+      const toolCount  = health.tools_cached ?? tools.length ?? '?';
+      const vectors    = kb.vector_count != null ? kb.vector_count.toLocaleString() : '?';
+      const hasSSH     = tools.includes('connect_to_device');
+      const hasKB      = tools.includes('query_knowledge_base');
+      const hasNVD     = tools.includes('query_nvd');
+      const hasEmail   = tools.includes('send_email');
+
+      const caps = [];
+      if (hasSSH)   caps.push('SSH connectivity');
+      if (hasKB)    caps.push(`NIST/CIS knowledge base (${vectors} vectors)`);
+      if (hasNVD)   caps.push('NVD vulnerability database');
+      if (hasEmail) caps.push('email reporting');
+
+      const capStr = caps.length
+        ? caps.slice(0,-1).join(', ') + (caps.length > 1 ? ', and ' : '') + caps.slice(-1)
+        : 'MCP tools';
+
+      if (bubble) bubble.innerHTML =
+        `Gladius online. I have access to your network via <strong>${toolCount} MCP tools</strong> — ${capStr}.<br><br>Tell me what to audit, or give me a command.`;
+
+      // Update settings page status lines too
+      const mcpEl = document.getElementById('settings-mcp-status');
+      const kbEl  = document.getElementById('settings-kb-status');
+      if (mcpEl) mcpEl.textContent = `● CONNECTED · ${toolCount} tools loaded`;
+      if (kbEl)  kbEl.textContent  = `● READY · ${vectors} vectors · all-MiniLM-L6-v2`;
+
+    } catch(e) {
+      if (bubble) bubble.innerHTML =
+        `Gladius online. MCP server status unknown — check <strong>/api/health</strong>.<br><br>Tell me what to audit, or give me a command.`;
+    }
+  }
 
   // ── CVE TAB ──────────────────────────────────────────────────────────────
   let _cvesLoaded  = false;
