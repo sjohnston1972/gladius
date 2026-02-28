@@ -21,18 +21,13 @@
 
 ## Screenshots
 
-<!-- Add screenshots to docs/screenshots/ and uncomment these lines -->
-<!--
-| Dashboard | Audit in Progress |
+| Agent | Dashboard |
 |---|---|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Chat](docs/screenshots/chat.png) |
+| ![Agent](docs/screenshots/gladius.png) | ![Dashboard](docs/screenshots/dashboard.png) |
 
-| Audit Report | Reports History |
+| CVE Intelligence | Reports |
 |---|---|
-| ![Report](docs/screenshots/report.png) | ![History](docs/screenshots/reports-tab.png) |
--->
-
-> 📸 *Screenshots coming soon — drop images into `docs/screenshots/` and uncomment the table above.*
+| ![CVE](docs/screenshots/cve.png) | ![Reports](docs/screenshots/reports.png) |
 
 ---
 
