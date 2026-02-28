@@ -1922,19 +1922,29 @@
       <div class="cve-search">
         <div class="form-group" style="flex:1">
           <label class="form-label">Search NVD — Platform / Version / Keyword</label>
-          <input type="text" class="form-input" placeholder="Cisco IOS XE 17.12.1" id="cve-query" style="width:100%">
+          <input type="text" class="form-input" placeholder="Cisco IOS XE 17.12.1" id="cve-query" style="width:100%" onkeydown="if(event.key==='Enter')searchCVEs()">
         </div>
         <div class="form-group">
           <label class="form-label">Severity</label>
-          <select class="form-select">
+          <select class="form-select" id="cve-severity">
             <option value="">All</option>
-            <option>CRITICAL</option>
-            <option>HIGH</option>
-            <option>MEDIUM</option>
-            <option>LOW</option>
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="HIGH">HIGH</option>
+            <option value="MEDIUM">MEDIUM</option>
+            <option value="LOW">LOW</option>
           </select>
         </div>
-        <button class="btn btn-primary" onclick="showPage('chat',document.querySelector('.nav-item:nth-child(2)'));sendQuick('Query NVD for '+document.getElementById('cve-query').value)">SEARCH VIA AGENT</button>
+        <div class="form-group">
+          <label class="form-label">Days Back</label>
+          <select class="form-select" id="cve-days">
+            <option value="7">7 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="searchCVEs()">SEARCH NVD</button>
+        <button class="btn btn-ghost" onclick="showPage('chat',document.querySelector('.nav-item:nth-child(2)'));sendQuick('Query NVD for '+document.getElementById('cve-query').value)" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -1948,33 +1958,8 @@
               <th>DESCRIPTION</th>
             </tr>
           </thead>
-          <tbody>
-            <tr>
-              <td class="cve-id">CVE-2024-20272</td>
-              <td class="score-critical">9.8</td>
-              <td><span class="severity-badge high">CRITICAL</span></td>
-              <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">2024-01-17</td>
-              <td>Cisco IOS XE Software Web UI Privilege Escalation Vulnerability. Unauthenticated remote attacker could exploit to gain root access.</td>
-            </tr>
-            <tr>
-              <td class="cve-id">CVE-2024-20399</td>
-              <td class="score-critical">6.7</td>
-              <td><span class="severity-badge medium">MEDIUM</span></td>
-              <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">2024-07-01</td>
-              <td>Cisco IOS XE NX-OS CLI command injection via crafted commands allowing OS command execution with elevated privileges.</td>
-            </tr>
-            <tr>
-              <td class="cve-id">CVE-2023-20198</td>
-              <td class="score-critical">10.0</td>
-              <td><span class="severity-badge high">CRITICAL</span></td>
-              <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">2023-10-16</td>
-              <td>Cisco IOS XE Web UI zero-day. Actively exploited in the wild. Creates local user account with privilege level 15.</td>
-            </tr>
-            <tr>
-              <td colspan="5" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:20px">
-                Use the Search button above to query live CVE data via the Gladius agent → NVD API
-              </td>
-            </tr>
+          <tbody id="cve-tbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Loading latest HIGH &amp; CRITICAL CVEs…</td></tr>
           </tbody>
         </table>
       </div>
@@ -2146,6 +2131,7 @@
       settings: 'CONFIGURATION'
     };
     document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
+    if (name === 'cve' && !_cvesLoaded) loadLatestCVEs();
   }
 
   // ── CHAT ──
@@ -3607,6 +3593,66 @@ ${cves.length ? `<!-- CVE TAB -->
   renderQuickCmds();
   loadDashboard();
   renderReports();
+
+  // ── CVE TAB ──────────────────────────────────────────────────────────────
+  let _cvesLoaded = false;
+
+  function loadLatestCVEs() {
+    _cvesLoaded = true;
+    const tbody = document.getElementById('cve-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Fetching latest HIGH &amp; CRITICAL CVEs from NVD…</td></tr>';
+    fetch('/api/cve/latest')
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => renderCVETable(data.cves, 'Last 30 days — HIGH &amp; CRITICAL — all vendors'))
+      .catch(err => {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// NVD fetch failed (${err}) — check gladius-api logs</td></tr>`;
+      });
+  }
+
+  function searchCVEs() {
+    const q        = (document.getElementById('cve-query')?.value || '').trim();
+    const severity = document.getElementById('cve-severity')?.value || '';
+    const days     = document.getElementById('cve-days')?.value || '30';
+    const tbody    = document.getElementById('cve-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Querying NVD…</td></tr>';
+    const params = new URLSearchParams({ days_back: days });
+    if (q)        params.set('q', q);
+    if (severity) params.set('severity', severity);
+    const label = [q || 'all vendors', severity || '', `last ${days} days`].filter(Boolean).join(' · ');
+    fetch(`/api/cve/search?${params}`)
+      .then(r => r.ok ? r.json() : Promise.reject(r.status))
+      .then(data => renderCVETable(data.cves, label + ` — ${data.total} total`))
+      .catch(err => {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// Search failed (${err})</td></tr>`;
+      });
+  }
+
+  function renderCVETable(cves, subtitle) {
+    const tbody = document.getElementById('cve-tbody');
+    if (!tbody) return;
+    if (!cves || !cves.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// No CVEs found for this query</td></tr>';
+      return;
+    }
+    const sevClass = s => s === 'CRITICAL' ? 'score-critical' : s === 'HIGH' ? 'score-high' : '';
+    const badgeCls = s => s === 'CRITICAL' ? 'high' : s === 'HIGH' ? 'high' : s === 'MEDIUM' ? 'medium' : 'low';
+    let html = '';
+    if (subtitle) {
+      html += `<tr><td colspan="5" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${subtitle}</td></tr>`;
+    }
+    cves.forEach(c => {
+      html += `<tr style="cursor:pointer" onclick="window.open('${c.url}','_blank')">
+        <td class="cve-id">${c.id}</td>
+        <td class="${sevClass(c.severity)}">${c.score}</td>
+        <td><span class="severity-badge ${badgeCls(c.severity)}">${c.severity}</span></td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${c.published}</td>
+        <td style="font-size:13px;color:var(--text-secondary)">${c.description}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
 </script>
   <!-- FINDING DETAIL PANEL -->
   <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>

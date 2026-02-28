@@ -39,9 +39,11 @@ MODEL             = "claude-sonnet-4-6"
 MCP_COMMAND       = "docker"
 MCP_ARGS          = ["exec", "-i", "network-audit-mcp", "python", "/app/server.py"]
 
-CHROMA_HOST = os.getenv("CHROMA_HOST", "chroma-db")
-CHROMA_PORT = os.getenv("CHROMA_PORT", "8000")
-NVD_TEST_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2021-44228"
+CHROMA_HOST  = os.getenv("CHROMA_HOST", "chroma-db")
+CHROMA_PORT  = os.getenv("CHROMA_PORT", "8000")
+NIST_API_KEY = os.getenv("NIST_API_KEY")
+NVD_BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NVD_TEST_URL = f"{NVD_BASE_URL}?cveId=CVE-2021-44228"
 
 # Track last successful Claude response for health reporting
 _last_claude_success: float = 0.0
@@ -287,6 +289,82 @@ async def kb_stats():
         return {"vector_count": total}
     except Exception as e:
         return {"vector_count": None, "error": str(e)}
+
+
+def _nvd_headers() -> dict:
+    return {"apiKey": NIST_API_KEY} if NIST_API_KEY else {}
+
+def _nvd_parse(item: dict) -> dict:
+    cve     = item.get("cve", {})
+    metrics = cve.get("metrics", {})
+    score, sev = "N/A", "N/A"
+    for key in ("cvssMetricV31", "cvssMetricV30", "cvssMetricV2"):
+        if key in metrics:
+            cvss  = metrics[key][0].get("cvssData", {})
+            score = cvss.get("baseScore", "N/A")
+            sev   = cvss.get("baseSeverity", "N/A")
+            break
+    descs = cve.get("descriptions", [])
+    desc  = next((d["value"] for d in descs if d["lang"] == "en"), "")
+    cve_id = cve.get("id", "")
+    return {
+        "id":          cve_id,
+        "score":       score,
+        "severity":    sev,
+        "published":   cve.get("published", "")[:10],
+        "description": desc[:250] + ("…" if len(desc) > 250 else ""),
+        "url":         f"https://nvd.nist.gov/vuln/detail/{cve_id}",
+    }
+
+@app.get("/api/cve/latest")
+async def cve_latest():
+    """Latest HIGH + CRITICAL CVEs from NVD (last 30 days, any vendor)."""
+    end_dt   = datetime.datetime.now(datetime.timezone.utc)
+    start_dt = end_dt - datetime.timedelta(days=30)
+    params   = {
+        "resultsPerPage": 50,
+        "noRejected":    "",
+        "pubStartDate":  start_dt.strftime("%Y-%m-%dT%H:%M:%S.000"),
+        "pubEndDate":    end_dt.strftime("%Y-%m-%dT%H:%M:%S.000"),
+    }
+    try:
+        resp = http_requests.get(NVD_BASE_URL, headers=_nvd_headers(), params=params, timeout=30)
+        resp.raise_for_status()
+        vulns   = resp.json().get("vulnerabilities", [])
+        results = [_nvd_parse(v) for v in vulns if _nvd_parse(v)["severity"] in ("HIGH", "CRITICAL")]
+        results.sort(key=lambda x: x["published"], reverse=True)
+        return {"cves": results, "total": len(results)}
+    except Exception as e:
+        log.error(f"CVE latest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/cve/search")
+async def cve_search(q: str = "", severity: str = "", days_back: int = 30):
+    """Search NVD CVEs directly — used by the CVE tab search bar."""
+    end_dt   = datetime.datetime.now(datetime.timezone.utc)
+    start_dt = end_dt - datetime.timedelta(days=min(max(days_back, 1), 120))
+    params: dict = {
+        "resultsPerPage": 50,
+        "noRejected":    "",
+        "pubStartDate":  start_dt.strftime("%Y-%m-%dT%H:%M:%S.000"),
+        "pubEndDate":    end_dt.strftime("%Y-%m-%dT%H:%M:%S.000"),
+    }
+    if q:
+        params["keywordSearch"] = q
+    if severity and severity.upper() in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        params["cvssV3Severity"] = severity.upper()
+    try:
+        resp = http_requests.get(NVD_BASE_URL, headers=_nvd_headers(), params=params, timeout=30)
+        resp.raise_for_status()
+        data    = resp.json()
+        vulns   = data.get("vulnerabilities", [])
+        results = [_nvd_parse(v) for v in vulns]
+        results.sort(key=lambda x: x["published"], reverse=True)
+        return {"cves": results, "total": data.get("totalResults", len(results))}
+    except Exception as e:
+        log.error(f"CVE search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 class AuditResult(BaseModel):
     device: str
