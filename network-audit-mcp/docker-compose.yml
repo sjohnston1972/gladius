@@ -1,0 +1,20 @@
+services:
+  network-audit-mcp:
+    container_name: network-audit-mcp
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - ./server.py:/app/server.py
+      - ./reports:/app/reports
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+
+networks:
+  net_core:
+    external: true

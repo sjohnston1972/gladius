@@ -1,0 +1,3657 @@
+<!DOCTYPE html>
+<html lang="en" data-skin="gladius">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLADIUS — Network Security Platform</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&family=Exo+2:wght@200;300;400;500&family=Cinzel:wght@400;500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&family=Roboto+Mono:wght@400;500&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Cormorant:ital,wght@0,400;0,500;0,600;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,500;1,8..60,400&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:wght@400;500;600;700&family=Inter:wght@300;400;500&family=Space+Mono&family=Oswald:wght@300;400;500;600&family=Barlow:wght@300;400;500&family=Courier+Prime&family=Bebas+Neue&family=PT+Sans:wght@400;700&family=Fira+Code:wght@400;500&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Spectral:ital,wght@0,400;0,500;1,400&family=Merriweather:ital,wght@0,300;0,400;1,300&family=Vollkorn:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-deep: #080c10;
+    --bg-panel: #0d1117;
+    --bg-card: #111820;
+    --bg-hover: #161f2a;
+    --border: #1e2d3d;
+    --border-bright: #2a4060;
+    --accent: #00d4ff;
+    --accent-dim: #0a4a5c;
+    --accent-glow: rgba(0,212,255,0.15);
+    --danger: #ff4444;
+    --danger-dim: #3d0f0f;
+    --warn: #ffaa00;
+    --warn-dim: #3d2800;
+    --success: #00ff88;
+    --success-dim: #003d1f;
+    --text-primary: #e2eaf2;
+    --text-secondary: #9ab8d0;
+    --text-dim: #5a7a96;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-ui: 'Rajdhani', sans-serif;
+    --font-body: 'Exo 2', sans-serif;
+  }
+
+  /* ── SKIN: HISPANIENSIS ── Ancient strength · Ivory · Blood Red */
+  html[data-skin="hispaniensis"] {
+    --bg-deep: #F7F1E1;
+    --bg-panel: #EDE6D0;
+    --bg-card: #F2ECD9;
+    --bg-hover: #E6DFC9;
+    --border: #CFC8B0;
+    --border-bright: #B8AFA0;
+    --accent: #A1271E;
+    --accent-dim: rgba(161,39,30,0.10);
+    --accent-glow: rgba(161,39,30,0.12);
+    --danger: #A1271E;
+    --danger-dim: rgba(161,39,30,0.10);
+    --warn: #B08D57;
+    --warn-dim: rgba(176,141,87,0.12);
+    --success: #4a7a52;
+    --success-dim: rgba(74,122,82,0.12);
+    --text-primary: #2A2E31;
+    --text-secondary: #4e5255;
+    --text-dim: #8a878a;
+    --font-mono: 'Roboto Mono', monospace;
+    --font-ui: 'Cinzel', serif;
+    --font-body: 'Lora', serif;
+  }
+
+  /* ── SKIN: MAINZ ── Executive authority · Marble · Antique Gold */
+  html[data-skin="mainz"] {
+    --bg-deep: #F4F4F2;
+    --bg-panel: #E8E8E6;
+    --bg-card: #EFEFED;
+    --bg-hover: #E0E0DE;
+    --border: #D0D0CE;
+    --border-bright: #B8B8B5;
+    --accent: #A67C2E;
+    --accent-dim: rgba(166,124,46,0.10);
+    --accent-glow: rgba(166,124,46,0.12);
+    --danger: #5B1F1F;
+    --danger-dim: rgba(91,31,31,0.10);
+    --warn: #8C6B3B;
+    --warn-dim: rgba(140,107,59,0.12);
+    --success: #4a6b3a;
+    --success-dim: rgba(74,107,58,0.12);
+    --text-primary: #3A3F44;
+    --text-secondary: #5a5f64;
+    --text-dim: #8a8f94;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-ui: 'Cinzel', serif;
+    --font-body: 'Libre Baskerville', serif;
+  }
+
+  /* ── SKIN: FULHAM ── Professional · Stone White · Muted Copper */
+  html[data-skin="fulham"] {
+    --bg-deep: #ECEBE6;
+    --bg-panel: #E0DED9;
+    --bg-card: #E8E7E2;
+    --bg-hover: #D8D6D0;
+    --border: #C8C7C0;
+    --border-bright: #B0AFA8;
+    --accent: #9C6B3F;
+    --accent-dim: rgba(156,107,63,0.10);
+    --accent-glow: rgba(156,107,63,0.12);
+    --danger: #6A2A2A;
+    --danger-dim: rgba(106,42,42,0.10);
+    --warn: #9C6B3F;
+    --warn-dim: rgba(156,107,63,0.12);
+    --success: #4a6b4a;
+    --success-dim: rgba(74,107,74,0.12);
+    --text-primary: #2F3439;
+    --text-secondary: #4F5459;
+    --text-dim: #8F9499;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-ui: 'Cormorant', serif;
+    --font-body: 'Source Serif 4', serif;
+  }
+
+  /* ── SKIN: POMPEII ── Minimal · Off White · Muted Terracotta */
+  html[data-skin="pompeii"] {
+    --bg-deep: #FAFAF8;
+    --bg-panel: #EDEDEB;
+    --bg-card: #F4F4F2;
+    --bg-hover: #E8E8E5;
+    --border: #D8D8D5;
+    --border-bright: #C0C0BC;
+    --accent: #8A3F2B;
+    --accent-dim: rgba(138,63,43,0.08);
+    --accent-glow: rgba(138,63,43,0.10);
+    --danger: #8A3F2B;
+    --danger-dim: rgba(138,63,43,0.08);
+    --warn: #7a6a5a;
+    --warn-dim: rgba(122,106,90,0.10);
+    --success: #4a6b52;
+    --success-dim: rgba(74,107,82,0.10);
+    --text-primary: #25282B;
+    --text-secondary: #454849;
+    --text-dim: #B5B7BA;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-ui: 'Playfair Display', serif;
+    --font-body: 'Inter', sans-serif;
+  }
+
+  /* ── SKIN: SPATHA ── Tactical · Dark Military Green · Cavalry */
+  html[data-skin="spatha"] {
+    --bg-deep: #080e08;
+    --bg-panel: #0e1710;
+    --bg-card: #131e14;
+    --bg-hover: #1a2a1b;
+    --border: #253a26;
+    --border-bright: #3a5c3b;
+    --accent: #6dbf6d;
+    --accent-dim: rgba(109,191,109,0.12);
+    --accent-glow: rgba(109,191,109,0.18);
+    --danger: #e05c3a;
+    --danger-dim: rgba(224,92,58,0.14);
+    --warn: #d4a020;
+    --warn-dim: rgba(212,160,32,0.14);
+    --success: #6dbf6d;
+    --success-dim: rgba(109,191,109,0.12);
+    --text-primary: #d0e8d0;
+    --text-secondary: #8aaa8a;
+    --text-dim: #4a6a4a;
+    --font-mono: 'Space Mono', monospace;
+    --font-ui: 'Oswald', sans-serif;
+    --font-body: 'Barlow', sans-serif;
+  }
+
+  /* ── SKIN: PUGIO ── Utilitarian · Dark Charcoal · Iron Rust */
+  html[data-skin="pugio"] {
+    --bg-deep: #0e0c0a;
+    --bg-panel: #161310;
+    --bg-card: #1e1a15;
+    --bg-hover: #26221c;
+    --border: #352e25;
+    --border-bright: #4a4235;
+    --accent: #c07840;
+    --accent-dim: rgba(192,120,64,0.14);
+    --accent-glow: rgba(192,120,64,0.18);
+    --danger: #c43830;
+    --danger-dim: rgba(196,56,48,0.14);
+    --warn: #c07840;
+    --warn-dim: rgba(192,120,64,0.14);
+    --success: #688a50;
+    --success-dim: rgba(104,138,80,0.14);
+    --text-primary: #d8d0c0;
+    --text-secondary: #9a9080;
+    --text-dim: #5a5040;
+    --font-mono: 'Courier Prime', monospace;
+    --font-ui: 'Bebas Neue', sans-serif;
+    --font-body: 'PT Sans', sans-serif;
+  }
+
+  /* ── SKIN: PARAZONIUM ── Imperial · Deep Navy · Gold */
+  html[data-skin="parazonium"] {
+    --bg-deep: #060810;
+    --bg-panel: #0a0e1c;
+    --bg-card: #0f1426;
+    --bg-hover: #161e34;
+    --border: #1e2840;
+    --border-bright: #2c3c5c;
+    --accent: #d4b050;
+    --accent-dim: rgba(212,176,80,0.14);
+    --accent-glow: rgba(212,176,80,0.18);
+    --danger: #c04040;
+    --danger-dim: rgba(192,64,64,0.14);
+    --warn: #c89440;
+    --warn-dim: rgba(200,148,64,0.14);
+    --success: #4a8a70;
+    --success-dim: rgba(74,138,112,0.14);
+    --text-primary: #d8def4;
+    --text-secondary: #8a94b4;
+    --text-dim: #4a5474;
+    --font-mono: 'Fira Code', monospace;
+    --font-ui: 'EB Garamond', serif;
+    --font-body: 'Spectral', serif;
+  }
+
+  /* ── SKIN: RUDIS ── Warm · Sand & Oak · Earned Rest */
+  html[data-skin="rudis"] {
+    --bg-deep: #F5EED8;
+    --bg-panel: #EBE3C5;
+    --bg-card: #F0E9D0;
+    --bg-hover: #E5DCBF;
+    --border: #CEC59E;
+    --border-bright: #B8AD88;
+    --accent: #7a5228;
+    --accent-dim: rgba(122,82,40,0.10);
+    --accent-glow: rgba(122,82,40,0.14);
+    --danger: #8B3020;
+    --danger-dim: rgba(139,48,32,0.10);
+    --warn: #b87830;
+    --warn-dim: rgba(184,120,48,0.12);
+    --success: #507840;
+    --success-dim: rgba(80,120,64,0.12);
+    --text-primary: #2e2010;
+    --text-secondary: #5a4028;
+    --text-dim: #9a8060;
+    --font-mono: 'Courier Prime', monospace;
+    --font-ui: 'Merriweather', serif;
+    --font-body: 'Vollkorn', serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: var(--font-body);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 64px;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px 0;
+    gap: 4px;
+    z-index: 100;
+    flex-shrink: 0;
+  }
+
+  .sidebar-logo {
+    width: 40px;
+    height: 40px;
+    margin-bottom: 20px;
+    position: relative;
+  }
+
+  .sidebar-logo svg {
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(0 0 8px var(--accent));
+  }
+
+  .sidebar-section {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .sidebar-section:first-of-type { border-top: none; }
+
+  .sidebar-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .nav-item {
+    width: 44px;
+    height: 44px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    border: 1px solid transparent;
+    gap: 3px;
+    text-decoration: none;
+  }
+
+  .nav-item:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-bright);
+  }
+
+  .nav-item.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  .nav-item svg {
+    width: 18px;
+    height: 18px;
+    color: var(--text-dim);
+    transition: color 0.2s;
+    flex-shrink: 0;
+  }
+
+  .nav-item:hover svg, .nav-item.active svg {
+    color: var(--accent);
+  }
+
+  .nav-item span {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .nav-item.active span { color: var(--accent); }
+
+  .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    background: var(--danger);
+    border-radius: 50%;
+    box-shadow: 0 0 6px var(--danger);
+  }
+
+  .sidebar-spacer { flex: 1; }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+    animation: pulse 2s ease-in-out infinite;
+    margin-bottom: 8px;
+  }
+
+  .status-dot.offline {
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+    animation: none;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ── MAIN LAYOUT ── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── TOPBAR ── */
+  .topbar {
+    height: 48px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 20px;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+
+  .topbar-title {
+    font-family: var(--font-ui);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .topbar-title span { color: var(--accent); }
+
+  .topbar-breadcrumb {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-left: 8px;
+  }
+
+  .topbar-spacer { flex: 1; }
+
+  .topbar-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+
+  .status-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .status-chip.online {
+    background: var(--success-dim);
+    border-color: var(--success);
+    color: var(--success);
+  }
+
+  .status-chip.offline {
+    background: var(--danger-dim);
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  .status-chip .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .status-chip {
+    position: relative;
+  }
+  .chip-tooltip {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 200;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .chip-tooltip::before {
+    content: '';
+    position: absolute;
+    bottom: 100%; right: 14px;
+    border: 5px solid transparent;
+    border-bottom-color: var(--accent);
+  }
+  .status-chip:hover .chip-tooltip {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── CONTENT ── */
+  .content {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+  }
+
+  .page { display: none; width: 100%; }
+  .page.active { display: flex; }
+
+  /* ── DASHBOARD PAGE ── */
+  #page-dashboard {
+    flex-direction: column;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+  }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+  }
+
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+    opacity: 0.3;
+  }
+
+  .stat-card.danger::before { background: var(--danger); }
+  .stat-card.warn::before { background: var(--warn); }
+  .stat-card.success::before { background: var(--success); }
+
+  .stat-card.filterable {
+    cursor: pointer;
+    user-select: none;
+  }
+  .stat-card.filterable:hover {
+    border-color: var(--accent);
+  }
+  .stat-card.filterable.active {
+    border-color: currentColor;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), 0 0 0 1px var(--border);
+    transform: translateY(1px);
+  }
+  .stat-card.filterable.active::before {
+    opacity: 1;
+    height: 3px;
+  }
+  .stat-card.filterable.active.danger { border-color: var(--danger); color: var(--danger); }
+  .stat-card.filterable.active.warn   { border-color: var(--warn);   color: var(--warn);   }
+  .stat-card.filterable.active.success{ border-color: var(--success);color: var(--success);}
+  .stat-card.filterable.active.cve    { border-color: #b06aff;      color: #b06aff;       }
+
+  .severity-badge.cve {
+    background: rgba(176,106,255,0.15);
+    color: #b06aff;
+    border: 1px solid rgba(176,106,255,0.4);
+  }
+
+  .para-done {
+    color: var(--text-dim);
+  }
+  .para-done::before {
+    content: '✓ ';
+    color: var(--success);
+    font-weight: bold;
+  }
+  .para-active {
+    color: var(--text-primary);
+  }
+  .stat-card.cve::before { background: #b06aff; }
+
+  .stat-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 5px;
+  }
+
+  .stat-value {
+    font-family: var(--font-ui);
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1;
+  }
+
+  .stat-value.danger { color: var(--danger); }
+  .stat-value.warn { color: var(--warn); }
+  .stat-value.success { color: var(--success); }
+  .stat-value.accent { color: var(--accent); }
+
+  .stat-sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 3px;
+  }
+
+  .dashboard-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    flex: 1;
+  }
+
+  .panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-title {
+    font-family: var(--font-ui);
+    font-size: 15px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+
+  .panel-body { padding: 16px; flex: 1; overflow-y: auto; }
+
+  .finding-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .finding-item:last-child { border-bottom: none; }
+
+  .severity-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .severity-badge.high { background: var(--danger-dim); color: var(--danger); border: 1px solid var(--danger); }
+  .severity-badge.medium { background: var(--warn-dim); color: var(--warn); border: 1px solid var(--warn); }
+  .severity-badge.low { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
+  .severity-badge.pass { background: var(--success-dim); color: var(--success); border: 1px solid var(--success); }
+
+  .finding-text {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+  }
+
+  .finding-text strong {
+    color: var(--text-primary);
+    font-weight: 500;
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+
+  .activity-item {
+    display: flex;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+
+  .activity-item:last-child { border-bottom: none; }
+
+  .activity-time {
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+    flex-shrink: 0;
+    font-size: 13px;
+    margin-top: 1px;
+  }
+
+  .activity-text { color: var(--text-secondary); }
+  .activity-text .hi { color: var(--accent); }
+
+  /* ── AUDIT PAGE ── */
+  #page-audit {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    flex-direction: column;
+  }
+
+  #page-audit.active { display: flex; }
+
+  .audit-controls {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .form-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+
+  .form-input {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s;
+    width: 200px;
+  }
+
+  .form-input:focus { border-color: var(--accent); }
+
+  .form-select {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--text-primary);
+    outline: none;
+    cursor: pointer;
+    width: 160px;
+  }
+
+  .btn {
+    padding: 8px 20px;
+    border-radius: 4px;
+    font-family: var(--font-ui);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all 0.2s;
+  }
+
+  .btn-primary {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-primary:hover {
+    background: var(--accent);
+    color: var(--bg-deep);
+    box-shadow: 0 0 16px var(--accent-glow);
+  }
+
+  .btn-danger {
+    background: var(--danger-dim);
+    border-color: var(--danger);
+    color: var(--danger);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: var(--border);
+    color: var(--text-secondary);
+  }
+
+  .btn-ghost:hover {
+    border-color: var(--border-bright);
+    color: var(--text-primary);
+  }
+
+  /* ── CHAT PAGE ── */
+  #page-chat {
+    display: none;
+    flex-direction: column;
+  }
+
+  #page-chat.active { display: flex; }
+
+  .chat-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .chat-header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .agent-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .agent-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .agent-info .name {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+  }
+
+  .agent-info .sub {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-track { background: transparent; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .msg {
+    display: flex;
+    gap: 12px;
+    max-width: 85%;
+    animation: msgIn 0.3s ease;
+  }
+
+  @keyframes msgIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .msg.user { align-self: flex-end; flex-direction: row-reverse; }
+
+  .msg-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .msg-avatar.agent {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+  }
+
+  /* Orbiting dot container — wraps the avatar */
+  .avatar-orbit {
+    position: relative;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .avatar-orbit .msg-avatar {
+    margin-top: 0;
+  }
+
+  /* The dot itself — hidden by default */
+  .avatar-orbit .orbit-dot {
+    display: none;
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent);
+    /* Start at top-centre of avatar */
+    top: -4px;
+    left: calc(50% - 3px);
+    /* Rotate around the avatar centre: 3px (half dot) + 14px (half avatar height) down */
+    transform-origin: 3px 18px;
+    animation: orbit 1.4s linear infinite;
+    z-index: 10;
+  }
+
+  .avatar-orbit.active .orbit-dot {
+    display: block;
+  }
+
+  @keyframes orbit {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  .msg-avatar.user {
+    background: var(--bg-hover);
+    border: 1px solid var(--border-bright);
+    color: var(--text-secondary);
+  }
+
+  .msg-bubble {
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .msg.agent .msg-bubble {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 2px 8px 8px 8px;
+  }
+
+  .msg.user .msg-bubble {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    color: var(--text-primary);
+    border-radius: 8px 2px 8px 8px;
+  }
+
+  .msg-bubble p { margin: 0 0 8px 0; }
+  .msg-bubble p:last-child { margin-bottom: 0; }
+  .msg-bubble h1, .msg-bubble h2, .msg-bubble h3 {
+    font-family: var(--font-ui);
+    color: var(--accent);
+    margin: 12px 0 6px 0;
+    font-weight: 600;
+    letter-spacing: 1px;
+  }
+  .msg-bubble h1 { font-size: 17px; }
+  .msg-bubble h2 { font-size: 16px; }
+  .msg-bubble h3 { font-size: 15px; }
+  .msg-bubble ul { margin: 6px 0; padding-left: 18px; list-style: disc; }
+  .msg-bubble li { margin: 3px 0; line-height: 1.5; }
+  .msg-bubble li.numbered { list-style: decimal; }
+  .msg-bubble strong { color: var(--text-primary); font-weight: 600; }
+  .msg-bubble em { color: var(--text-secondary); font-style: italic; }
+  .msg-bubble code {
+    background: var(--bg-deep);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--accent);
+  }
+  .msg-bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+
+  .msg-bubble pre {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px;
+    margin: 8px 0;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+
+  .msg-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    text-align: right;
+  }
+
+  .msg.agent .msg-meta { text-align: left; }
+
+  .tool-call {
+    background: var(--bg-deep);
+    border: 1px solid var(--border-bright);
+    border-left: 2px solid var(--accent);
+    border-radius: 4px;
+    padding: 8px 12px;
+    margin: 6px 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .tool-call .tool-name { color: var(--accent); font-weight: bold; }
+
+  .chat-input-area {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-panel);
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+
+  .chat-input {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-family: var(--font-body);
+    font-size: 15px;
+    color: var(--text-primary);
+    outline: none;
+    resize: none;
+    min-height: 40px;
+    max-height: 120px;
+    transition: border-color 0.2s;
+    line-height: 1.5;
+  }
+
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-input::placeholder { color: var(--text-dim); }
+
+  .send-btn {
+    width: 40px;
+    height: 40px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .send-btn:hover {
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
+  }
+
+  .send-btn svg { width: 16px; height: 16px; color: var(--accent); }
+  .send-btn:hover svg { color: var(--bg-deep); }
+
+  .quick-cmds {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 0 20px 10px;
+  }
+
+  .quick-cmd {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+  }
+
+  .quick-cmd:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .quick-cmd-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .quick-cmd-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 0;
+    transform: translateY(4px);
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 4px;
+    white-space: nowrap;
+    max-width: 420px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 100;
+    line-height: 1.5;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  .quick-cmd-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%; left: 16px;
+    border: 5px solid transparent;
+    border-top-color: var(--accent);
+  }
+  .quick-cmd-wrap:hover .quick-cmd-tooltip {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .quick-cmd-edit {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 0 6px;
+    border-radius: 0 3px 3px 0;
+    border: 1px solid var(--border);
+    border-left: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    background: transparent;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+    line-height: 1;
+  }
+  .quick-cmd-edit:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+  .quick-cmd-wrap { align-items: stretch; }
+  .quick-cmd-wrap .quick-cmd { border-radius: 3px 0 0 3px; }
+
+  /* Edit modal */
+  .qcmd-modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 500;
+    align-items: center;
+    justify-content: center;
+  }
+  .qcmd-modal-overlay.active { display: flex; }
+  .qcmd-modal {
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 24px;
+    width: 480px;
+    max-width: 90vw;
+    font-family: var(--font-mono);
+  }
+  .qcmd-modal h3 {
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 2px;
+    margin: 0 0 16px;
+    text-transform: uppercase;
+  }
+  .qcmd-modal label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .qcmd-modal input, .qcmd-modal textarea {
+    width: 100%;
+    background: var(--bg-deep, #0d1117);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 8px;
+    border-radius: 4px;
+    box-sizing: border-box;
+    margin-bottom: 14px;
+    resize: vertical;
+  }
+  .qcmd-modal input:focus, .qcmd-modal textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .qcmd-modal-btns {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    margin-top: 4px;
+  }
+
+  /* ── REPORTS PAGE ── */
+  #page-reports {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  #page-reports.active { display: flex; }
+
+  .report-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .report-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .report-item:hover {
+    border-color: var(--border-bright);
+    background: var(--bg-hover);
+  }
+
+  .report-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .report-icon.high { background: var(--danger-dim); border: 1px solid var(--danger); }
+  .report-icon.medium { background: var(--warn-dim); border: 1px solid var(--warn); }
+  .report-icon.low { background: var(--success-dim); border: 1px solid var(--success); }
+
+  .report-info { flex: 1; }
+
+  .report-name {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+
+  .report-meta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .report-score {
+    font-family: var(--font-ui);
+    font-size: 26px;
+    font-weight: 700;
+    text-align: right;
+  }
+
+  /* ── CVE PAGE ── */
+  #page-cve {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  #page-cve.active { display: flex; }
+
+  .cve-search {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+  }
+
+  .cve-table {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+
+  th {
+    padding: 10px 16px;
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+  }
+
+  td {
+    padding: 12px 16px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg-hover); }
+
+  td.cve-id {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-size: 13px;
+  }
+
+  td.score-critical { color: var(--danger); font-family: var(--font-ui); font-weight: 700; }
+  td.score-high { color: var(--warn); font-family: var(--font-ui); font-weight: 700; }
+  td.score-medium { color: #ffcc44; font-family: var(--font-ui); font-weight: 700; }
+
+
+  /* ── FINDING DETAIL PANEL ── */
+  .detail-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 500;
+    backdrop-filter: blur(2px);
+  }
+  .detail-overlay.active { display: block; }
+
+  .report-panel-findings { display: flex; flex-direction: column; gap: 0; }
+  .report-panel-finding {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .report-panel-finding:last-child { border-bottom: none; }
+  .report-panel-text { flex: 1; }
+  .report-panel-text strong { display: block; font-size: 13px; color: var(--text-primary); margin-bottom: 2px; }
+  .report-panel-text span { font-size: 12px; color: var(--text-dim); font-family: var(--font-mono); }
+  .report-scores {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+    margin-bottom: 16px;
+  }
+  .report-score-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 12px; text-align: center;
+  }
+  .report-score-card .val { font-size: 22px; font-weight: 700; font-family: var(--font-ui); }
+  .report-score-card .lbl { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+
+  .detail-panel {
+    position: fixed;
+    top: 0; right: -520px;
+    width: 520px;
+    height: 100vh;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border-bright);
+    z-index: 501;
+    display: flex;
+    flex-direction: column;
+    transition: right 0.3s ease;
+    box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+  }
+  .detail-panel.active { right: 0; }
+
+  .detail-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .detail-title {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--text-primary);
+    flex: 1;
+  }
+
+  .detail-close {
+    width: 28px; height: 28px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    transition: all 0.2s;
+  }
+  .detail-close:hover { border-color: var(--danger); color: var(--danger); }
+
+  .detail-body { padding: 20px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+  .detail-section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 6px;
+  }
+
+  .detail-description {
+    font-size: 15px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  .detail-ref {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 14px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--accent);
+  }
+
+  .detail-footer {
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── SCAN ANIMATION ── */
+  .scanning {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .scanning::after {
+    content: '';
+    position: absolute;
+    top: -100%;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: scan 2s linear infinite;
+  }
+
+  @keyframes scan {
+    0% { top: -2px; }
+    100% { top: 100%; }
+  }
+
+  /* ── PROGRESS BAR ── */
+  .progress-bar {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin: 8px 0;
+  }
+
+  .progress-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: width 0.5s ease;
+  }
+
+  .progress-fill.danger { background: var(--danger); }
+  .progress-fill.warn { background: var(--warn); }
+  .progress-fill.success { background: var(--success); }
+
+  /* Typing indicator */
+  .typing-indicator {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 10px 14px;
+  }
+
+  .typing-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: typing 1.2s ease-in-out infinite;
+  }
+
+  .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+  @keyframes typing {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1); }
+  }
+
+  /* scan line overlay — dark skins only */
+  html[data-skin="gladius"] body::after,
+  html[data-skin="spatha"] body::after,
+  html[data-skin="pugio"] body::after,
+  html[data-skin="parazonium"] body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.03) 2px,
+      rgba(0,0,0,0.03) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── SKIN PICKER ── */
+  .skin-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  .skin-btn {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 8px 10px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+    text-align: center;
+  }
+
+  .skin-btn:hover {
+    border-color: var(--border-bright);
+    background: var(--bg-hover);
+  }
+
+  .skin-btn.active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+
+  .skin-swatches {
+    display: flex;
+    gap: 3px;
+    margin-bottom: 2px;
+  }
+
+  .skin-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(0,0,0,0.1);
+  }
+
+  .skin-btn-name {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .skin-btn-desc {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  .skin-btn.active .skin-btn-name { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <!-- Logo -->
+  <div class="sidebar-logo">
+    <svg viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <!-- Blade top edge - right side -->
+      <path d="M20 3 L24 18" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
+      <!-- Blade top edge - left side -->
+      <path d="M20 3 L16 18" stroke="var(--accent)" stroke-width="1.2" stroke-linecap="round"/>
+      <!-- Blade fill -->
+      <path d="M20 3 L24 18 L20 20 L16 18 Z" fill="var(--accent)" opacity="0.15"/>
+      <!-- Blade centre ridge -->
+      <line x1="20" y1="3" x2="20" y2="20" stroke="var(--accent)" stroke-width="0.6" opacity="0.6"/>
+      <!-- Crossguard -->
+      <rect x="13" y="18" width="14" height="2.5" rx="1.2" fill="var(--accent)"/>
+      <!-- Ricasso (short unsharpened section) -->
+      <rect x="18.5" y="20.5" width="3" height="3" fill="var(--accent)" opacity="0.5"/>
+      <!-- Grip -->
+      <rect x="19" y="23.5" width="2" height="8" rx="1" fill="var(--accent)" opacity="0.7"/>
+      <!-- Grip wrap lines -->
+      <line x1="18.8" y1="25.5" x2="21.2" y2="25.5" stroke="var(--accent)" stroke-width="0.6" opacity="0.5"/>
+      <line x1="18.8" y1="27.5" x2="21.2" y2="27.5" stroke="var(--accent)" stroke-width="0.6" opacity="0.5"/>
+      <line x1="18.8" y1="29.5" x2="21.2" y2="29.5" stroke="var(--accent)" stroke-width="0.6" opacity="0.5"/>
+      <!-- Pommel -->
+      <ellipse cx="20" cy="33" rx="3" ry="2" fill="var(--accent)"/>
+      <!-- Pommel detail -->
+      <ellipse cx="20" cy="33" rx="1.5" ry="1" fill="var(--accent)" opacity="0.4"/>
+      <!-- Tip point emphasis -->
+      <circle cx="20" cy="3" r="0.8" fill="var(--accent)"/>
+    </svg>
+  </div>
+
+  <!-- Main Nav -->
+  <div class="sidebar-section">
+    <div class="sidebar-label">Main</div>
+    <div class="nav-item active" onclick="showPage('dashboard', this)" title="Dashboard">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <span>Dash</span>
+    </div>
+    <div class="nav-item" onclick="showPage('chat', this)" title="Agent Chat">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span>Agent</span>
+    </div>
+  </div>
+
+  <!-- Audit Nav -->
+  <div class="sidebar-section">
+    <div class="sidebar-label">Audit</div>
+    <div class="nav-item" onclick="showPage('audit', this)" title="Run Audit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c.6 5.2-4.9 10-9 10S3 17.2 3 12C3 6.8 6.8 3 12 3s9 4.8 9 9z"/></svg>
+      <span>Audit</span>
+    </div>
+    <div class="nav-item" onclick="showPage('reports', this)" title="Reports">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      <span>Reports</span>
+      <div class="nav-badge" id="badge-reports" style="display:none"></div>
+    </div>
+    <div class="nav-item" onclick="showPage('cve', this)" title="CVE Lookup">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span>CVE</span>
+    </div>
+  </div>
+
+  <div class="sidebar-spacer"></div>
+
+  <!-- Status -->
+  <div class="status-dot" id="mcp-status-dot" title="MCP Connected"></div>
+
+  <!-- Settings -->
+  <div class="sidebar-section">
+    <div class="nav-item" onclick="showPage('settings', this)" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>Config</span>
+    </div>
+  </div>
+</nav>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TOPBAR -->
+  <div class="topbar">
+    <div class="topbar-title">GLADIUS <span>//</span></div>
+    <div class="topbar-breadcrumb" id="breadcrumb">DASHBOARD</div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-status">
+      <div class="status-chip online" id="mcp-chip">
+        <div class="dot"></div>
+        MCP CONNECTED
+      </div>
+      <div class="status-chip online" id="chroma-chip">
+        <div class="dot"></div>
+        KB READY
+      </div>
+    </div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content">
+
+    <!-- DASHBOARD PAGE -->
+    <div id="page-dashboard" class="page active">
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-label">Last Audit</div>
+          <div class="stat-value accent" id="dash-device">—</div>
+          <div class="stat-sub" id="dash-device-sub">No audits yet</div>
+        </div>
+        <div class="stat-card danger filterable" id="filter-high" onclick="toggleFilter('HIGH')">
+          <div class="stat-label">High Severity</div>
+          <div class="stat-value danger" id="dash-high">—</div>
+          <div class="stat-sub">Findings requiring action</div>
+        </div>
+        <div class="stat-card warn filterable" id="filter-med" onclick="toggleFilter('MEDIUM')">
+          <div class="stat-label">Medium Severity</div>
+          <div class="stat-value warn" id="dash-med">—</div>
+          <div class="stat-sub">Findings to review</div>
+        </div>
+        <div class="stat-card success filterable" id="filter-pass" onclick="toggleFilter('PASS')">
+          <div class="stat-label">Checks Passed</div>
+          <div class="stat-value success" id="dash-pass">—</div>
+          <div class="stat-sub">Controls compliant</div>
+        </div>
+        <div class="stat-card cve filterable" id="filter-cve" onclick="toggleFilter('CVE')">
+          <div class="stat-label">CVEs Found</div>
+          <div class="stat-value" style="color:#b06aff" id="dash-cve">—</div>
+          <div class="stat-sub">Vulnerabilities matched</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:16px; flex:1;">
+        <!-- Recent Findings -->
+        <div class="panel" style="flex:1.2">
+          <div class="panel-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div class="panel-title" id="dash-findings-title">Latest Findings</div>
+            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="dash-findings-date"></span>
+          </div>
+          <div class="panel-body" id="dash-findings-body">
+            <div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// Loading findings...</div>
+          </div>
+        </div>
+
+        <!-- Activity + Score -->
+        <div style="display:flex;flex-direction:column;gap:16px;flex:0.8">
+          <!-- Compliance Score -->
+          <div class="panel">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              <div class="panel-title">Compliance Score</div>
+            </div>
+            <div class="panel-body">
+              <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">OVERALL</span>
+                <span style="font-family:var(--font-ui);font-size:16px;font-weight:700" id="score-overall-pct">—</span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" id="score-overall-bar" style="width:0%"></div></div>
+              <div style="display:flex;justify-content:space-between;margin-top:12px;margin-bottom:4px">
+                <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">NIST 800-53</span>
+                <span style="font-family:var(--font-ui);font-size:14px;font-weight:700" id="score-nist-pct">—</span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" id="score-nist-bar" style="width:0%"></div></div>
+              <div style="display:flex;justify-content:space-between;margin-top:12px;margin-bottom:4px">
+                <span style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">CIS IOS XE</span>
+                <span style="font-family:var(--font-ui);font-size:14px;font-weight:700" id="score-cis-pct">—</span>
+              </div>
+              <div class="progress-bar"><div class="progress-fill" id="score-cis-bar" style="width:0%"></div></div>
+            </div>
+          </div>
+
+          <!-- Activity Log -->
+          <div class="panel" style="flex:1">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b8aa8" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <div class="panel-title">Activity Log</div>
+            </div>
+            <div class="panel-body" id="dash-activity-body">
+              <div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No activity yet</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AGENT CHAT PAGE -->
+    <div id="page-chat" class="page">
+      <div class="chat-container">
+        <div class="chat-header">
+          <div class="agent-indicator">
+            <div class="agent-avatar">G</div>
+            <div class="agent-info">
+              <div class="name">GLADIUS</div>
+              <div class="sub">CLAUDE CODE · MCP ACTIVE · 8 TOOLS</div>
+            </div>
+          </div>
+          <div style="flex:1"></div>
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg agent">
+            <div class="msg-avatar agent">G</div>
+            <div>
+              <div class="msg-bubble">
+                Gladius online. I have access to your network via 8 MCP tools — SSH connectivity, NIST/CIS knowledge base (1833 vectors), NVD vulnerability database, and email reporting.<br><br>
+                Tell me what to audit, or give me a command.
+              </div>
+              <div class="msg-meta">GLADIUS · 20:44:01</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="quick-cmds" id="quick-cmds-row">
+          <!-- rendered by renderQuickCmds() -->
+        </div>
+
+        <div class="chat-input-area">
+          <textarea class="chat-input" id="chat-input" placeholder="Give Gladius a command..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="send-btn" onclick="sendMessage()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- AUDIT PAGE -->
+    <div id="page-audit" class="page">
+      <div class="audit-controls">
+        <div class="form-group">
+          <label class="form-label">Target Device IP</label>
+          <input type="text" class="form-input" placeholder="192.168.20.18" id="audit-host">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Benchmark</label>
+          <select class="form-select" id="audit-benchmark">
+            <option>CIS IOS XE 17.x</option>
+            <option>CIS IOS XE 16.x</option>
+            <option>NIST 800-53</option>
+            <option>CIS NX-OS</option>
+            <option>CIS ASA</option>
+            <option>Full (All Frameworks)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Depth</label>
+          <select class="form-select">
+            <option>Standard</option>
+            <option>Deep (incl. CVE lookup)</option>
+            <option>Quick Scan</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="launchAudit()">▶ LAUNCH AUDIT</button>
+        <button class="btn btn-ghost">SCHEDULE</button>
+      </div>
+
+      <div class="panel scanning" id="audit-panel" style="flex:1">
+        <div class="panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <div class="panel-title" id="audit-panel-title">AWAITING TARGET</div>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="audit-status">Configure a device above and launch</span>
+        </div>
+        <div class="panel-body" id="audit-output" style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary);line-height:2">
+          <span style="color:var(--text-dim)">// Output will appear here when audit runs via Claude Code agent</span><br>
+          <span style="color:var(--text-dim)">// Use the Agent Chat tab to interact directly with Gladius</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- REPORTS PAGE -->
+    <div id="page-reports" class="page">
+      <div class="panel" style="flex:1">
+        <div class="panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b8aa8" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg>
+          <div class="panel-title">Audit Reports</div>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:auto" id="reports-count"></span>
+        </div>
+        <div class="panel-body" id="reports-list-body">
+          <div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No audits recorded yet — run an audit via the Agent tab</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CVE PAGE -->
+    <div id="page-cve" class="page">
+      <div class="cve-search">
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Search NVD — Platform / Version / Keyword</label>
+          <input type="text" class="form-input" placeholder="Cisco IOS XE 17.12.1" id="cve-query" style="width:100%">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Severity</label>
+          <select class="form-select">
+            <option value="">All</option>
+            <option>CRITICAL</option>
+            <option>HIGH</option>
+            <option>MEDIUM</option>
+            <option>LOW</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="showPage('chat',document.querySelector('.nav-item:nth-child(2)'));sendQuick('Query NVD for '+document.getElementById('cve-query').value)">SEARCH VIA AGENT</button>
+      </div>
+
+      <div class="cve-table">
+        <table>
+          <thead>
+            <tr>
+              <th>CVE ID</th>
+              <th>CVSS</th>
+              <th>SEVERITY</th>
+              <th>PUBLISHED</th>
+              <th>DESCRIPTION</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="cve-id">CVE-2024-20272</td>
+              <td class="score-critical">9.8</td>
+              <td><span class="severity-badge high">CRITICAL</span></td>
+              <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">2024-01-17</td>
+              <td>Cisco IOS XE Software Web UI Privilege Escalation Vulnerability. Unauthenticated remote attacker could exploit to gain root access.</td>
+            </tr>
+            <tr>
+              <td class="cve-id">CVE-2024-20399</td>
+              <td class="score-critical">6.7</td>
+              <td><span class="severity-badge medium">MEDIUM</span></td>
+              <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">2024-07-01</td>
+              <td>Cisco IOS XE NX-OS CLI command injection via crafted commands allowing OS command execution with elevated privileges.</td>
+            </tr>
+            <tr>
+              <td class="cve-id">CVE-2023-20198</td>
+              <td class="score-critical">10.0</td>
+              <td><span class="severity-badge high">CRITICAL</span></td>
+              <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">2023-10-16</td>
+              <td>Cisco IOS XE Web UI zero-day. Actively exploited in the wild. Creates local user account with privilege level 15.</td>
+            </tr>
+            <tr>
+              <td colspan="5" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:20px">
+                Use the Search button above to query live CVE data via the Gladius agent → NVD API
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SETTINGS PAGE -->
+    <div id="page-settings" class="page" style="padding:20px;overflow-y:auto;flex-direction:column;gap:16px">
+
+      <!-- Skin Picker Panel -->
+      <div class="panel" style="max-width:820px">
+        <div class="panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <div class="panel-title">Interface Skin</div>
+          <span id="active-skin-label" style="font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:1px;text-transform:uppercase"></span>
+        </div>
+        <div class="panel-body">
+          <div class="skin-grid">
+
+            <!-- Gladius -->
+            <button class="skin-btn" data-skin="gladius" onclick="setSkin('gladius')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#080c10"></div>
+                <div class="skin-swatch" style="background:#00d4ff"></div>
+                <div class="skin-swatch" style="background:#0d1117"></div>
+              </div>
+              <div class="skin-btn-name">Gladius</div>
+              <div class="skin-btn-desc">Cyber · Dark</div>
+            </button>
+
+            <!-- Hispaniensis -->
+            <button class="skin-btn" data-skin="hispaniensis" onclick="setSkin('hispaniensis')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#F7F1E1"></div>
+                <div class="skin-swatch" style="background:#A1271E"></div>
+                <div class="skin-swatch" style="background:#B08D57"></div>
+              </div>
+              <div class="skin-btn-name">Hispaniensis</div>
+              <div class="skin-btn-desc">Classical · Ivory</div>
+            </button>
+
+            <!-- Mainz -->
+            <button class="skin-btn" data-skin="mainz" onclick="setSkin('mainz')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#F4F4F2"></div>
+                <div class="skin-swatch" style="background:#A67C2E"></div>
+                <div class="skin-swatch" style="background:#3A3F44"></div>
+              </div>
+              <div class="skin-btn-name">Mainz</div>
+              <div class="skin-btn-desc">Executive · Marble</div>
+            </button>
+
+            <!-- Fulham -->
+            <button class="skin-btn" data-skin="fulham" onclick="setSkin('fulham')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#ECEBE6"></div>
+                <div class="skin-swatch" style="background:#9C6B3F"></div>
+                <div class="skin-swatch" style="background:#2F3439"></div>
+              </div>
+              <div class="skin-btn-name">Fulham</div>
+              <div class="skin-btn-desc">Architectural · Stone</div>
+            </button>
+
+            <!-- Pompeii -->
+            <button class="skin-btn" data-skin="pompeii" onclick="setSkin('pompeii')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#FAFAF8"></div>
+                <div class="skin-swatch" style="background:#8A3F2B"></div>
+                <div class="skin-swatch" style="background:#B5B7BA"></div>
+              </div>
+              <div class="skin-btn-name">Pompeii</div>
+              <div class="skin-btn-desc">Minimal · Tactical</div>
+            </button>
+
+            <!-- Spatha -->
+            <button class="skin-btn" data-skin="spatha" onclick="setSkin('spatha')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#080e08"></div>
+                <div class="skin-swatch" style="background:#6dbf6d"></div>
+                <div class="skin-swatch" style="background:#0e1710"></div>
+              </div>
+              <div class="skin-btn-name">Spatha</div>
+              <div class="skin-btn-desc">Military · Dark</div>
+            </button>
+
+            <!-- Pugio -->
+            <button class="skin-btn" data-skin="pugio" onclick="setSkin('pugio')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#0e0c0a"></div>
+                <div class="skin-swatch" style="background:#c07840"></div>
+                <div class="skin-swatch" style="background:#1e1a15"></div>
+              </div>
+              <div class="skin-btn-name">Pugio</div>
+              <div class="skin-btn-desc">Utilitarian · Dark</div>
+            </button>
+
+            <!-- Parazonium -->
+            <button class="skin-btn" data-skin="parazonium" onclick="setSkin('parazonium')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#060810"></div>
+                <div class="skin-swatch" style="background:#d4b050"></div>
+                <div class="skin-swatch" style="background:#0f1426"></div>
+              </div>
+              <div class="skin-btn-name">Parazonium</div>
+              <div class="skin-btn-desc">Imperial · Navy</div>
+            </button>
+
+            <!-- Rudis -->
+            <button class="skin-btn" data-skin="rudis" onclick="setSkin('rudis')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#F5EED8"></div>
+                <div class="skin-swatch" style="background:#7a5228"></div>
+                <div class="skin-swatch" style="background:#EBE3C5"></div>
+              </div>
+              <div class="skin-btn-name">Rudis</div>
+              <div class="skin-btn-desc">Warm · Earthy</div>
+            </button>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- System Config Panel -->
+      <div class="panel" style="max-width:820px">
+        <div class="panel-header">
+          <div class="panel-title">Configuration</div>
+        </div>
+        <div class="panel-body" style="display:flex;flex-direction:column;gap:20px">
+          <div>
+            <div class="form-label" style="margin-bottom:8px">MCP Server</div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">network-audit-mcp · docker exec -i network-audit-mcp python /app/server.py</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● CONNECTED · 8 tools loaded</div>
+          </div>
+          <div>
+            <div class="form-label" style="margin-bottom:8px">Knowledge Base</div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">chroma-db:8000 · collection: network_security_guidelines</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● READY · 1833 vectors · all-MiniLM-L6-v2</div>
+          </div>
+          <div>
+            <div class="form-label" style="margin-bottom:8px">Email Agent</div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a3c4cfc2c7cad6d08dc2d6d1c6cfcad6d091939196e3c4cec2cacf8dc0ccce">[email&#160;protected]</a> → <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="8dfef9e8fbe4e8a3e7e2e5e3fef9e2e3cdeae0ece4e1a3eee2e0">[email&#160;protected]</a></div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● SMTP CONFIGURED · smtp.gmail.com:587</div>
+          </div>
+          <div>
+            <div class="form-label" style="margin-bottom:8px">NIST NVD API</div>
+            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">services.nvd.nist.gov · API key configured</div>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● ACTIVE</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /main -->
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  // ── PAGE NAVIGATION ──
+  function showPage(name, el) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    if (el) el.classList.add('active');
+    const labels = {
+      dashboard: 'DASHBOARD',
+      chat: 'AGENT CHAT',
+      audit: 'RUN AUDIT',
+      reports: 'REPORTS',
+      cve: 'CVE LOOKUP',
+      settings: 'CONFIGURATION'
+    };
+    document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
+  }
+
+  // ── CHAT ──
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput = document.getElementById('chat-input');
+  const conversationHistory = [];
+  let isSending = false;
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }
+
+  // ── QUICK COMMANDS ────────────────────────────────────────────────────────
+  const DEFAULT_QUICK_CMDS = [
+    { label: 'Audit IOU2',       prompt: 'Audit 192.168.20.18 against CIS IOS XE benchmark' },
+    { label: 'CVE Lookup',       prompt: 'Query NVD for Cisco IOS XE 17.12.1 vulnerabilities with cisco_only filter, last 30 days' },
+    { label: 'Email Report',     prompt: 'Send the last audit report to stevie.johnston@gmail.com' },
+    { label: 'Full Audit',       prompt: 'Run full security audit and cross-reference NIST 800-53 controls' },
+    { label: 'Remediation Plan', prompt: 'What are the top remediation priorities from the last audit?' },
+  ];
+
+  function loadQuickCmds() {
+    try {
+      const saved = localStorage.getItem('gladius-quick-cmds');
+      return saved ? JSON.parse(saved) : DEFAULT_QUICK_CMDS;
+    } catch(e) { return DEFAULT_QUICK_CMDS; }
+  }
+
+  function saveQuickCmds(cmds) {
+    localStorage.setItem('gladius-quick-cmds', JSON.stringify(cmds));
+  }
+
+  function renderQuickCmds() {
+    const row = document.getElementById('quick-cmds-row');
+    if (!row) return;
+    const cmds = loadQuickCmds();
+    row.innerHTML = '';
+    cmds.forEach((cmd, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'quick-cmd-wrap';
+
+      const tip = document.createElement('div');
+      tip.className = 'quick-cmd-tooltip';
+      tip.textContent = cmd.prompt;
+
+      const btn = document.createElement('button');
+      btn.className = 'quick-cmd';
+      btn.textContent = cmd.label;
+      btn.addEventListener('click', () => sendQuick(cmd.prompt));
+
+      const edit = document.createElement('button');
+      edit.className = 'quick-cmd-edit';
+      edit.title = 'Edit';
+      edit.textContent = '✎';
+      edit.addEventListener('click', () => openQcmdModal(i));
+
+      wrap.appendChild(tip);
+      wrap.appendChild(btn);
+      wrap.appendChild(edit);
+      row.appendChild(wrap);
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'quick-cmd';
+    addBtn.style.opacity = '0.5';
+    addBtn.textContent = '+ Add';
+    addBtn.addEventListener('click', () => openQcmdModal(-1));
+    row.appendChild(addBtn);
+  }
+
+  function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  let _editingIdx = null;
+
+  function openQcmdModal(idx) {
+    _editingIdx = idx;
+    const cmds = loadQuickCmds();
+    const cmd = idx >= 0 ? cmds[idx] : { label: '', prompt: '' };
+    document.getElementById('qcmd-label-input').value = cmd.label;
+    document.getElementById('qcmd-prompt-input').value = cmd.prompt;
+    document.getElementById('qcmd-modal-title').textContent = idx >= 0 ? 'EDIT QUICK COMMAND' : 'ADD QUICK COMMAND';
+    document.getElementById('qcmd-delete-btn').style.display = idx >= 0 ? 'inline-block' : 'none';
+    document.getElementById('qcmd-modal-overlay').classList.add('active');
+    document.getElementById('qcmd-label-input').focus();
+  }
+
+  function closeQcmdModal() {
+    document.getElementById('qcmd-modal-overlay').classList.remove('active');
+  }
+
+  function saveQcmdModal() {
+    const label  = document.getElementById('qcmd-label-input').value.trim();
+    const prompt = document.getElementById('qcmd-prompt-input').value.trim();
+    if (!label || !prompt) return;
+    const cmds = loadQuickCmds();
+    if (_editingIdx >= 0) {
+      cmds[_editingIdx] = { label, prompt };
+    } else {
+      cmds.push({ label, prompt });
+    }
+    saveQuickCmds(cmds);
+    renderQuickCmds();
+    closeQcmdModal();
+  }
+
+  function deleteQcmd() {
+    if (_editingIdx < 0) return;
+    const cmds = loadQuickCmds();
+    cmds.splice(_editingIdx, 1);
+    saveQuickCmds(cmds);
+    renderQuickCmds();
+    closeQcmdModal();
+  }
+
+  function resetQuickCmds() {
+    saveQuickCmds(DEFAULT_QUICK_CMDS);
+    renderQuickCmds();
+    closeQcmdModal();
+  }
+
+  function sendQuick(text) {
+    const chatNavItem = document.querySelectorAll('.nav-item')[1];
+    showPage('chat', chatNavItem);
+    chatInput.value = text;
+    setTimeout(sendMessage, 100);
+  }
+
+  async function sendMessage() {
+    const text = chatInput.value.trim();
+    if (!text || isSending) return;
+
+    isSending = true;
+    appendMsg('user', text);
+    conversationHistory.push({ role: 'user', content: text });
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+
+    const typingEl = appendTyping();
+
+    try {
+      // Prepend latest audit context so agent can answer report questions
+      const auditCtx = buildAuditContext();
+      const messagesWithCtx = auditCtx
+        ? [{ role: 'user', content: auditCtx }, { role: 'assistant', content: 'Understood. I have your recent audit history loaded and will reference it when answering questions.' }, ...conversationHistory]
+        : conversationHistory;
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: messagesWithCtx })
+      });
+
+      if (!response.ok) throw new Error(`API error ${response.status}`);
+
+      typingEl.remove();
+
+      // Create message element but don't add to DOM until content arrives
+      const msgId = 'bubble-' + Date.now();
+      const orbitId = 'orbit-' + Date.now();
+      const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const msgEl = document.createElement('div');
+      msgEl.className = 'msg agent';
+      msgEl.innerHTML = `
+        <div class="avatar-orbit active" id="${orbitId}">
+          <div class="msg-avatar agent">G</div>
+          <div class="orbit-dot"></div>
+        </div>
+        <div>
+          <div class="msg-bubble" id="${msgId}"></div>
+          <div class="msg-meta">GLADIUS · ${now}</div>
+        </div>`;
+      let msgAdded = false;
+
+      const bubble = { el: null, id: msgId };
+      let fullText = '';
+      let toolsUsed = [];
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'text') {
+              fullText += event.content;
+              if (!msgAdded) { chatMessages.appendChild(msgEl); msgAdded = true; }
+              document.getElementById(bubble.id).innerHTML = renderBubbleContent(fullText, toolsUsed);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else if (event.type === 'tool_start') {
+              onToolStart(event.tool, event.input || {});
+              if (!toolsUsed.includes(event.tool)) toolsUsed.push(event.tool);
+              if (!msgAdded) { chatMessages.appendChild(msgEl); msgAdded = true; }
+              document.getElementById(bubble.id).innerHTML = renderBubbleContent(fullText, toolsUsed);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+            } else if (event.type === 'error') {
+              if (!msgAdded) { chatMessages.appendChild(msgEl); msgAdded = true; }
+              document.getElementById(bubble.id).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
+              const orbitErrEl = document.getElementById(orbitId);
+              if (orbitErrEl) orbitErrEl.classList.remove('active');
+            } else if (event.type === 'done') {
+              conversationHistory.push({ role: 'assistant', content: fullText });
+              const orbitEl = document.getElementById(orbitId);
+              if (orbitEl) orbitEl.classList.remove('active');
+            } else if (event.type === 'send_templated_email') {
+              // Server intercepted Claude's send_email — generate templated HTML and send it
+              (async () => {
+                const audit = (() => { try { return JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null'); } catch(e) { return null; } })();
+                if (!audit) { console.warn('[Gladius] send_templated_email: no audit in localStorage'); return; }
+                const html    = generateReportHTML(audit);
+                const device  = audit.device || audit.ip || 'device';
+                const ts      = audit.timestamp ? new Date(audit.timestamp).toLocaleString('en-GB') : '';
+                const score   = (audit.score || {}).overall || 0;
+                const subject = event.subject || `[Gladius] Security Audit — ${device} (${audit.ip || ''}) — ${score}% compliance — ${ts}`;
+                const tsFile  = (audit.timestamp || new Date().toISOString()).replace(/[T: ]/g,'-').replace(/\.[0-9Z.]*/,'');
+                const filename = `gladius-audit-${device}-${tsFile}.html`;
+                try {
+                  const body = { subject, html, filename };
+                  if (event.recipient) body.recipient = event.recipient;
+                  const resp = await fetch('/api/email', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+                  const data = await resp.json();
+                  if (data.ok) {
+                    logActivity(`Templated report emailed — ${device}`, device);
+                  } else {
+                    console.error('[Gladius] Templated email failed:', data.error);
+                    logActivity(`Email failed — ${data.error}`, null);
+                  }
+                } catch(e) { console.error('[Gladius] Templated email error:', e); }
+              })();
+            } else if (event.type === 'audit_saved') {
+              // Claude called save_audit_results — write to localStorage and refresh dashboard
+              try {
+                localStorage.setItem('gladius-audit-latest', JSON.stringify(event.audit));
+                // Append to history (keep last 10, deduplicate by timestamp)
+                try {
+                  let hist = [];
+                  const raw = localStorage.getItem('gladius-audit-history');
+                  if (raw) hist = JSON.parse(raw);
+                  // Remove any existing entry with the same timestamp (prevent duplicates on re-save)
+                  const newTs = event.audit.timestamp || '';
+                  hist = hist.filter(h => h.timestamp !== newTs);
+                  hist.unshift(event.audit);
+                  if (hist.length > 10) hist.length = 10;
+                  localStorage.setItem('gladius-audit-history', JSON.stringify(hist));
+                  console.log('[Gladius] Audit history updated —', hist.length, 'records');
+                } catch(e) { console.error('[Gladius] History write failed:', e); }
+                loadDashboard();
+                renderReports();
+                logActivity('Audit saved — ' + event.audit.device + ' (' + (event.audit.findings?.length || 0) + ' findings)', event.audit.device);
+                console.log('Dashboard updated from audit_saved event');
+              } catch(e) { console.warn('audit_saved write failed', e); }
+            }
+          } catch(e) { /* skip malformed lines */ }
+        }
+      }
+
+    } catch (err) {
+      typingEl.remove();
+      appendMsg('agent', `<span style="color:var(--danger)">Connection error: ${err.message}. Is the Gladius API running?</span>`);
+    } finally {
+      isSending = false;
+    }
+  }
+
+  function renderBubbleContent(text, tools) {
+    let html = '';
+    for (const tool of tools) {
+      html += `<div class="tool-call"><span class="tool-name">→ ${tool}</span></div>`;
+    }
+    let formatted = formatMessage(text);
+
+    // Only tick plain prose <p> tags — not tables, lists, headers, or <hr>
+    // A prose paragraph starts with <p> and contains no block-level structural elements
+    const isProseP = s => s.trimStart().startsWith('<p>') &&
+      !/<(table|thead|tbody|tr|td|th|ul|ol|li|h[1-6]|hr|pre)/i.test(s) &&
+      !/^\s*<p>\s*[|\-]{1}/.test(s) &&   // pipe tables and divider rows
+      (s.match(/\|/g) || []).length < 3;  // prose rarely has 3+ pipes
+
+    const parts = formatted.split('</p>');
+    const proseParts = parts.slice(0, -1).filter(isProseP);
+
+    if (proseParts.length > 1) {
+      let doneCount = 0;
+      formatted = parts.slice(0, -1).map((part, i) => {
+        if (!isProseP(part)) return part + '</p>';
+        doneCount++;
+        // All prose paragraphs except the last one get a tick
+        const isLast = doneCount === proseParts.length;
+        if (isLast) return part.replace('<p>', '<p class="para-active">') + '</p>';
+        return part.replace('<p>', '<p class="para-done">') + '</p>';
+      }).join('') + parts[parts.length - 1];
+    }
+
+    html += formatted;
+    return html;
+  }
+
+  function appendMsg(role, text) {
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const div = document.createElement('div');
+    div.className = 'msg ' + role;
+    const initials = role === 'agent' ? 'G' : 'SJ';
+    div.innerHTML = `
+      <div class="msg-avatar ${role}">${initials}</div>
+      <div>
+        <div class="msg-bubble">${formatMessage(text)}</div>
+        <div class="msg-meta">${role === 'agent' ? 'GLADIUS' : 'STEVEN'} · ${now}</div>
+      </div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+  }
+
+  function appendTyping() {
+    const div = document.createElement('div');
+    div.className = 'msg agent';
+    div.innerHTML = `
+      <div class="avatar-orbit active" id="typing-orbit">
+        <div class="msg-avatar agent">G</div>
+        <div class="orbit-dot"></div>
+      </div>
+      <div>
+        <div class="msg-bubble">
+          <div class="typing-indicator">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+          </div>
+        </div>
+      </div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return div;
+  }
+
+  function formatMessage(text) {
+    if (!text) return '';
+
+    // Auto-paragraph: Claude sometimes streams without newlines between thoughts.
+    // Insert a double-newline before common sentence-starting transition phrases.
+    const transitions = [
+      'Good —', 'Excellent.', 'Excellent —', 'All data', 'Now let', 'Let me',
+      'On it.', 'Connected.', 'Done.', 'Perfect.', 'Great.', 'Roger.',
+      'Alright,', 'Next,', 'Finally,', 'Here are', "Here's", 'Summary:',
+      'Results:', 'Findings:', 'Note:', 'Warning:', 'Remediation:'
+    ];
+    transitions.forEach(t => {
+      const safe = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp('(?<!\n)(' + safe + ')', 'g'), '\n\n$1');
+    });
+
+    // Section headers like "HIGH SEVERITY FINDINGS:" — break before them
+    text = text.replace(/(?<!\n)((?:HIGH|MEDIUM|LOW|PASS|CVE)[\w\s]*:)/g, '\n\n$1');
+
+    let html = text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+      .replace(/^---+$/gm, '<hr>')
+      .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+      .replace(/^\d+\. (.+)$/gm, '<li class="numbered">$1</li>')
+      .replace(/(<li[^>]*>.*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
+      .replace(/\n\n+/g, '</p><p>')
+      .replace(/\n/g, '<br>');
+    return '<p>' + html + '</p>';
+  }
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // REPORT HTML GENERATOR
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // Category inference from finding title keywords
+  const CATEGORY_MAP = [
+    { cat: 'Access Security',          keys: ['ssh','telnet','password','exec timeout','login','banner','privilege','enable secret','aaa authen'] },
+    { cat: 'Management Plane Security',keys: ['ntp','snmp','syslog','logging','management acl','tacacs','http server','https server'] },
+    { cat: 'Service Hardening',        keys: ['cdp','lldp','http server','https server','source routing','finger','pad service','tcp small','udp small','boot','proxy arp','ip redirects','ip unreachable','ip mask-reply'] },
+    { cat: 'Network Security Features',keys: ['dhcp snooping','arp inspection','bpdu','portfast','loop guard','root guard','storm control','port security','source guard','ip source guard','native vlan','vlan','dai'] },
+    { cat: 'Control Plane Security',   keys: ['copp','control plane','cpu','rate-limit','cac'] },
+    { cat: 'AAA Configuration',        keys: ['aaa','tacacs','radius','authentication','authorization','accounting'] },
+  ];
+
+  function inferCategory(finding) {
+    if (finding.category) return finding.category;
+    const text = ((finding.title || '') + ' ' + (finding.description || '')).toLowerCase();
+    for (const {cat, keys} of CATEGORY_MAP) {
+      if (keys.some(k => text.includes(k))) return cat;
+    }
+    return 'General Security';
+  }
+
+  function gaugeColor(score) {
+    if (score >= 70) return '#16a34a';
+    if (score >= 50) return '#ca8a04';
+    if (score >= 30) return '#ea580c';
+    return '#dc2626';
+  }
+
+  function gaugeLabel(score) {
+    if (score >= 80) return 'GOOD';
+    if (score >= 60) return 'FAIR';
+    if (score >= 40) return 'POOR';
+    return 'CRITICAL';
+  }
+
+  function scoreBarColor(score) {
+    if (score >= 70) return '#16a34a';
+    if (score >= 50) return '#ca8a04';
+    if (score >= 30) return '#ea580c';
+    return '#dc2626';
+  }
+
+  function escH(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function generateReportHTML(audit) {
+    const findings  = audit.findings || [];
+    const isCveFn   = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    const hardening = findings.filter(f => !isCveFn(f));
+    const cves      = findings.filter(isCveFn);
+    const highs     = hardening.filter(f => f.severity === 'HIGH');
+    const meds      = hardening.filter(f => f.severity === 'MEDIUM');
+    const lows      = hardening.filter(f => f.severity === 'LOW');
+    const passes    = hardening.filter(f => f.severity === 'PASS');
+    const failed    = highs.length + meds.length + lows.length;
+    const total     = failed + passes.length;
+    const score     = Math.round((audit.score || {}).overall || 0);
+    const ts        = audit.timestamp ? new Date(audit.timestamp).toLocaleString('en-GB') : '';
+    const gCol      = gaugeColor(score);
+    const gLbl      = gaugeLabel(score);
+    const arcLen    = (score / 100) * 251.3;
+    const gaugeArc  = `${arcLen.toFixed(1)} 251.3`;
+
+    // Category scorecard
+    const catMap = {};
+    hardening.forEach(f => {
+      const cat = inferCategory(f);
+      if (!catMap[cat]) catMap[cat] = { passed: 0, failed: 0 };
+      if (f.severity === 'PASS') catMap[cat].passed++;
+      else catMap[cat].failed++;
+    });
+    const categoryRows = Object.entries(catMap).map(([cat, d]) => {
+      const catTotal = d.passed + d.failed;
+      const catScore = catTotal > 0 ? Math.round(d.passed / catTotal * 100) : 0;
+      const bCol = scoreBarColor(catScore);
+      return `<tr><td style="padding:10px 16px;color:#334155;">${escH(cat)}</td><td style="padding:10px 16px;text-align:center;color:#16a34a;font-weight:600;">${d.passed}</td><td style="padding:10px 16px;text-align:center;color:#dc2626;font-weight:600;">${d.failed}</td><td style="padding:10px 16px;"><div style="background:#e2e8f0;border-radius:9999px;height:8px;overflow:hidden;"><div style="height:8px;border-radius:9999px;background:${bCol};width:${catScore}%;"></div></div></td><td style="padding:10px 16px;text-align:right;font-weight:700;color:${bCol};">${catScore}%</td></tr>`;
+    }).join('\n');
+
+    // Action plan buckets
+    const actionImmediate = highs.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escH(f.title)}</b> <span style="color:#94a3b8;">(${escH(inferCategory(f))})</span></li>`).join('');
+    const actionShort     = meds.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escH(f.title)}</b> <span style="color:#94a3b8;">(${escH(inferCategory(f))})</span></li>`).join('');
+    const actionPlanned   = lows.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escH(f.title)}</b> <span style="color:#94a3b8;">(${escH(inferCategory(f))})</span></li>`).join('');
+
+    // Finding card (Summary tab)
+    function findingCard(f, borderCol, bgCol) {
+      const cat    = inferCategory(f);
+      const catBg  = f.severity === 'HIGH' ? '#dc2626' : f.severity === 'MEDIUM' ? '#ea580c' : '#ca8a04';
+      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:10px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escH(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;white-space:nowrap;margin-left:8px;">${escH(cat)}</span></div><div style="font-size:0.85rem;color:#475569;margin-bottom:4px;"><b>Impact:</b> ${escH(f.description || '')}</div><div style="font-size:0.85rem;color:#475569;"><b>Fix:</b> <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:3px;font-size:0.82rem;">${escH(f.remediation || '')}</code></div></div>`;
+    }
+
+    // Remediation card with copyable code block
+    let remIdx = 0;
+    function remCard(f, borderCol, bgCol) {
+      const id     = `cmd_rem_${remIdx++}`;
+      const cat    = inferCategory(f);
+      const catBg  = f.severity === 'HIGH' ? '#dc2626' : f.severity === 'MEDIUM' ? '#ea580c' : '#ca8a04';
+      const rawCmd = (f.remediation || '').replace(/^Configure:\s*/i,'').trim();
+      // Split comma-separated commands onto separate lines, each indented
+      const cmdLines = rawCmd.split(/,\s*(?=[a-z])/i).map(l => '  ' + l.trim()).join('\n');
+      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:16px 18px;margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escH(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;margin-left:8px;">${escH(cat)}</span></div></div><div style="font-size:0.82rem;color:#475569;margin-bottom:10px;"><b>Impact:</b> ${escH(f.description || '')}</div><div style="position:relative;margin-bottom:4px;"><pre id="${id}" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">configure terminal\n${escH(cmdLines)}\nend</pre><button onclick="copyCode(this,'${id}')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div></div>`;
+    }
+
+    // Passed checks list
+    const passedItems = passes.map(f => `<div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:0.88rem;"><span style="color:#16a34a;margin-right:10px;font-size:1rem;">&#10003;</span><span style="flex:1;color:#334155;">${escH(f.title)}</span><span style="color:#94a3b8;font-size:0.76rem;">${escH(inferCategory(f))}</span></div>`).join('');
+
+    // CVE findings
+    const cveItems = cves.map(f => findingCard(f, '#a855f7', '#faf5ff')).join('');
+
+    // Checklist items — dynamic, referencing actual finding titles
+    const highTitles = highs.map(f => f.title).join(', ');
+    const medTitles  = meds.map(f => f.title).join(', ');
+    const lowTitles  = lows.map(f => f.title).join(', ');
+    let ci = 1;
+    function chk(label, sublabel) {
+      const id = `c${String(ci++).padStart(2,'0')}`;
+      return `<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:8px 0;border-bottom:1px solid #f1f5f9;"><input type="checkbox" id="${id}" onchange="updateProgress()" style="margin-top:2px;width:16px;height:16px;accent-color:#0ea5e9;flex-shrink:0;"><div><span style="font-size:0.88rem;color:#334155;">${label}</span>${sublabel ? `<div style="font-size:0.76rem;color:#64748b;margin-top:2px;">${sublabel}</div>` : ''}</div></label>`;
+    }
+    function section(bg, label) {
+      return `<div style="background:${bg};color:#fff;padding:8px 16px;border-radius:6px;font-weight:700;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;margin:20px 0 8px;">${label}</div>`;
+    }
+
+    const checklistHtml = `
+      ${section('#1d4ed8', '1. Pre-Change Authorization')}
+      ${chk('Change control ticket raised and approved', '')}
+      ${chk('Maintenance window scheduled and communicated', '')}
+      ${chk('Rollback plan documented and reviewed', '')}
+      ${chk('All stakeholders notified', '')}
+      ${section('#0369a1', '2. Lab Validation')}
+      ${chk('All commands tested on lab device', '')}
+      ${chk('No disruptive commands identified', '')}
+      ${chk('Platform version confirmed to match production', '')}
+      ${chk('Edge cases verified (no partial config)', '')}
+      ${section('#0f766e', '3. Pre-Change Backup')}
+      ${chk('Running-config backed up to TFTP/SCP server', '')}
+      ${chk('Startup-config backed up', '')}
+      ${chk('Backup filename recorded in change ticket', '')}
+      ${section('#7c3aed', '4. Console &amp; Out-of-Band Access')}
+      ${chk('Console access available (in case SSH locked out)', '')}
+      ${chk('Out-of-band management path confirmed', '')}
+      ${chk('Secondary admin account tested and working', '')}
+      ${section('#059669', '5. Implementation')}
+      ${highs.length ? chk('HIGH priority findings addressed first', escH(highTitles)) : ''}
+      ${meds.length  ? chk('MEDIUM priority findings addressed', escH(medTitles))  : ''}
+      ${lows.length  ? chk('LOW priority findings addressed', escH(lowTitles))   : ''}
+      ${chk('Each command verified immediately after entry', '')}
+      ${chk('No configure terminal left open unintentionally', '')}
+      ${chk('Config saved after each section (copy run start)', '')}
+      ${section('#b45309', '6. Verification')}
+      ${chk('SSH v2 still accessible after changes', '')}
+      ${chk('Management access verified from authorised host', '')}
+      ${chk('AAA authentication tested (local fallback works)', '')}
+      ${chk('NTP synchronised (show ntp status)', '')}
+      ${chk('Syslog messages appearing at remote server', '')}
+      ${chk('SNMP v3 poll successful from NMS', '')}
+      ${chk('Spanning-tree BPDU guard not erroring access ports', '')}
+      ${chk('CoPP policy not dropping legitimate control traffic', '')}
+      ${chk('Re-audit run and compliance score improved', '')}
+      ${section('#be185d', '7. Post-Change Documentation')}
+      ${chk('Final running-config saved and archived', '')}
+      ${chk('Change ticket updated with results', '')}
+      ${chk('New compliance score recorded', '')}
+      ${chk('Any deviations or exceptions documented', '')}
+      ${chk('Next audit date scheduled', '')}
+      ${section('#dc2626', '8. Rollback Criteria (if triggered)')}
+      ${chk('Management access lost -- rollback initiated', '')}
+      ${chk('Production services impacted -- rollback initiated', '')}
+      ${chk('Rollback verified and access restored', '')}
+      <div style="margin-top:24px;background:#f8fafc;border-radius:10px;padding:20px;">
+        <div style="font-weight:700;font-size:0.85rem;color:#334155;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Progress</div>
+        <div style="background:#e2e8f0;border-radius:9999px;height:12px;overflow:hidden;margin-bottom:8px;"><div id="check-bar" style="height:12px;border-radius:9999px;background:#0ea5e9;width:0%;transition:width 0.3s;"></div></div>
+        <div id="check-progress" style="font-size:0.82rem;color:#64748b;">0 / ${ci-1} completed</div>
+      </div>
+      <div style="margin-top:16px;background:#f8fafc;border-radius:10px;padding:20px;">
+        <div style="font-weight:700;font-size:0.85rem;color:#334155;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Implementation Log</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div><label style="font-size:0.78rem;color:#64748b;display:block;margin-bottom:4px;">Change Start</label><input type="datetime-local" style="width:100%;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.85rem;"></div>
+          <div><label style="font-size:0.78rem;color:#64748b;display:block;margin-bottom:4px;">Change End</label><input type="datetime-local" style="width:100%;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.85rem;"></div>
+        </div>
+        <label style="font-size:0.78rem;color:#64748b;display:block;margin-bottom:4px;">Notes / Exceptions</label>
+        <textarea rows="4" placeholder="Record any deviations, issues encountered, or exceptions..." style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.85rem;resize:vertical;font-family:inherit;"></textarea>
+      </div>
+      <div style="margin-top:16px;background:#f8fafc;border-radius:10px;padding:20px;">
+        <div style="font-weight:700;font-size:0.85rem;color:#334155;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Sign-Off</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+          <div><label style="font-size:0.78rem;color:#64748b;display:block;margin-bottom:4px;">Implementer</label><input type="text" placeholder="Name" style="width:100%;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.85rem;"></div>
+          <div><label style="font-size:0.78rem;color:#64748b;display:block;margin-bottom:4px;">Approver</label><input type="text" placeholder="Name" style="width:100%;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.85rem;"></div>
+          <div><label style="font-size:0.78rem;color:#64748b;display:block;margin-bottom:4px;">Outcome</label><select style="width:100%;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.85rem;background:#fff;"><option value="">-- Select --</option><option>Completed Successfully</option><option>Completed with Exceptions</option><option>Partially Completed</option><option>Rolled Back</option></select></div>
+        </div>
+      </div>`;
+
+    // ── Assemble final HTML ──────────────────────────────────────────────────
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Security Audit &mdash; ${escH(audit.ip || audit.device)} &mdash; ${escH(ts)}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #1e293b; line-height: 1.5; }
+  .hdr { background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%); color: #fff; padding: 28px 40px; }
+  .hdr h1 { font-size: 1.35rem; font-weight: 700; margin-bottom: 4px; }
+  .hdr .sub { color: #94a3b8; font-size: 0.88rem; }
+  .tab-nav { background: #fff; border-bottom: 1px solid #e2e8f0; position: sticky; top: 0; z-index: 100; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .tab-nav .inner { max-width: 980px; margin: 0 auto; padding: 0 20px; display: flex; }
+  .tab-btn { background: none; border: none; padding: 14px 24px; font-size: 0.88rem; font-weight: 600; color: #64748b; cursor: pointer; border-bottom: 3px solid transparent; transition: color 0.15s, border-color 0.15s; white-space: nowrap; }
+  .tab-btn:hover { color: #0f172a; }
+  .tab-btn.active { color: #0ea5e9; border-bottom-color: #0ea5e9; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 28px 20px; }
+  .card { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); padding: 22px 24px; margin-bottom: 20px; }
+  .card-title { font-size: 0.72rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9; }
+  .stat { background: #fff; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.07); padding: 18px 16px; text-align: center; }
+  .stat-v { font-size: 2.1rem; font-weight: 800; line-height: 1; }
+  .stat-l { font-size: 0.72rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 6px; }
+  .dr { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid #f8fafc; font-size: 0.86rem; }
+  .dr:last-child { border-bottom: none; }
+  .lbl { color: #64748b; }
+  .val { font-weight: 600; color: #0f172a; font-family: ui-monospace, "Cascadia Code", monospace; font-size: 0.82rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 9px 16px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: #94a3b8; border-bottom: 2px solid #f1f5f9; white-space: nowrap; }
+  tbody tr:hover td { background: #f8fafc; }
+  details > summary { cursor: pointer; user-select: none; padding: 6px 0; font-weight: 600; color: #475569; font-size: 0.9rem; list-style: none; display: flex; align-items: center; gap: 8px; }
+  details > summary::before { content: "\\25B6"; font-size: 0.65rem; color: #94a3b8; }
+  details[open] > summary::before { content: "\\25BC"; }
+  input[type=text], textarea, select { outline: none; transition: border-color 0.15s; }
+  input[type=text]:focus, textarea:focus, select:focus { border-color: #0ea5e9 !important; }
+  @media (max-width: 680px) {
+    .score-grid { grid-template-columns: 1fr !important; }
+    .two-col    { grid-template-columns: 1fr !important; }
+    .three-col  { grid-template-columns: 1fr !important; }
+    .tab-btn    { padding: 12px 14px; font-size: 0.8rem; }
+  }
+  @media print {
+    body { background: #fff; }
+    .tab-nav { position: static; }
+    .hdr { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .card { box-shadow: none; border: 1px solid #e2e8f0; }
+    .tab-pane { display: block !important; page-break-before: always; }
+    .tab-btn { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <h1>&#128274; Network Device Security Audit &mdash; Gladius</h1>
+  <div class="sub">${escH(audit.ip || '')} &nbsp;&middot;&nbsp; ${escH(audit.ios || 'IOS XE')} &nbsp;&middot;&nbsp; ${escH(ts)}</div>
+</div>
+
+<nav class="tab-nav">
+  <div class="inner">
+    <button class="tab-btn active" id="btn-summary" onclick="showTab('summary')">&#128202; Audit Summary</button>
+    <button class="tab-btn" id="btn-remediation" onclick="showTab('remediation')">&#128295; Remediation Plan</button>
+    <button class="tab-btn" id="btn-checklist" onclick="showTab('checklist')">&#9989; Pre-Deployment Checklist</button>
+    ${cves.length ? '<button class="tab-btn" id="btn-cve" onclick="showTab(\'cve\')">&#128997; CVE Advisories</button>' : ''}
+  </div>
+</nav>
+
+<!-- TAB 1: AUDIT SUMMARY -->
+<div id="pane-summary" class="tab-pane">
+<div class="wrap">
+
+  <div class="score-grid" style="display:grid;grid-template-columns:250px 1fr;gap:20px;margin-bottom:20px;align-items:start;">
+    <div class="card" style="text-align:center;padding:24px 12px;">
+      <div class="card-title" style="text-align:center;">Compliance Score</div>
+      <svg viewBox="0 0 200 115" style="width:210px;height:125px;display:block;margin:0 auto;">
+        <path d="M 20,100 A 80,80 0 0,1 180,100" fill="none" stroke="#e2e8f0" stroke-width="16" stroke-linecap="round"/>
+        <path d="M 20,100 A 80,80 0 0,1 180,100" fill="none" stroke="${gCol}" stroke-width="16" stroke-linecap="round" stroke-dasharray="${gaugeArc}"/>
+        <text x="100" y="88" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="30" font-weight="700" fill="#0f172a">${score}%</text>
+        <text x="100" y="109" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="11" font-weight="600" fill="${gCol}">${gLbl}</text>
+      </svg>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+        <div class="stat"><div class="stat-v" style="color:#16a34a;">${passes.length}</div><div class="stat-l">Passed</div></div>
+        <div class="stat"><div class="stat-v" style="color:#dc2626;">${failed}</div><div class="stat-l">Failed</div></div>
+        <div class="stat"><div class="stat-v" style="color:#64748b;">${total}</div><div class="stat-l">Total</div></div>
+      </div>
+      <div class="card" style="margin-bottom:0;padding:16px 20px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px;">
+          <div class="dr"><span class="lbl">Hostname</span><span class="val">${escH(audit.device || '—')}</span></div>
+          <div class="dr"><span class="lbl">IP Address</span><span class="val">${escH(audit.ip || '—')}</span></div>
+          <div class="dr"><span class="lbl">Platform</span><span class="val">IOS XE</span></div>
+          <div class="dr"><span class="lbl">Version</span><span class="val">${escH(audit.ios || '—')}</span></div>
+          <div class="dr"><span class="lbl">Audit Date</span><span class="val" style="font-family:inherit;font-size:0.8rem;">${escH(ts)}</span></div>
+          <div class="dr"><span class="lbl">CVEs Found</span><span class="val" style="color:${cves.length ? '#a855f7' : '#16a34a'}">${cves.length}</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  ${categoryRows ? `<div class="card">
+    <div class="card-title">Category Scorecard</div>
+    <table>
+      <thead><tr>
+        <th>Category</th><th style="text-align:center;">Passed</th><th style="text-align:center;">Failed</th>
+        <th style="min-width:140px;">Progress</th><th style="text-align:right;">Score</th>
+      </tr></thead>
+      <tbody>${categoryRows}</tbody>
+    </table>
+  </div>` : ''}
+
+  <div class="two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+    <div class="card" style="margin-bottom:0;">
+      <div class="card-title">Risk Distribution</div>
+      ${highs.length ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fef2f2;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#991b1b;">HIGH</span><span style="font-size:1.5rem;font-weight:700;color:#991b1b;">${highs.length}</span></div>` : ''}
+      ${meds.length  ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fff7ed;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#9a3412;">MEDIUM</span><span style="font-size:1.5rem;font-weight:700;color:#9a3412;">${meds.length}</span></div>` : ''}
+      ${lows.length  ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fefce8;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#854d0e;">LOW</span><span style="font-size:1.5rem;font-weight:700;color:#854d0e;">${lows.length}</span></div>` : ''}
+      ${cves.length  ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#faf5ff;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#7e22ce;">CVE</span><span style="font-size:1.5rem;font-weight:700;color:#7e22ce;">${cves.length}</span></div>` : ''}
+    </div>
+    <div class="card" style="margin-bottom:0;">
+      <div class="card-title">Action Plan</div>
+      ${actionImmediate ? `<div style="margin-bottom:18px;"><div style="font-weight:700;color:#dc2626;margin-bottom:8px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;">Immediate &mdash; This Week</div><ul style="margin:0;padding-left:18px;">${actionImmediate}</ul></div>` : ''}
+      ${actionShort     ? `<div style="margin-bottom:18px;"><div style="font-weight:700;color:#ea580c;margin-bottom:8px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;">Short-Term &mdash; Within 30 Days</div><ul style="margin:0;padding-left:18px;">${actionShort}</ul></div>` : ''}
+      ${actionPlanned   ? `<div style="margin-bottom:18px;"><div style="font-weight:700;color:#ca8a04;margin-bottom:8px;font-size:0.8rem;text-transform:uppercase;letter-spacing:0.06em;">Planned &mdash; Next Window</div><ul style="margin:0;padding-left:18px;">${actionPlanned}</ul></div>` : ''}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Detailed Findings &mdash; ${failed} Issue${failed !== 1 ? 's' : ''}</div>
+    ${highs.length ? `<h3 style="color:#dc2626;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">HIGH Risk &mdash; ${highs.length} issue${highs.length !== 1 ? 's' : ''}</h3>${highs.map(f => findingCard(f,'#f87171','#fff1f2')).join('')}` : ''}
+    ${meds.length  ? `<h3 style="color:#ea580c;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">MEDIUM Risk &mdash; ${meds.length} issue${meds.length !== 1 ? 's' : ''}</h3>${meds.map(f => findingCard(f,'#fb923c','#fff7ed')).join('')}` : ''}
+    ${lows.length  ? `<h3 style="color:#ca8a04;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">LOW Risk &mdash; ${lows.length} issue${lows.length !== 1 ? 's' : ''}</h3>${lows.map(f => findingCard(f,'#fbbf24','#fefce8')).join('')}` : ''}
+  </div>
+
+  ${passes.length ? `<div class="card"><details><summary>Passed Checks (${passes.length})</summary><div style="margin-top:12px;">${passedItems}</div></details></div>` : ''}
+
+  <div class="card">
+    <div class="card-title">Next Steps</div>
+    <ol style="padding-left:20px;line-height:2.1;font-size:0.9rem;color:#334155;">
+      <li>Switch to the <b>Remediation Plan</b> tab for copy-paste IOS commands</li>
+      <li>Switch to the <b>Pre-Deployment Checklist</b> tab before applying changes</li>
+      <li>Test all commands in a lab environment first</li>
+      <li>Raise a change control ticket and schedule a maintenance window</li>
+      <li>Re-run audit after remediation &mdash; target score: <b>90%+</b></li>
+    </ol>
+  </div>
+
+  <div style="text-align:center;color:#94a3b8;font-size:0.76rem;padding:12px 0 4px;">
+    Generated by Gladius Network Security Platform &nbsp;&middot;&nbsp; ${escH(ts)}
+  </div>
+</div>
+</div>
+
+<!-- TAB 2: REMEDIATION PLAN -->
+<div id="pane-remediation" class="tab-pane" style="display:none;">
+<div class="wrap">
+  <div class="card" style="background:#fef3c7;border-left:4px solid #f59e0b;padding:14px 20px;margin-bottom:0;">
+    <div style="font-weight:700;color:#92400e;margin-bottom:4px;">&#9888; Important</div>
+    <div style="font-size:0.87rem;color:#78350f;">Test all commands in a lab environment before applying to production. Complete the Pre-Deployment Checklist first. Always save configuration after each section.</div>
+  </div>
+  ${highs.length ? `<h3 style="color:#dc2626;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#f87171;color:#fff;padding:2px 10px;border-radius:9999px;">HIGH</span> &mdash; ${highs.length} finding${highs.length !== 1 ? 's' : ''}</h3>${highs.map(f => remCard(f,'#f87171','#fff1f2')).join('')}` : ''}
+  ${meds.length  ? `<h3 style="color:#ea580c;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#fb923c;color:#fff;padding:2px 10px;border-radius:9999px;">MEDIUM</span> &mdash; ${meds.length} finding${meds.length !== 1 ? 's' : ''}</h3>${meds.map(f => remCard(f,'#fb923c','#fff7ed')).join('')}` : ''}
+  ${lows.length  ? `<h3 style="color:#ca8a04;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#fbbf24;color:#fff;padding:2px 10px;border-radius:9999px;">LOW</span> &mdash; ${lows.length} finding${lows.length !== 1 ? 's' : ''}</h3>${lows.map(f => remCard(f,'#fbbf24','#fefce8')).join('')}` : ''}
+  <div class="card" style="margin-top:24px;"><div class="card-title">Verify &amp; Save</div>
+    <div style="position:relative;margin-bottom:10px;"><pre id="cmd_verify" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">show running-config\nshow ip ssh\nshow logging\nshow snmp\nshow ntp status\nshow spanning-tree summary</pre><button onclick="copyCode(this,'cmd_verify')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div>
+    <div style="position:relative;"><pre id="cmd_save" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">copy running-config startup-config</pre><button onclick="copyCode(this,'cmd_save')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div>
+  </div>
+</div>
+</div>
+
+<!-- TAB 3: PRE-DEPLOYMENT CHECKLIST -->
+<div id="pane-checklist" class="tab-pane" style="display:none;">
+<div class="wrap">
+  <div class="card" style="background:#eff6ff;border-left:4px solid #3b82f6;padding:14px 20px;">
+    <div style="font-weight:700;color:#1e40af;margin-bottom:4px;">&#128203; Pre-Deployment Checklist</div>
+    <div style="font-size:0.87rem;color:#1e3a8a;">Complete all sections before applying remediation commands. Tick each item as you confirm it.</div>
+  </div>
+  <div class="card">${checklistHtml}</div>
+</div>
+</div>
+
+${cves.length ? `<!-- CVE TAB -->
+<div id="pane-cve" class="tab-pane" style="display:none;">
+<div class="wrap">
+  <div class="card"><div class="card-title">CVE Advisories (${cves.length})</div>${cveItems}</div>
+</div>
+</div>` : ''}
+
+<script>
+  function showTab(name) {
+    document.querySelectorAll('.tab-pane').forEach(function(p) { p.style.display = 'none'; });
+    document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    document.getElementById('pane-' + name).style.display = 'block';
+    document.getElementById('btn-' + name).classList.add('active');
+  }
+  function copyCode(btn, id) {
+    var text = document.getElementById(id).innerText;
+    navigator.clipboard.writeText(text).then(function() {
+      var orig = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.style.background = '#16a34a';
+      setTimeout(function() { btn.textContent = orig; btn.style.background = ''; }, 1500);
+    });
+  }
+  function updateProgress() {
+    var all     = document.querySelectorAll('#pane-checklist input[type=checkbox]');
+    var checked = document.querySelectorAll('#pane-checklist input[type=checkbox]:checked').length;
+    var pct     = all.length > 0 ? Math.round(checked / all.length * 100) : 0;
+    document.getElementById('check-progress').textContent = checked + ' / ' + all.length + ' completed (' + pct + '%)';
+    document.getElementById('check-bar').style.width = pct + '%';
+    document.getElementById('check-bar').style.background = pct === 100 ? '#16a34a' : '#0ea5e9';
+  }
+<\/script>
+</body>
+</html>`;
+  }
+
+    function exportReport(idx) {
+    const history = loadAuditHistory();
+    let audit = history[idx];
+    if (!audit) {
+      try { audit = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null'); } catch(e) {}
+    }
+    if (!audit) return;
+    const html = generateReportHTML(audit);
+    const blob = new Blob([html], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    const ts   = (audit.timestamp || new Date().toISOString()).replace(/[: ]/g,'-').replace(/\..*/,'');
+    a.href     = url;
+    a.download = `gladius-audit-${audit.device || audit.ip || 'report'}-${ts}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+    logActivity(`Report exported — ${audit.device || audit.ip}`, audit.device || null);
+  }
+
+  async function emailReport(idx) {
+    const history = loadAuditHistory();
+    let audit = history[idx];
+    if (!audit) {
+      try { audit = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null'); } catch(e) {}
+    }
+    if (!audit) return;
+
+    // Generate the same HTML as the export
+    const html = generateReportHTML(audit);
+    const device = audit.device || audit.ip || 'device';
+    const ts = audit.timestamp ? new Date(audit.timestamp).toLocaleString('en-GB') : '';
+    const score = (audit.score || {}).overall || 0;
+    const subject = `[Gladius] Security Audit — ${device} (${audit.ip || ''}) — ${score}% compliance — ${ts}`;
+    const tsFile  = (audit.timestamp || new Date().toISOString()).replace(/[: ]/g,'-').replace(/\..*/,'');
+    const filename = `gladius-audit-${device}-${tsFile}.html`;
+
+    // Show sending indicator on the button
+    const btn = document.querySelector(`[data-action="email"][data-idx="${idx}"]`);
+    const origText = btn ? btn.textContent : null;
+    if (btn) { btn.textContent = '⏳ Sending…'; btn.disabled = true; }
+
+    try {
+      const resp = await fetch('/api/email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject, html, filename })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        if (btn) { btn.textContent = '✓ Sent'; btn.style.color = 'var(--success)'; }
+        logActivity(`Report emailed — ${device}`, device);
+        setTimeout(() => { if (btn) { btn.textContent = origText; btn.style.color = ''; btn.disabled = false; } }, 3000);
+      } else {
+        throw new Error(data.error || 'Email failed');
+      }
+    } catch(e) {
+      if (btn) { btn.textContent = '✗ Failed'; btn.style.color = 'var(--danger)'; btn.disabled = false; }
+      console.error('[Gladius] Email error:', e);
+      setTimeout(() => { if (btn) { btn.textContent = origText; btn.style.color = ''; } }, 3000);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // REPORTS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function loadAuditHistory() {
+    try {
+      return JSON.parse(localStorage.getItem('gladius-audit-history') || '[]');
+    } catch(e) { return []; }
+  }
+
+  function renderReports() {
+    const body = document.getElementById('reports-list-body');
+    const countEl = document.getElementById('reports-count');
+    if (!body) return;
+
+    // If history is empty, try seeding from gladius-audit-latest for backwards compat
+    let history = loadAuditHistory();
+    if (!history.length) {
+      try {
+        const latest = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+        if (latest) history = [latest];
+      } catch(e) {}
+    }
+
+    if (countEl) countEl.textContent = history.length ? `${history.length} audit${history.length > 1 ? 's' : ''}` : '';
+
+    if (!history.length) {
+      body.innerHTML = '<div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No audits recorded yet — run an audit via the Agent tab</div>';
+      return;
+    }
+
+    body.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'report-list';
+
+    history.forEach((audit, idx) => {
+      const findings = audit.findings || [];
+      const isCveFn  = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+      const highs = findings.filter(f => f.severity === 'HIGH'   && !isCveFn(f)).length;
+      const meds  = findings.filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
+      const cves  = findings.filter(isCveFn).length;
+      const pass  = findings.filter(f => f.severity === 'PASS').length;
+      const score = (audit.score || {}).overall || 0;
+      const scoreCol = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warn)' : 'var(--danger)';
+      const iconCol  = highs > 0 ? 'high' : meds > 0 ? 'medium' : 'low';
+      const iconSvg  = highs > 0
+        ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+        : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00ff88" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
+
+      const ts = audit.timestamp ? new Date(audit.timestamp).toLocaleString('en-GB', {day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—';
+      const metaParts = [
+        audit.ios || '',
+        ts,
+        `${findings.length} checks`,
+        highs ? `${highs} HIGH` : null,
+        meds  ? `${meds} MED`  : null,
+        cves  ? `${cves} CVE`  : null,
+        pass  ? `${pass} PASS` : null,
+      ].filter(Boolean);
+
+      const item = document.createElement('div');
+      item.className = 'report-item';
+      item.innerHTML = `
+        <div class="report-icon ${iconCol}">${iconSvg}</div>
+        <div class="report-info">
+          <div class="report-name">${audit.device || '—'} — ${audit.ip || ''}</div>
+          <div class="report-meta">${metaParts.join(' · ')}</div>
+        </div>
+        <div>
+          <div class="report-score" style="color:${scoreCol}">${score}%</div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);text-align:right">COMPLIANCE</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0">
+          <button class="btn btn-ghost report-action-btn" data-action="export" data-idx="${idx}" style="font-size:11px;padding:5px 10px" title="Export HTML report">⬇ Export</button>
+          <button class="btn btn-ghost report-action-btn" data-action="email" data-idx="${idx}" style="font-size:11px;padding:5px 10px" title="Email report">✉ Email</button>
+        </div>
+      `;
+      item.querySelector('[data-action="export"]').addEventListener('click', e => { e.stopPropagation(); exportReport(idx); });
+      item.querySelector('[data-action="email"]').addEventListener('click', e => { e.stopPropagation(); emailReport(idx); });
+      item.addEventListener('click', () => openReportPanel(idx));
+      list.appendChild(item);
+    });
+
+    body.appendChild(list);
+  }
+
+  function openReportPanel(idx) {
+    const history = loadAuditHistory();
+    if (!history.length) {
+      // Fall back to latest
+      try {
+        const latest = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+        if (latest) openReportPanelData(latest);
+      } catch(e) {}
+      return;
+    }
+    openReportPanelData(history[idx]);
+  }
+
+  function openReportPanelData(audit) {
+    const findings = audit.findings || [];
+    const isCveFn  = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    const score    = audit.score || {};
+    const scoreCol = v => v >= 70 ? 'var(--success)' : v >= 40 ? 'var(--warn)' : 'var(--danger)';
+
+    // Override detail panel header
+    const badge = document.getElementById('detail-severity');
+    if (badge) { badge.textContent = audit.device || 'REPORT'; badge.className = 'severity-badge'; badge.style.cssText = 'background:var(--accent-dim);color:var(--accent);border-color:var(--accent)'; }
+    const titleEl = document.getElementById('detail-title');
+    if (titleEl) titleEl.textContent = `${audit.ip || ''} · ${audit.ios || ''}`;
+
+    // Override detail body
+    const body = document.getElementById('detail-body-inner');
+    const fallbackBody = document.querySelector('#detail-panel .detail-body');
+    const target = body || fallbackBody;
+    if (!target) return;
+
+    // Scores row
+    const scoresHtml = `
+      <div class="report-scores">
+        <div class="report-score-card">
+          <div class="val" style="color:${scoreCol(score.overall||0)}">${score.overall||0}%</div>
+          <div class="lbl">Overall</div>
+        </div>
+        <div class="report-score-card">
+          <div class="val" style="color:${scoreCol(score.nist||0)}">${score.nist||0}%</div>
+          <div class="lbl">NIST 800-53</div>
+        </div>
+        <div class="report-score-card">
+          <div class="val" style="color:${scoreCol(score.cis||0)}">${score.cis||0}%</div>
+          <div class="lbl">CIS IOS XE</div>
+        </div>
+      </div>`;
+
+    // Findings list
+    const sevOrder = { HIGH:0, MEDIUM:1, LOW:2, PASS:3 };
+    const sorted = [...findings].sort((a,b) => (sevOrder[a.severity]||9)-(sevOrder[b.severity]||9));
+    const findingsHtml = sorted.length ? `
+      <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">${sorted.length} Findings</div>
+      <div class="report-panel-findings">
+        ${sorted.map(f => {
+          const isCve = isCveFn(f);
+          const sev = f.severity || 'LOW';
+          const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
+          const lbl = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
+          return `<div class="report-panel-finding">
+            <div class="severity-badge ${cls}" style="margin-top:1px">${lbl}</div>
+            <div class="report-panel-text">
+              <strong>${f.title || ''}</strong>
+              <span>${f.description || ''}</span>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : '<div style="color:var(--text-dim);font-family:var(--font-mono);font-size:13px">// No findings recorded</div>';
+
+    target.innerHTML = scoresHtml + findingsHtml;
+
+    // Hide the "Investigate in Agent" footer button — not relevant for report view
+    const footer = document.querySelector('#detail-panel .detail-footer');
+    if (footer) footer.style.display = 'none';
+
+    document.getElementById('detail-overlay').classList.add('active');
+    document.getElementById('detail-panel').classList.add('active');
+  }
+
+  // Restore detail panel footer when opened for a single finding
+  const _origOpenDetail = openDetail;
+  function openDetail(index) {
+    const footer = document.querySelector('#detail-panel .detail-footer');
+    if (footer) footer.style.display = '';
+    const badge = document.getElementById('detail-severity');
+    if (badge) badge.style.cssText = '';
+    _origOpenDetail(index);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AGENT CONTEXT — inject last 3 audit summaries into conversation
+  // ══════════════════════════════════════════════════════════════════════════
+
+  function buildAuditContext() {
+    const history = loadAuditHistory();
+    if (!history.length) return null;
+    const recent = history.slice(0, 3);
+    const lines = recent.map((a, i) => {
+      const findings = a.findings || [];
+      const isCveFn  = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+      const highs = findings.filter(f => f.severity === 'HIGH'   && !isCveFn(f)).length;
+      const meds  = findings.filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
+      const cves  = findings.filter(isCveFn).length;
+      const score = (a.score || {}).overall || 0;
+      const topFindings = findings
+        .filter(f => f.severity === 'HIGH' || f.severity === 'MEDIUM')
+        .slice(0, 5)
+        .map(f => `    - [${f.severity}] ${f.title}: ${(f.description||'').slice(0,100)}`)
+        .join('\n');
+      return `Audit ${i+1}: ${a.device||'?'} (${a.ip||''}) · ${a.ios||''} · ${a.timestamp||''}
+  Overall compliance: ${score}% | NIST: ${(a.score||{}).nist||0}% | CIS: ${(a.score||{}).cis||0}%
+  Findings: ${highs} HIGH, ${meds} MEDIUM, ${cves} CVE
+  Top findings:\n${topFindings||'    (none)'}`;
+    }).join('\n\n');
+    return `[AUDIT HISTORY — last ${recent.length} audits]\n${lines}\n[END AUDIT HISTORY]`;
+  }
+
+  // ── AUDIT ──
+
+  function launchAudit() {
+    const host = document.getElementById('audit-host').value || '192.168.20.18';
+    const benchmark = document.getElementById('audit-benchmark').value;
+    document.getElementById('audit-panel-title').textContent = `AUDITING — ${host}`;
+    document.getElementById('audit-status').textContent = 'Running...';
+    const out = document.getElementById('audit-output');
+    out.innerHTML = `<span style="color:var(--accent)">// Audit command ready for Claude Code:</span><br><br>`;
+    out.innerHTML += `<span style="color:var(--text-primary)">Connect to ${host}, run a full security audit against ${benchmark}, cross-reference all findings against the knowledge base, check for CVEs against the detected IOS version, and email a comprehensive report to stevie.johnston@gmail.com</span><br><br>`;
+    out.innerHTML += `<span style="color:var(--text-dim)">// Paste this into Claude Code to execute live against the device</span>`;
+    document.getElementById('audit-status').textContent = 'Command generated';
+  }
+
+  // ── HEALTH MONITORING ──
+  function ensureExtraChips() {
+    const bar = document.querySelector('.topbar-status');
+    if (!bar) return;
+    [
+      { id: 'nist-chip',   label: 'NIST NVD' },
+      { id: 'claude-chip', label: 'CLAUDE'   },
+    ].forEach(({ id, label }) => {
+      if (!document.getElementById(id)) {
+        const chip = document.createElement('div');
+        chip.id = id;
+        chip.className = 'status-chip offline';
+        chip.innerHTML = '<div class="dot"></div>' + label;
+        bar.appendChild(chip);
+      }
+    });
+  }
+
+  function renderChip(id, label, status, detail) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.className = 'status-chip ' + (status === 'ok' ? 'online' : 'offline');
+    if (status === 'warn') {
+      el.style.cssText = 'background:var(--warn-dim);border-color:var(--warn);color:var(--warn)';
+    } else {
+      el.style.cssText = '';
+    }
+    const detailText = detail || '';
+    el.innerHTML = '<div class="dot"></div>' + label +
+      (detailText ? `<div class="chip-tooltip">${detailText}</div>` : '');
+    el.title = '';
+  }
+
+  async function checkStatus() {
+    ensureExtraChips();
+    const dot = document.getElementById('mcp-status-dot');
+    try {
+      const res = await fetch('/api/health/full');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const c = data.components || {};
+
+      renderChip('mcp-chip',    'MCP',      (c.mcp            || {}).status, (c.mcp            || {}).detail);
+      renderChip('chroma-chip', 'CHROMA-DB',       (c.knowledge_base || {}).status, (c.knowledge_base || {}).detail);
+      renderChip('nist-chip',   'NIST', (c.nist_nvd       || {}).status, (c.nist_nvd       || {}).detail);
+      renderChip('claude-chip', 'ANTHROPIC',   (c.claude_api     || {}).status, (c.claude_api     || {}).detail);
+
+      const anyError = Object.values(c).some(v => v.status === 'error');
+      if (dot) {
+        dot.className = anyError ? 'status-dot offline' : 'status-dot';
+        dot.title     = anyError ? 'One or more components degraded' : 'All systems operational';
+      }
+    } catch (err) {
+      ['mcp-chip','chroma-chip','nist-chip','claude-chip'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.className = 'status-chip offline';
+          el.style.cssText = '';
+          el.innerHTML = '<div class="dot"></div>OFFLINE';
+        }
+      });
+      if (dot) { dot.className = 'status-dot offline'; dot.title = 'API unreachable'; }
+    }
+  }
+
+  checkStatus();
+  setInterval(checkStatus, 30000);
+
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DASHBOARD — Live data from localStorage + /api/kb/stats
+  // ══════════════════════════════════════════════════════════════════════════
+
+  // ── localStorage schema ──────────────────────────────────────────────────
+  // Key: 'gladius-audit-latest'
+  // Value: {
+  //   device: 'IOU2', ip: '192.168.20.18', ios: 'IOS XE 17.12.1',
+  //   timestamp: '2026-02-26T20:47:00',
+  //   findings: [ { severity, title, description, ref, remediation } ],
+  //   score: { overall: 38, nist: 41, cis: 33 }
+  // }
+  //
+  // Key: 'gladius-activity-log'
+  // Value: [ { time: ISO string, text: str, hi: str|null } ]
+
+  function scoreColor(pct) {
+    if (pct >= 70) return 'var(--success)';
+    if (pct >= 40) return 'var(--warn)';
+    return 'var(--danger)';
+  }
+
+  function scoreBarClass(pct) {
+    if (pct >= 70) return 'success';
+    if (pct >= 40) return 'warn';
+    return 'danger';
+  }
+
+  function setEl(id, val) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  }
+
+  function loadDashboard() {
+    // ── Audit data ─────────────────────────────────────────────────────────
+    const raw = localStorage.getItem('gladius-audit-latest');
+    if (raw) {
+      try {
+        const audit = JSON.parse(raw);
+        setEl('dash-device', audit.device || '—');
+        setEl('dash-device-sub', `${audit.ip || ''} · ${audit.ios || ''}`);
+
+        const isCveFn = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+        const cves   = (audit.findings || []).filter(isCveFn).length;
+        const highs = (audit.findings || []).filter(f => f.severity === 'HIGH' && !isCveFn(f)).length;
+        const meds  = (audit.findings || []).filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
+        const pass  = (audit.findings || []).filter(f => f.severity === 'PASS').length;
+        setEl('dash-high', highs);
+        setEl('dash-med',  meds);
+        setEl('dash-pass', pass);
+        setEl('dash-cve',  cves);
+
+        // Findings panel
+        const title = document.getElementById('dash-findings-title');
+        if (title) title.textContent = `Latest Findings — ${audit.device || ''}`;
+        const dateEl = document.getElementById('dash-findings-date');
+        if (dateEl && audit.timestamp) {
+          const d = new Date(audit.timestamp);
+          dateEl.textContent = d.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+        }
+        renderFindings(audit.findings || []);
+
+        // Compliance scores
+        const s = audit.score || {};
+        updateScore('overall', s.overall || 0);
+        updateScore('nist',    s.nist    || 0);
+        updateScore('cis',     s.cis     || 0);
+      } catch(e) { console.warn('Audit parse error', e); }
+    }
+
+    // ── Activity log ───────────────────────────────────────────────────────
+    renderActivityLog();
+
+    // ── KB vector count ────────────────────────────────────────────────────
+    fetchKbCount();
+  }
+
+  function updateScore(key, pct) {
+    const pctEl = document.getElementById(`score-${key}-pct`);
+    const barEl = document.getElementById(`score-${key}-bar`);
+    if (pctEl) { pctEl.textContent = `${pct}%`; pctEl.style.color = scoreColor(pct); }
+    if (barEl) {
+      barEl.style.width = `${pct}%`;
+      barEl.className = `progress-fill ${scoreBarClass(pct)}`;
+    }
+  }
+
+  // ── Severity filter state ────────────────────────────────────────────────
+  let _activeFilter = null; // 'HIGH' | 'MEDIUM' | 'PASS' | null
+
+  function toggleFilter(severity) {
+    // Clicking the active filter again clears it
+    _activeFilter = (_activeFilter === severity) ? null : severity;
+
+    // Update card visual states
+    const map = { HIGH: 'filter-high', MEDIUM: 'filter-med', PASS: 'filter-pass', CVE: 'filter-cve' };
+    Object.entries(map).forEach(([sev, id]) => {
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('active', _activeFilter === sev);
+    });
+
+    // Re-render findings with the current filter applied
+    const raw = localStorage.getItem('gladius-audit-latest');
+    if (!raw) return;
+    try {
+      const audit = JSON.parse(raw);
+      renderFindings(audit.findings || []);
+    } catch(e) {}
+  }
+
+  function renderFindings(findings) {
+    const body = document.getElementById('dash-findings-body');
+    if (!body) return;
+    if (!findings.length) {
+      body.innerHTML = '<div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No findings recorded</div>';
+      return;
+    }
+    const sevOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, PASS: 3 };
+    const sorted = [...findings].sort((a,b) => (sevOrder[a.severity]||9) - (sevOrder[b.severity]||9));
+    // Store full sorted list for detail panel — always uses unfiltered index
+    window._dashFindings = sorted;
+    const isCveFinding = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    const visible = _activeFilter === 'CVE'
+      ? sorted.filter(isCveFinding)
+      : _activeFilter
+        ? sorted.filter(f => f.severity === _activeFilter && !isCveFinding(f))
+        : sorted;
+    if (!visible.length) {
+      const emptyLabel = _activeFilter === 'CVE' ? 'CVE vulnerabilities' : `${_activeFilter} findings`;
+      body.innerHTML = `<div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No ${emptyLabel}</div>`;
+      return;
+    }
+    body.innerHTML = visible.map((f) => {
+      const i = sorted.indexOf(f);
+      const sev = f.severity || 'LOW';
+      const isCve = isCveFinding(f);
+      const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
+      const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
+      return `<div class="finding-item" style="cursor:pointer" onclick="openDetail(${i})">
+        <div class="severity-badge ${cls}">${label}</div>
+        <div class="finding-text"><strong>${f.title || ''}</strong>${f.description || ''}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderActivityLog() {
+    const body = document.getElementById('dash-activity-body');
+    if (!body) return;
+    const raw = localStorage.getItem('gladius-activity-log');
+    let log = [];
+    try { log = raw ? JSON.parse(raw) : []; } catch(e) {}
+    if (!log.length) {
+      body.innerHTML = '<div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No activity yet</div>';
+      return;
+    }
+    const recent = [...log].reverse().slice(0, 20);
+    body.innerHTML = recent.map(entry => {
+      const t = new Date(entry.time).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+      const text = entry.hi
+        ? entry.text.replace(entry.hi, `<span class="hi">${entry.hi}</span>`)
+        : entry.text;
+      return `<div class="activity-item"><div class="activity-time">${t}</div><div class="activity-text">${text}</div></div>`;
+    }).join('');
+  }
+
+  async function fetchKbCount() {
+    try {
+      const res = await fetch('/api/kb/stats');
+      if (!res.ok) return;
+      const data = await res.json();
+      setEl('dash-kb', data.vector_count ?? '—');
+    } catch(e) { /* leave as — */ }
+  }
+
+  // ── Finding detail panel ──────────────────────────────────────────────────
+  function openDetail(index) {
+    const findings = window._dashFindings || [];
+    const f = findings[index];
+    if (!f) return;
+    const sev = f.severity || 'LOW';
+    const cls = sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
+    const label = sev === 'MEDIUM' ? 'MED' : sev;
+    const badge = document.getElementById('detail-severity');
+    if (badge) { badge.textContent = label; badge.className = `severity-badge ${cls}`; }
+    setEl('detail-title', f.title || 'Finding');
+    setEl('detail-description', f.description || 'No description available.');
+    setEl('detail-ref', f.ref || 'No reference recorded.');
+    setEl('detail-remediation', f.remediation || 'Consult the Gladius agent for remediation advice.');
+    window._currentFinding = f;
+    document.getElementById('detail-overlay').classList.add('active');
+    document.getElementById('detail-panel').classList.add('active');
+  }
+
+  function closeDetail() {
+    document.getElementById('detail-overlay').classList.remove('active');
+    document.getElementById('detail-panel').classList.remove('active');
+  }
+
+  function investigateInChat() {
+    const f = window._currentFinding;
+    if (!f) return;
+    closeDetail();
+    const chatNavItem = document.querySelectorAll('.nav-item')[1];
+    showPage('chat', chatNavItem);
+    chatInput.value = `Investigate the finding: ${f.severity} — ${f.title}. ${f.description} What is the exact remediation for this?`;
+    setTimeout(sendMessage, 100);
+  }
+
+  // ── Activity log writer (called from chat/tool events) ────────────────────
+  function logActivity(text, hi) {
+    const raw = localStorage.getItem('gladius-activity-log');
+    let log = [];
+    try { log = raw ? JSON.parse(raw) : []; } catch(e) {}
+    log.push({ time: new Date().toISOString(), text, hi: hi || null });
+    if (log.length > 100) log = log.slice(-100);
+    localStorage.setItem('gladius-activity-log', JSON.stringify(log));
+    renderActivityLog();
+  }
+
+  // ── Hook tool events into activity log ───────────────────────────────────
+  // Called from the SSE stream handler when tool_start fires
+  function onToolStart(toolName, input) {
+    let text, hi;
+    switch(toolName) {
+      case 'connect_to_device':
+        text = `SSH connect → ${input.host || '?'}`;
+        hi = input.host || null;
+        break;
+      case 'run_show_command':
+        text = `▶ ${input.command || 'show command'}`;
+        hi = input.command || null;
+        break;
+      case 'push_config':
+        const cmds = (input.commands || []).length;
+        text = `Config pushed — ${cmds} command${cmds !== 1 ? 's' : ''}`;
+        hi = null;
+        break;
+      case 'disconnect_device':
+        text = 'SSH session closed';
+        hi = null;
+        break;
+      case 'query_knowledge_base':
+        text = `KB queried — “${(input.query || '').slice(0, 40)}${(input.query||'').length > 40 ? '…' : ''}”`;
+        hi = 'KB';
+        break;
+      case 'query_nvd':
+        const nvdParts = [];
+        if (input.search_term) nvdParts.push(input.search_term);
+        if (input.cisco_only)  nvdParts.push('Cisco PSIRT');
+        if (input.days_back)   nvdParts.push(`last ${input.days_back}d`);
+        if (input.severity)    nvdParts.push(input.severity);
+        text = `NVD query — ${nvdParts.join(', ') || 'CVE lookup'}`;
+        hi = 'NVD';
+        break;
+      case 'get_cve_details':
+        text = `CVE lookup — ${input.cve_id || '?'}`;
+        hi = input.cve_id || 'NVD';
+        break;
+      case 'send_email':
+        text = `Email → ${input.recipient || 'default'} — ${(input.subject || '').slice(0, 40)}`;
+        hi = input.recipient || null;
+        break;
+      case 'save_audit_results':
+        text = `Audit results saved — ${input.device || ''} (${(input.findings || []).length} findings)`;
+        hi = input.device || null;
+        break;
+      default:
+        text = `Tool: ${toolName}`;
+        hi = null;
+    }
+    logActivity(text, hi);
+  }
+
+  // ── Init dashboard on load ────────────────────────────────────────────────
+  // ── SKIN MANAGEMENT ──
+  const SKIN_NAMES = {
+    gladius:      'Gladius',
+    hispaniensis: 'Hispaniensis',
+    mainz:        'Mainz',
+    fulham:       'Fulham',
+    pompeii:      'Pompeii',
+    spatha:       'Spatha',
+    pugio:        'Pugio',
+    parazonium:   'Parazonium',
+    rudis:        'Rudis'
+  };
+
+  function setSkin(name) {
+    document.documentElement.dataset.skin = name;
+    localStorage.setItem('gladius-skin', name);
+    // Update active button states
+    document.querySelectorAll('.skin-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.skin === name);
+    });
+    // Update label in panel header
+    const label = document.getElementById('active-skin-label');
+    if (label) label.textContent = '● ' + (SKIN_NAMES[name] || name);
+  }
+
+  // Initialise skin on load
+  (function initSkin() {
+    const saved = localStorage.getItem('gladius-skin') || 'gladius';
+    setSkin(saved);
+  })();
+
+  // Initialise quick commands
+  renderQuickCmds();
+  loadDashboard();
+  renderReports();
+</script>
+  <!-- FINDING DETAIL PANEL -->
+  <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
+
+  <!-- Quick Command Edit Modal -->
+  <div class="qcmd-modal-overlay" id="qcmd-modal-overlay" onclick="if(event.target===this)closeQcmdModal()">
+    <div class="qcmd-modal">
+      <h3 id="qcmd-modal-title">EDIT QUICK COMMAND</h3>
+      <label>Button Label</label>
+      <input type="text" id="qcmd-label-input" placeholder="e.g. Audit IOU2" maxlength="30">
+      <label>Prompt sent to Gladius</label>
+      <textarea id="qcmd-prompt-input" rows="4" placeholder="e.g. Audit 192.168.20.18 against CIS IOS XE benchmark"></textarea>
+      <div class="qcmd-modal-btns">
+        <button class="btn btn-ghost" id="qcmd-delete-btn" style="margin-right:auto;color:var(--danger);border-color:var(--danger)" onclick="deleteQcmd()">Delete</button>
+        <button class="btn btn-ghost" onclick="resetQuickCmds()">Reset Defaults</button>
+        <button class="btn btn-ghost" onclick="closeQcmdModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="saveQcmdModal()">Save</button>
+      </div>
+    </div>
+  </div>
+  <div class="detail-panel" id="detail-panel">
+    <div class="detail-header">
+      <div class="severity-badge" id="detail-severity">HIGH</div>
+      <div class="detail-title" id="detail-title">Finding</div>
+      <button class="detail-close" onclick="closeDetail()">✕</button>
+    </div>
+    <div class="detail-body">
+      <div>
+        <div class="detail-section-label">Description</div>
+        <div class="detail-description" id="detail-description"></div>
+      </div>
+      <div>
+        <div class="detail-section-label">Reference</div>
+        <div class="detail-ref" id="detail-ref"></div>
+      </div>
+      <div>
+        <div class="detail-section-label">Remediation</div>
+        <div class="detail-description" id="detail-remediation"></div>
+      </div>
+    </div>
+    <div class="detail-footer">
+      <button class="btn btn-primary" style="flex:1" onclick="investigateInChat()">Investigate in Agent →</button>
+      <button class="btn btn-ghost" onclick="closeDetail()">Close</button>
+    </div>
+  </div>
+
+</body>
+</html>
