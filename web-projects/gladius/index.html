@@ -1485,27 +1485,6 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-  /* ── SCAN ANIMATION ── */
-  .scanning {
-    position: relative;
-    overflow: hidden;
-  }
-
-  .scanning::after {
-    content: '';
-    position: absolute;
-    top: -100%;
-    left: 0; right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, transparent, var(--accent), transparent);
-    animation: scan 2s linear infinite;
-  }
-
-  @keyframes scan {
-    0% { top: -2px; }
-    100% { top: 100%; }
-  }
-
   /* ── PROGRESS BAR ── */
   .progress-bar {
     height: 4px;
@@ -1888,7 +1867,7 @@
         <button class="btn btn-primary" id="nmap-launch-btn" onclick="launchNmapScan()">▶ LAUNCH SCAN</button>
       </div>
 
-      <div class="panel scanning" id="nmap-panel" style="flex:1">
+      <div class="panel" id="nmap-panel" style="flex:1">
         <div class="panel-header">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M2 12h3M19 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"/></svg>
           <div class="panel-title" id="nmap-panel-title">NMAP SCANNER</div>
@@ -3203,6 +3182,32 @@ ${cves.length ? `<!-- CVE TAB -->
   // ── NMAP ──
 
   let _nmapRunning = false;
+  let _nmapVerbInterval = null;
+
+  const _SCAN_VERBS = [
+    'PROBING','MAPPING','ENUMERATING','INTERROGATING','SWEEPING',
+    'FINGERPRINTING','SNIFFING','INSPECTING','SURVEYING','CATALOGUING',
+    'DETECTING','ANALYZING','HUNTING','PROFILING','TRACING',
+    'IDENTIFYING','SCOUTING','TRIANGULATING','HARVESTING','RECONNOITERING',
+    'VECTORING','TARGETING','INDEXING','INVENTORYING','QUERYING',
+    'SAMPLING','PINGING','INTERCEPTING','CLASSIFYING','BROADCASTING',
+  ];
+
+  function _startVerbSpinner() {
+    let i = 0;
+    const el = document.getElementById('nmap-verb-spinner');
+    if (el) el.textContent = `▶ ${_SCAN_VERBS[0]}…`;
+    _nmapVerbInterval = setInterval(() => {
+      i = (i + 1) % _SCAN_VERBS.length;
+      const el = document.getElementById('nmap-verb-spinner');
+      if (el) el.textContent = `▶ ${_SCAN_VERBS[i]}…`;
+    }, 620);
+  }
+
+  function _stopVerbSpinner() {
+    clearInterval(_nmapVerbInterval);
+    _nmapVerbInterval = null;
+  }
 
   async function launchNmapScan() {
     if (_nmapRunning) return;
@@ -3220,7 +3225,7 @@ ${cves.length ? `<!-- CVE TAB -->
     }
 
     _nmapRunning = true;
-    if (btn)    { btn.textContent = '⏳ SCANNING…'; btn.disabled = true; }
+    if (btn)    { btn.textContent = '◼ SCANNING'; btn.disabled = true; }
     if (status) status.textContent = `Scanning ${target}…`;
     document.getElementById('nmap-panel-title').textContent = `SCANNING — ${target}`;
 
@@ -3234,9 +3239,14 @@ ${cves.length ? `<!-- CVE TAB -->
     if (custom && profile === 'custom') prompt += ` Use these additional args: ${custom}.`;
     prompt += ` After the scan completes, summarise: open ports, detected services and versions, OS if identified, and any notable security observations or CVE-relevant findings.`;
 
-    if (out) out.innerHTML =
+    // _nmapOutput tracks the "permanent" lines; the verb spinner span is appended separately
+    let _nmapOutput =
       `<span style="color:var(--accent)">// SCAN INITIATED — ${target} [${profile.toUpperCase()}]</span>\n` +
       `<span style="color:var(--text-dim)">// Gladius agent is invoking nmap via MCP…</span>\n\n`;
+
+    const _spinnerSpan = `<span id="nmap-verb-spinner" style="color:var(--accent);font-weight:600;letter-spacing:.05em">▶ PROBING…</span>`;
+    if (out) out.innerHTML = _nmapOutput + _spinnerSpan;
+    _startVerbSpinner();
 
     try {
       const resp = await fetch('/api/chat', {
@@ -3261,6 +3271,7 @@ ${cves.length ? `<!-- CVE TAB -->
           try {
             const ev = JSON.parse(line.slice(5).trim());
             if (ev.type === 'text') {
+              _stopVerbSpinner();
               agentText += ev.content;
               out.innerHTML =
                 `<span style="color:var(--accent)">// SCAN COMPLETE — ${target}</span>\n\n` +
@@ -3269,11 +3280,16 @@ ${cves.length ? `<!-- CVE TAB -->
               const label = ev.tool === 'run_nmap_scan'
                 ? `<span style="color:var(--warn)">▶ nmap running against ${target}…</span>\n`
                 : `<span style="color:var(--text-dim)">  [${ev.tool}]</span>\n`;
-              out.innerHTML += label;
+              _stopVerbSpinner();
+              _nmapOutput += label;
+              out.innerHTML = _nmapOutput;
             } else if (ev.type === 'tool_done' && ev.tool === 'run_nmap_scan') {
-              out.innerHTML += `<span style="color:var(--success)">✓ nmap complete — parsing results…</span>\n\n`;
+              _nmapOutput += `<span style="color:var(--success)">✓ nmap complete — parsing results…</span>\n\n`;
+              out.innerHTML = _nmapOutput;
             } else if (ev.type === 'error') {
-              out.innerHTML += `\n<span style="color:var(--danger)">// Error: ${ev.content}</span>`;
+              _stopVerbSpinner();
+              _nmapOutput += `\n<span style="color:var(--danger)">// Error: ${ev.content}</span>`;
+              out.innerHTML = _nmapOutput;
             }
           } catch(e) { /* skip malformed lines */ }
         }
@@ -3281,9 +3297,11 @@ ${cves.length ? `<!-- CVE TAB -->
       if (status) status.textContent = 'Scan complete';
       document.getElementById('nmap-panel-title').textContent = `SCAN RESULTS — ${target}`;
     } catch(e) {
-      if (out) out.innerHTML += `\n<span style="color:var(--danger)">// Scan failed: ${e.message}</span>`;
+      _stopVerbSpinner();
+      if (out) { _nmapOutput += `\n<span style="color:var(--danger)">// Scan failed: ${e.message}</span>`; out.innerHTML = _nmapOutput; }
       if (status) status.textContent = 'Scan failed';
     } finally {
+      _stopVerbSpinner();
       _nmapRunning = false;
       if (btn) { btn.textContent = '▶ LAUNCH SCAN'; btn.disabled = false; }
     }

@@ -564,6 +564,7 @@ async def _run_nmap_scan(
     import re
     import asyncio
     import shlex
+    import subprocess
 
     # Whitelist target characters — IPs, hostnames, CIDR, IPv6 brackets
     if not re.match(r'^[a-zA-Z0-9.\-_/\[\]:]+$', target):
@@ -579,13 +580,17 @@ async def _run_nmap_scan(
     }
     flags = list(profile_flags.get(profile, ["-T4", "-F"]))
 
-    if ports and re.match(r'^[\d,\-]+$', ports):
-        flags += ["-p", ports]
+    if ports:
+        # Strip spaces — Claude sometimes passes "22, 443, 53"
+        clean_ports = re.sub(r'\s+', '', ports)
+        if re.match(r'^[\d,\-]+$', clean_ports):
+            # -F (fast/top-100) and -p (explicit ports) are mutually exclusive in nmap
+            flags = [f for f in flags if f != "-F"]
+            flags += ["-p", clean_ports]
 
     if profile == "custom" and args:
         try:
             extra = shlex.split(args)
-            # Allow only recognised nmap-style tokens (flags and plain values)
             safe  = [t for t in extra if re.match(r'^[-a-zA-Z0-9.,_/]+$', t)]
             flags.extend(safe)
         except Exception:
@@ -594,28 +599,34 @@ async def _run_nmap_scan(
     cmd = ["nmap"] + flags + [target]
     log.info(f"nmap: {' '.join(cmd)}")
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+    # Run in a thread executor — avoids asyncio subprocess conflicts with the
+    # MCP stdio event loop, and ensures all stdout is fully captured.
+    def _blocking_run() -> str:
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return [types.TextContent(type="text", text="ERROR: nmap timed out after 5 minutes.")]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            out = result.stdout.strip()
+            err = result.stderr.strip()
+            # Always append stderr — nmap writes errors/warnings there (e.g. flag conflicts)
+            if err:
+                out = (out + "\n" + err).strip() if out else err
+            if not out:
+                out = f"nmap exited {result.returncode} with no output."
+            return out
+        except subprocess.TimeoutExpired:
+            return "ERROR: nmap timed out after 5 minutes."
+        except FileNotFoundError:
+            return "ERROR: nmap not found. Rebuild the MCP container — the dockerfile now installs it."
+        except Exception as exc:
+            log.error(f"nmap error: {exc}")
+            return f"ERROR: {exc}"
 
-        output = stdout.decode("utf-8", errors="replace").strip()
-        if not output:
-            output = stderr.decode("utf-8", errors="replace").strip() or f"nmap exited {proc.returncode} with no output."
-        return [types.TextContent(type="text", text=output)]
-
-    except FileNotFoundError:
-        return [types.TextContent(type="text", text="ERROR: nmap not found. Rebuild the MCP container — the dockerfile now installs it.")]
-    except Exception as e:
-        log.error(f"nmap error: {e}")
-        return [types.TextContent(type="text", text=f"ERROR: {e}")]
+    output = await asyncio.to_thread(_blocking_run)
+    return [types.TextContent(type="text", text=output)]
 
 
 async def _save_audit_results(device: str, ip: str, findings: list, score: dict,
