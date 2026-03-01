@@ -44,6 +44,7 @@ Tell Gladius an IP address. It handles everything else — no scripts to run, no
 | **Templated HTML Reports** | Standalone HTML reports with compliance gauge, category scorecard, remediation plan with copyable CLI commands, and pre-deployment checklist. |
 | **Email Delivery** | Reports emailed as HTML attachments via SMTP. Ask in chat or click the email button — both produce the same templated output. |
 | **Audit History** | Last 10 audits stored in the browser. Reports tab shows history across devices with one-click export. |
+| **Slack Integration** | Chat with Gladius directly from Slack — DMs or @mentions. Audit results surface as formatted score cards inline. |
 | **9 Colour Themes** | Named after Roman gladius variants. Because aesthetics matter. |
 
 ---
@@ -52,10 +53,10 @@ Tell Gladius an IP address. It handles everything else — no scripts to run, no
 
 ```
 Browser  ──  nginx (web-projects)  ──  index.html
-   │
-   │  SSE stream / REST
-   ▼
-gladius-api  (FastAPI :8080)
+   │                                                Slack
+   │  SSE stream / REST                               │
+   ▼                                                  │  Socket Mode
+gladius-api  (FastAPI :8080)  ◄────────────── gladius-slack (slack-bolt)
    │  Runs Claude claude-sonnet-4-6 with tool use
    │  Intercepts save/email calls, emits SSE events to browser
    │
@@ -66,7 +67,7 @@ network-audit-mcp  (MCP server)
    │  Vector search ─────────────► ChromaDB + MiniLM
    │  CVE lookup ────────────────► NIST NVD API
    │  Email ─────────────────────► SMTP
-   └─ save_audit_results ──► POST /api/audit/save ──► SSE ──► browser
+   └─ save_audit_results ──► POST /api/audit/save ──► SSE ──► browser / Slack
 
 chroma-db  (ChromaDB :8000)
    NIST 800-53 + CIS IOS XE Benchmark vectors
@@ -80,6 +81,7 @@ chroma-db  (ChromaDB :8000)
 | `gladius-api` | FastAPI — Claude agent, SSE stream, REST API | 8080 |
 | `network-audit-mcp` | MCP server — all tools (SSH, KB, NVD, email) | stdio |
 | `chroma-db` | ChromaDB vector store — NIST/CIS knowledge base | 8000 |
+| `gladius-slack` | Slack bot — Socket Mode, DMs + @mentions | — |
 
 ---
 
@@ -122,6 +124,7 @@ chroma-db  (ChromaDB :8000)
 | `get_cve_details` | Fetch full details for a specific CVE ID |
 | `save_audit_results` | POST findings and scores to the dashboard — called automatically |
 | `send_email` | Send report via SMTP as an HTML attachment |
+| `run_nmap_scan` | Run nmap against a host with configurable profiles |
 
 ---
 
@@ -189,22 +192,34 @@ DEFAULT_RECIPIENT=
 GLADIUS_API_URL=http://gladius-api:8080
 ```
 
+**`gladius-slack/.env`**
+
+```env
+SLACK_BOT_TOKEN=xoxb-...    # Bot token from OAuth & Permissions
+SLACK_APP_TOKEN=xapp-...    # App-level token for Socket Mode
+GLADIUS_API_URL=http://gladius-api:8080
+```
+
+**Slack app scopes required:** `chat:write`, `im:history`, `channels:history`, `app_mentions:read`
+**Socket Mode app token scope:** `connections:write`
+**Events to subscribe:** `message.im`, `app_mention`
+
 ---
 
 ## Deployment
 
 ```bash
 # After changing gladius-api/server.py
-docker cp server.py gladius-api:/app/server.py
 docker restart gladius-api
 
 # After changing network-audit-mcp/server.py
-docker cp server.py network-audit-mcp:/app/server.py
 docker restart network-audit-mcp
 docker restart gladius-api   # always restart API too — refreshes tool cache
 
-# After changing index.html (no restart needed)
-docker cp index.html web-projects:/usr/share/nginx/html/index.html
+# After changing index.html (no restart needed — volume mounted)
+
+# After changing gladius-slack/app.py
+docker restart gladius-slack
 ```
 
 ---
@@ -226,6 +241,11 @@ gladius/
 │   └── .env
 ├── network-audit-mcp/
 │   ├── server.py          # MCP server — all Claude tools
+│   └── .env
+├── gladius-slack/
+│   ├── app.py             # Slack bot — Socket Mode, DMs + @mentions
+│   ├── Dockerfile
+│   ├── docker-compose.yml
 │   └── .env
 ├── web-projects/
 │   └── index.html         # Entire frontend — single file, vanilla JS
