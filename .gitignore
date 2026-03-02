@@ -18,6 +18,9 @@ build/
 # Reports output
 network-audit-mcp/reports/
 
+# Runtime data (conversation history, etc.)
+**/data/
+
 # OS
 .DS_Store
 Thumbs.db

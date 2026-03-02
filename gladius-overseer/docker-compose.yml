@@ -1,0 +1,27 @@
+services:
+  gladius-overseer:
+    container_name: gladius-overseer
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - ./app.py:/app/app.py
+      - /var/run/docker.sock:/var/run/docker.sock
+      - C:\docker\net-core\GLADIUS_CLAUDE_PROJECT:/projects/repo
+      - C:\docker\net-core\gladius-api:/projects/gladius-api
+      - C:\docker\net-core\network-audit-mcp:/projects/network-audit-mcp
+      - C:\docker\net-core\web-projects\gladius:/projects/web-projects
+      - C:\docker\net-core\gladius-slack:/projects/gladius-slack
+      - C:\docker\net-core\gladius-overseer:/projects/gladius-overseer
+      - ./data:/data                        # persistent history survives restarts
+    environment:
+      HISTORY_FILE: /data/history.json
+    env_file:
+      - .env
+
+networks:
+  net_core:
+    external: true

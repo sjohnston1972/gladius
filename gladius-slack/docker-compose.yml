@@ -1,0 +1,20 @@
+services:
+  gladius-slack:
+    container_name: gladius-slack
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - ./app.py:/app/app.py
+      - ./data:/data                        # persistent history survives restarts
+    environment:
+      HISTORY_FILE: /data/history.json      # write history to the mounted volume
+    env_file:
+      - .env
+
+networks:
+  net_core:
+    external: true
