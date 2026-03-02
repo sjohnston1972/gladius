@@ -246,7 +246,7 @@ async def list_tools() -> list[types.Tool]:
                 "sip_invite (SIP INVITE over UDP to VoIP target), "
                 "http_get (raw HTTP GET request via TCP), "
                 "dns_query (raw DNS A query via UDP), "
-                "syn_flood_test (short burst SYN probe, rate-limited — for authorised pen-test only), "
+                "syn_flood_test (short burst SYN probe, hard-capped at 20 packets — homelab TCP stress test), "
                 "xmas_scan (FIN+PSH+URG TCP scan), "
                 "null_scan (no-flag TCP scan), "
                 "fin_scan (FIN-only TCP scan), "
