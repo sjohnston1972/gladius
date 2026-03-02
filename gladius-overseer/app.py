@@ -27,8 +27,6 @@ HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "/data/history.json"))
 _history_lock = threading.Lock()
 
 # ── Proactive messaging ────────────────────────────────────────────────────────
-# We store the DM channel ID of the first user to contact us so we can reach
-# them without needing channels:read scope.
 _dm_channel: str | None = None
 DM_CHANNEL_FILE = Path("/data/dm_channel.txt")
 
@@ -52,7 +50,6 @@ def notify_slack(message: str, channel: str | None = None) -> bool:
     """
     Send a proactive message to Slack. Uses the stored DM channel by default.
     Returns True on success, False on failure.
-    Can be called from anywhere in the overseer — used for self-initiated alerts.
     """
     target = channel or _dm_channel
     if not target:
@@ -60,7 +57,7 @@ def notify_slack(message: str, channel: str | None = None) -> bool:
         return False
     try:
         chunks = _chunk_text(message)
-        for i, chunk in enumerate(chunks):
+        for chunk in chunks:
             slack_web.chat_postMessage(
                 channel=target,
                 text=chunk,
@@ -134,13 +131,10 @@ def _chunk_text(text: str, limit: int = SLACK_BLOCK_LIMIT) -> list[str]:
     chunks = []
     remaining = text
     while len(remaining) > limit:
-        # Try paragraph break
         cut = remaining.rfind("\n\n", 0, limit)
         if cut == -1:
-            # Try line break
             cut = remaining.rfind("\n", 0, limit)
         if cut == -1:
-            # Hard cut
             cut = limit
         chunks.append(remaining[:cut].strip())
         remaining = remaining[cut:].strip()
@@ -167,29 +161,61 @@ SYSTEM_PROMPT = """You are Claude, the AI overseer of the Gladius project — a 
 homelab network security audit platform. You have direct access to the project files and \
 infrastructure and can make changes as requested.
 
-## Project paths (inside your container)
-- /projects/repo/                       — git repository root (README.md, CLAUDE.md, etc.)
-- /projects/gladius-api/server.py       — FastAPI backend (Claude agent, SSE, all API endpoints)
-- /projects/network-audit-mcp/server.py — MCP server (SSH, ChromaDB, NVD, email, nmap tools)
-- /projects/web-projects/index.html     — entire frontend (single file, ~5000 lines, vanilla JS)
-- /projects/gladius-slack/app.py        — Slack network audit bot
-- /projects/gladius-overseer/app.py     — this service (you)
+## CRITICAL: Two separate locations — live files vs git repo
 
-## Deployment (files are volume-mounted — edits on disk are live immediately)
+The live files (what containers actually run) and the git repository are in DIFFERENT directories.
+You have access to both. You must keep them in sync when making or verting changes.
+
+### Live file paths (inside your container) — what containers actually serve
+- /projects/gladius-api/server.py       — running FastAPI backend
+- /projects/network-audit-mcp/server.py — running MCP server
+- /projects/web-projects/index.html     — file nginx is actively serving
+- /projects/gladius-slack/app.py        — running Slack audit bot
+- /projects/gladius-overseer/app.py     — this running service
+
+### Git repo paths (inside your container) — tracked by git, used for history/revert
+- /projects/repo/                           — git root (README.md, CLAUDE.md, etc.)
+- /projects/repo/gladius-api/server.py
+- /projects/repo/network-audit-mcp/server.py
+- /projects/repo/web-projects/gladius/index.html
+- /projects/repo/gladius-slack/app.py
+- /projects/repo/gladius-overseer/app.py
+
+## Workflow: making changes
+
+1. Edit the LIVE file (e.g. /projects/gladius-api/server.py) — takes effect immediately
+2. Restart the container if it's a Python service
+3. Copy the changed live file into the repo so git tracks it:
+   bash("cp /projects/gladius-api/server.py /projects/repo/gladius-api/server.py")
+   bash("cp /projects/web-projects/index.html /projects/repo/web-projects/gladius/index.html")
+4. Commit and push:
+   bash("cd /projects/repo && git add -A && git commit -m '...' && git push")
+
+## Workflow: reverting changes
+
+Git only tracks the repo copies. To revert a live file:
+
+1. Restore the repo copy to the desired state:
+   bash("cd /projects/repo && git checkout HEAD -- web-projects/gladius/index.html")
+2. Copy the restored repo file back to the live location:
+   bash("cp /projects/repo/web-projects/gladius/index.html /projects/web-projects/index.html")
+3. Restart the container if needed
+
+## Deployment after editing live files
 - After editing gladius-api/server.py:        bash("docker restart gladius-api")
 - After editing network-audit-mcp/server.py:  bash("docker restart network-audit-mcp && docker restart gladius-api")
-- After editing index.html:                   no restart needed
+- After editing index.html:                   no restart needed — nginx serves it immediately
 - After editing gladius-slack/app.py:         bash("docker restart gladius-slack")
 - After editing gladius-overseer/app.py:      bash("docker restart gladius-overseer")
-
-## Git workflow
-- The git repo root is /projects/repo/
-- Stage, commit and push: bash("cd /projects/repo && git add -A && git commit -m '...' && git push")
+  IMPORTANT: NEVER run docker stop, docker rm, or docker run for gladius-overseer.
+  Only ever use "docker restart gladius-overseer" — stop/rm will kill this process
+  mid-execution and the response will never be delivered.
 
 ## Guidelines
-- Make changes directly and confidently — no confirmation needed
+- Always keep the repo in sync with the live files after any change
+- Before making large or risky edits, commit the current state as a checkpoint first
 - After editing Python files, always restart the relevant container
-- Summarise what you changed and why in your final response
+- Keep your Slack responses concise — a short summary only, no tool-by-tool breakdown
 - Check logs if something seems wrong: bash("docker logs <container_name>")
 - Keep responses concise — the user is an engineer, not a beginner
 - You have FULL persistent conversation history. Every message you and the user have exchanged
@@ -402,48 +428,41 @@ def handle_message(body: dict, client) -> None:
 
     log.info("Sending %d message(s) of history for key %s", len(current_history), thread_key)
 
-    # Post placeholder immediately
+    # Post "working" placeholder — shown while Claude runs, deleted when done
+    placeholder_ts = None
     try:
-        placeholder = client.chat_postMessage(channel=channel, text="⚙️ On it...")
-        ts = placeholder["ts"]
+        placeholder = client.chat_postMessage(channel=channel, text="⚙️ Working...")
+        placeholder_ts = placeholder["ts"]
     except Exception as e:
         log.error("Failed to post placeholder: %s", e)
-        return
 
-    action_log: list[str] = []
+    # Run Claude agent (tool labels go to log only — not shown to user)
+    def update_fn(label: str) -> None:
+        log.info("Tool: %s", label)
 
-    def update_slack(label: str) -> None:
-        action_log.append(label)
-
-    # Run Claude agent
-    final_text = run_agent(current_history, update_slack)
+    final_text = run_agent(current_history, update_fn)
 
     # Persist assistant reply
     _append_history(thread_key, "assistant", final_text)
 
-    # Build action summary footer
-    completed = [l for l in action_log if l.startswith("✅")]
-    summary   = "\n".join(f"• {l}" for l in completed)
-    full_text = final_text
-    if summary:
-        full_text += f"\n\n*Actions taken:*\n{summary}"
+    # Delete the "Working..." placeholder
+    if placeholder_ts:
+        try:
+            client.chat_delete(channel=channel, ts=placeholder_ts)
+        except Exception as e:
+            log.warning("Could not delete placeholder: %s", e)
 
-    # Split into 2900-char chunks and send as multiple section blocks in ONE message.
-    # This avoids msg_too_long on chat.update and silent failures from multi-message sends.
-    chunks = _chunk_text(full_text)
-    blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": chunk}}
-        for chunk in chunks
-    ]
-    try:
-        client.chat_update(
-            channel=channel,
-            ts=ts,
-            text=final_text[:150],   # fallback notification text only
-            blocks=blocks,
-        )
-    except Exception as e:
-        log.error("Final Slack update failed: %s", e)
+    # Post the final summary as a NEW message — triggers a real Slack notification
+    chunks = _chunk_text(final_text)
+    for chunk in chunks:
+        try:
+            client.chat_postMessage(
+                channel=channel,
+                text=chunk,
+                blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": chunk}}],
+            )
+        except Exception as e:
+            log.error("Failed to post response chunk: %s", e)
 
 
 @app.event("message")
