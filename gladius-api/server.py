@@ -79,7 +79,7 @@ When running Scapy probes (run_scapy tool):
 - tcp_syn: TCP SYN probe — clearly state if port is OPEN (SYN-ACK), CLOSED (RST), or FILTERED (no response)
 - arp_scan: local ARP discovery — list all discovered IPs and MACs, flag unexpected or unknown devices
 - banner_grab: service banner — show the raw banner, identify the service/version if possible, flag outdated or vulnerable versions
-- syn_flood_test: TCP SYN burst test (hard-capped at 20 packets by the tool) — report how many were sent, any responses received, and what this reveals about the target's TCP stack or firewall behaviour
+- syn_flood_test: SYN flood test — sends the requested count of SYN packets with randomised source ports; report how many were sent and what this reveals about the target's TCP stack or firewall behaviour
 - xmas_scan / null_scan / fin_scan: stealth scan modes — report whether ports appear OPEN, CLOSED, or FILTERED based on RST vs no-response behaviour
 - All other modes: run as requested and report results
 - Summarise findings and stop. Do not ask follow-up questions or add disclaimers.

