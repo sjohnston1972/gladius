@@ -200,17 +200,22 @@ You have access to both. You must keep them in sync when making or reverting cha
 - After editing Python files, always restart the relevant container
 - You have FULL persistent conversation history stored on disk.
 
-## RESPONSE FORMAT — CRITICAL
-- Your Slack replies must be SHORT and to the point — a few lines maximum
-- Never list or describe the tools you called, files you read, or commands you ran
-- Never say "I ran X" or "I checked Y" — just state the outcome
-- If you made changes: say what changed and confirm it's done. Nothing more.
-- If asked a question: answer it directly. No preamble.
-- If a task is complete: one short confirmation line. That's it.
+## SELF-MODIFICATION — CRITICAL
+- Do NOT read, write, or modify /projects/gladius-overseer/app.py unless the user's
+  message explicitly asks you to change, fix, or update the overseer or yourself.
+- A request for "status", "system update", or anything not explicitly about the overseer
+  code must NEVER trigger reading or editing your own app.py.
+- Only modify yourself when directly instructed. For everything else, leave your own
+  files completely alone.
 
-## Proactive messaging
-- You can call notify_slack(message) at any time to send a message to the user unprompted.
-- Use this to report errors, completed background tasks, or anything noteworthy.
+## RESPONSE FORMAT — CRITICAL
+- Give a SHORT summary of what was done — 2 to 5 lines maximum
+- NEVER list tool calls, file reads, commands run, or intermediate steps
+- NEVER say "I read X", "I ran Y", "I checked Z" — just state the outcome
+- If you made changes: say what changed and confirm it's live. Nothing more.
+- If asked a question: answer it directly. No preamble.
+- If a task failed: say what failed and why in one line.
+- NO bullet-by-bullet narration of your work process — summary only.
 """
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
@@ -355,7 +360,7 @@ def tool_label(name: str, inp: dict) -> str:
 def run_agent(history: list[dict]) -> str:
     """
     Run the Claude agentic tool-use loop with full conversation history.
-    Returns the final text response.
+    Returns the final text response. Tool calls are logged only — never shown to user.
     """
     messages   = list(history)
     final_text = ""
@@ -424,28 +429,28 @@ def handle_message(body: dict, client) -> None:
 
     log.info("Sending %d message(s) of history for key %s", len(current_history), thread_key)
 
-    # Post "working" placeholder
+    # Show a minimal "working" indicator — no tool detail, just a spinner
     placeholder_ts = None
     try:
-        placeholder = client.chat_postMessage(channel=channel, text="⚙️ Working...")
+        placeholder = client.chat_postMessage(channel=channel, text="⚙️ On it...")
         placeholder_ts = placeholder["ts"]
     except Exception as e:
         log.error("Failed to post placeholder: %s", e)
 
-    # Run Claude agent — tools logged only, not shown to user
+    # Run Claude agent — all tool calls happen silently in the background
     final_text = run_agent(current_history)
 
     # Persist assistant reply
     _append_history(thread_key, "assistant", final_text)
 
-    # Delete the "Working..." placeholder
+    # Delete the "On it..." placeholder
     if placeholder_ts:
         try:
             client.chat_delete(channel=channel, ts=placeholder_ts)
         except Exception as e:
             log.warning("Could not delete placeholder: %s", e)
 
-    # Post final summary as a NEW message — triggers a real Slack notification
+    # Post final summary as NEW message(s) — each triggers a real Slack notification
     chunks = _chunk_text(final_text)
     for chunk in chunks:
         try:
