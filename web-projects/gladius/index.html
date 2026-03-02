@@ -710,6 +710,17 @@
 
   #page-nmap.active { display: flex; }
 
+  /* ── SCAPY PAGE ── */
+  #page-scapy {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    flex-direction: column;
+  }
+
+  #page-scapy.active { display: flex; }
+
   .audit-controls {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -1529,6 +1540,31 @@
     50% { opacity: 1; transform: scale(1); }
   }
 
+  /* ── SKIN: MERAKI ── Cloud · Clean White · Cisco Green */
+  html[data-skin="meraki"] {
+    --bg-deep: #EEF2F7;
+    --bg-panel: #FFFFFF;
+    --bg-card: #F8FAFC;
+    --bg-hover: #E2ECF6;
+    --border: #C8D6E5;
+    --border-bright: #94A8BE;
+    --accent: #1A9B3B;
+    --accent-dim: rgba(26,155,59,0.10);
+    --accent-glow: rgba(26,155,59,0.14);
+    --danger: #D12626;
+    --danger-dim: rgba(209,38,38,0.09);
+    --warn: #C97A06;
+    --warn-dim: rgba(201,122,6,0.10);
+    --success: #1A9B3B;
+    --success-dim: rgba(26,155,59,0.10);
+    --text-primary: #0D1B2A;
+    --text-secondary: #2D4A6A;
+    --text-dim: #6A8BAA;
+    --font-mono: 'Roboto Mono', monospace;
+    --font-ui: 'Inter', sans-serif;
+    --font-body: 'Inter', sans-serif;
+  }
+
   /* scan line overlay — dark skins only */
   html[data-skin="gladius"] body::after,
   html[data-skin="spatha"] body::after,
@@ -1666,6 +1702,10 @@
     <div class="nav-item" onclick="showPage('nmap', this)" title="NMAP Scanner">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
       <span>NMAP</span>
+    </div>
+    <div class="nav-item" onclick="showPage('scapy', this)" title="Scapy Packet Forge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span>Scapy</span>
     </div>
     <div class="nav-item" onclick="showPage('reports', this)" title="Reports">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
@@ -1880,6 +1920,83 @@
       </div>
     </div>
 
+    <!-- SCAPY PAGE -->
+    <div id="page-scapy" class="page">
+      <div class="audit-controls" style="flex-wrap:wrap">
+        <div class="form-group" style="flex:1;min-width:180px">
+          <label class="form-label">Target — IP / Hostname</label>
+          <input type="text" class="form-input" style="width:100%" placeholder="192.168.1.1" id="scapy-target" onkeydown="if(event.key==='Enter')launchScapyScan()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Mode</label>
+          <select class="form-select" id="scapy-mode" onchange="onScapyModeChange()">
+            <optgroup label="Discovery">
+              <option value="ping">Ping (ICMP)</option>
+              <option value="arp_scan">ARP Scan</option>
+              <option value="traceroute">Traceroute</option>
+            </optgroup>
+            <optgroup label="TCP / UDP">
+              <option value="tcp_syn">TCP SYN</option>
+              <option value="tcp_full">TCP Full Connect</option>
+              <option value="udp_probe">UDP Probe</option>
+              <option value="rst_probe">RST Probe</option>
+            </optgroup>
+            <optgroup label="Stealth Scans">
+              <option value="xmas_scan">Xmas Scan</option>
+              <option value="null_scan">Null Scan</option>
+              <option value="fin_scan">FIN Scan</option>
+            </optgroup>
+            <optgroup label="Service / Recon">
+              <option value="banner_grab">Banner Grab</option>
+              <option value="http_get">HTTP GET</option>
+              <option value="dns_query">DNS Query</option>
+              <option value="os_fingerprint">OS Fingerprint</option>
+            </optgroup>
+            <optgroup label="Advanced">
+              <option value="frag_ping">Fragmented Ping</option>
+              <option value="ttl_probe">TTL Probe</option>
+              <option value="sip_invite">SIP INVITE</option>
+              <option value="vlan_hop">VLAN Hop</option>
+              <option value="syn_flood_test">SYN Flood Test</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="form-group" id="scapy-port-grp">
+          <label class="form-label">Port</label>
+          <input type="number" class="form-input" placeholder="80" id="scapy-port" style="width:80px" min="1" max="65535">
+        </div>
+        <div class="form-group" id="scapy-count-grp">
+          <label class="form-label">Count</label>
+          <input type="number" class="form-input" placeholder="3" id="scapy-count" style="width:70px" min="1" max="100">
+        </div>
+        <div class="form-group" id="scapy-ttl-grp" style="display:none">
+          <label class="form-label">TTL</label>
+          <input type="number" class="form-input" placeholder="64" id="scapy-ttl" style="width:70px" min="1" max="255">
+        </div>
+        <div class="form-group" id="scapy-vlan-grp" style="display:none">
+          <label class="form-label">VLAN ID</label>
+          <input type="number" class="form-input" placeholder="1" id="scapy-vlan" style="width:80px" min="1" max="4094">
+        </div>
+        <div class="form-group" id="scapy-vlan2-grp" style="display:none">
+          <label class="form-label">Inner VLAN</label>
+          <input type="number" class="form-input" placeholder="2" id="scapy-vlan2" style="width:80px" min="1" max="4094">
+        </div>
+        <button class="btn btn-primary" id="scapy-launch-btn" onclick="launchScapyScan()">▶ FORGE PACKET</button>
+      </div>
+
+      <div class="panel" id="scapy-panel" style="flex:1">
+        <div class="panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <div class="panel-title" id="scapy-panel-title">SCAPY PACKET FORGE</div>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="scapy-status">Select a mode, enter a target, and hit FORGE PACKET</span>
+        </div>
+        <div class="panel-body" id="scapy-output" style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary);line-height:1.9;white-space:pre-wrap;overflow-y:auto">
+          <span style="color:var(--text-dim)">// Select a packet mode, enter a target, and hit FORGE PACKET</span>
+<span style="color:var(--text-dim)">// Gladius will craft and send packets via the MCP server and stream results here</span>
+        </div>
+      </div>
+    </div>
+
     <!-- REPORTS PAGE -->
     <div id="page-reports" class="page">
       <div class="panel" style="flex:1">
@@ -2055,6 +2172,17 @@
               <div class="skin-btn-desc">Warm · Earthy</div>
             </button>
 
+            <!-- Meraki -->
+            <button class="skin-btn" data-skin="meraki" onclick="setSkin('meraki')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#EEF2F7"></div>
+                <div class="skin-swatch" style="background:#1A9B3B"></div>
+                <div class="skin-swatch" style="background:#0D1B2A"></div>
+              </div>
+              <div class="skin-btn-name">Meraki</div>
+              <div class="skin-btn-desc">Cloud · High Contrast</div>
+            </button>
+
           </div>
         </div>
       </div>
@@ -2104,6 +2232,7 @@
       dashboard: 'DASHBOARD',
       chat: 'AGENT CHAT',
       nmap: 'NMAP SCANNER',
+      scapy: 'SCAPY PACKET FORGE',
       reports: 'REPORTS',
       cve: 'CVE LOOKUP',
       settings: 'CONFIGURATION'
@@ -3304,6 +3433,149 @@ ${cves.length ? `<!-- CVE TAB -->
       _stopVerbSpinner();
       _nmapRunning = false;
       if (btn) { btn.textContent = '▶ LAUNCH SCAN'; btn.disabled = false; }
+    }
+  }
+
+  // ── SCAPY ──
+
+  let _scapyRunning = false;
+  let _scapyVerbInterval = null;
+
+  const _PACKET_VERBS = [
+    'CRAFTING','FORGING','INJECTING','TRANSMITTING','PROBING',
+    'FIRING','LAUNCHING','DISPATCHING','SENDING','BROADCASTING',
+    'FLOODING','TRACING','FINGERPRINTING','INTERROGATING','SWEEPING',
+    'LISTENING','CAPTURING','SNIFFING','ANALYZING','DECODING',
+    'MAPPING','ENUMERATING','SURVEYING','SCOUTING','TARGETING',
+  ];
+
+  // Show/hide optional fields based on selected mode
+  function onScapyModeChange() {
+    const mode = document.getElementById('scapy-mode')?.value || '';
+    const portModes = ['tcp_syn','tcp_full','udp_probe','banner_grab','http_get','sip_invite','rst_probe','xmas_scan','null_scan','fin_scan','syn_flood_test'];
+    const ttlModes  = ['ttl_probe','frag_ping','traceroute'];
+    const vlanModes = ['vlan_hop'];
+
+    const show = (id, v) => { const el = document.getElementById(id); if (el) el.style.display = v ? 'flex' : 'none'; };
+    show('scapy-port-grp',  portModes.includes(mode));
+    show('scapy-count-grp', true); // always show count
+    show('scapy-ttl-grp',   ttlModes.includes(mode));
+    show('scapy-vlan-grp',  vlanModes.includes(mode));
+    show('scapy-vlan2-grp', vlanModes.includes(mode));
+  }
+
+  function _startScapySpinner() {
+    let i = 0;
+    const el = document.getElementById('scapy-verb-spinner');
+    if (el) el.textContent = `▶ ${_PACKET_VERBS[0]}…`;
+    _scapyVerbInterval = setInterval(() => {
+      i = (i + 1) % _PACKET_VERBS.length;
+      const el = document.getElementById('scapy-verb-spinner');
+      if (el) el.textContent = `▶ ${_PACKET_VERBS[i]}…`;
+    }, 620);
+  }
+
+  function _stopScapySpinner() {
+    clearInterval(_scapyVerbInterval);
+    _scapyVerbInterval = null;
+  }
+
+  async function launchScapyScan() {
+    if (_scapyRunning) return;
+    const target = (document.getElementById('scapy-target')?.value  || '').trim();
+    const mode   = document.getElementById('scapy-mode')?.value     || 'ping';
+    const port   = (document.getElementById('scapy-port')?.value    || '').trim();
+    const count  = (document.getElementById('scapy-count')?.value   || '').trim();
+    const ttl    = (document.getElementById('scapy-ttl')?.value     || '').trim();
+    const vlan   = (document.getElementById('scapy-vlan')?.value    || '').trim();
+    const vlan2  = (document.getElementById('scapy-vlan2')?.value   || '').trim();
+    const out    = document.getElementById('scapy-output');
+    const btn    = document.getElementById('scapy-launch-btn');
+    const status = document.getElementById('scapy-status');
+
+    if (!target) {
+      if (out) out.innerHTML = '<span style="color:var(--warn)">// Enter a target IP or hostname first</span>';
+      return;
+    }
+
+    _scapyRunning = true;
+    if (btn)    { btn.textContent = '◼ RUNNING'; btn.disabled = true; }
+    if (status) status.textContent = `${mode.toUpperCase()} → ${target}…`;
+    document.getElementById('scapy-panel-title').textContent = `FORGING — ${mode.toUpperCase()} → ${target}`;
+
+    // Build prompt for Claude
+    let prompt = `Use the run_scapy tool to run a ${mode} against target ${target}.`;
+    if (port)  prompt += ` Use port ${port}.`;
+    if (count) prompt += ` Send ${count} packet(s).`;
+    if (ttl)   prompt += ` Use TTL ${ttl}.`;
+    if (vlan)  prompt += ` VLAN ID: ${vlan}.`;
+    if (vlan2) prompt += ` Inner VLAN ID: ${vlan2}.`;
+    prompt += ` After the operation completes, summarise: what was sent, what responses were received, any notable observations about the target's behaviour, open ports, OS hints, or security implications.`;
+
+    let _scapyOutput =
+      `<span style="color:var(--accent)">// PACKET FORGE INITIATED — ${target} [${mode.toUpperCase()}]</span>\n` +
+      `<span style="color:var(--text-dim)">// Gladius agent is invoking Scapy via MCP…</span>\n\n`;
+
+    const _spinnerSpan = `<span id="scapy-verb-spinner" style="color:var(--accent);font-weight:600;letter-spacing:.05em">▶ CRAFTING…</span>`;
+    if (out) out.innerHTML = _scapyOutput + _spinnerSpan;
+    _startScapySpinner();
+
+    try {
+      const resp = await fetch('/api/chat', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '', agentText = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          try {
+            const ev = JSON.parse(line.slice(5).trim());
+            if (ev.type === 'text') {
+              _stopScapySpinner();
+              agentText += ev.content;
+              out.innerHTML =
+                `<span style="color:var(--accent)">// PACKET RESULTS — ${target} [${mode.toUpperCase()}]</span>\n\n` +
+                agentText;
+            } else if (ev.type === 'tool_start') {
+              const label = ev.tool === 'run_scapy'
+                ? `<span style="color:var(--warn)">▶ Scapy ${mode} running against ${target}…</span>\n`
+                : `<span style="color:var(--text-dim)">  [${ev.tool}]</span>\n`;
+              _stopScapySpinner();
+              _scapyOutput += label;
+              out.innerHTML = _scapyOutput;
+            } else if (ev.type === 'tool_done' && ev.tool === 'run_scapy') {
+              _scapyOutput += `<span style="color:var(--success)">✓ Scapy complete — parsing results…</span>\n\n`;
+              out.innerHTML = _scapyOutput;
+            } else if (ev.type === 'error') {
+              _stopScapySpinner();
+              _scapyOutput += `\n<span style="color:var(--danger)">// Error: ${ev.content}</span>`;
+              out.innerHTML = _scapyOutput;
+            }
+          } catch(e) { /* skip malformed lines */ }
+        }
+      }
+      if (status) status.textContent = 'Complete';
+      document.getElementById('scapy-panel-title').textContent = `RESULTS — ${mode.toUpperCase()} → ${target}`;
+    } catch(e) {
+      _stopScapySpinner();
+      if (out) { _scapyOutput += `\n<span style="color:var(--danger)">// Failed: ${e.message}</span>`; out.innerHTML = _scapyOutput; }
+      if (status) status.textContent = 'Failed';
+    } finally {
+      _stopScapySpinner();
+      _scapyRunning = false;
+      if (btn) { btn.textContent = '▶ FORGE PACKET'; btn.disabled = false; }
     }
   }
 

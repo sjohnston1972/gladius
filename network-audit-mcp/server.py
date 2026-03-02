@@ -202,6 +202,120 @@ async def list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="run_dig",
+            description=(
+                "Run a DNS dig query against a target domain or IP address. "
+                "Use to resolve DNS records, trace delegation chains, check zone transfers, "
+                "reverse-lookup IPs, and identify DNS misconfigurations or data-exfiltration risks. "
+                "Record types: A, AAAA, MX, NS, TXT, SOA, CNAME, PTR, SRV, CAA, DNSKEY, DS, AXFR, ANY. "
+                "Optionally specify a custom resolver (e.g. 8.8.8.8 or 1.1.1.1)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Domain name or IP address to query e.g. example.com or 8.8.8.8"
+                    },
+                    "record_type": {
+                        "type": "string",
+                        "description": "DNS record type to query",
+                        "enum": ["A", "AAAA", "MX", "NS", "TXT", "SOA", "CNAME", "PTR", "SRV", "CAA", "DNSKEY", "DS", "AXFR", "ANY"],
+                        "default": "A"
+                    },
+                    "resolver": {
+                        "type": "string",
+                        "description": "Custom DNS resolver IP to use e.g. 8.8.8.8 or 1.1.1.1 — optional, uses system default if omitted"
+                    },
+                    "options": {
+                        "type": "string",
+                        "description": "Additional dig flags e.g. +trace +short +dnssec +nocmd — optional"
+                    }
+                },
+                "required": ["target"]
+            }
+        ),
+        types.Tool(
+            name="run_scapy",
+            description=(
+                "Run a Scapy-based packet analysis or network probe. "
+                "Modes: ping (ICMP echo), traceroute (UDP/ICMP hop trace), "
+                "tcp_syn (SYN probe), tcp_full (full 3-way handshake), "
+                "arp_scan (LAN ARP discovery), banner_grab (TCP banner), "
+                "udp_probe (UDP port probe), "
+                "sip_invite (SIP INVITE over UDP to VoIP target), "
+                "http_get (raw HTTP GET request via TCP), "
+                "dns_query (raw DNS A query via UDP), "
+                "syn_flood_test (short burst SYN probe, rate-limited — for authorised pen-test only), "
+                "xmas_scan (FIN+PSH+URG TCP scan), "
+                "null_scan (no-flag TCP scan), "
+                "fin_scan (FIN-only TCP scan), "
+                "rst_probe (send TCP RST to test stateful firewall), "
+                "frag_ping (fragmented ICMP to test fragment reassembly), "
+                "ttl_probe (ICMP with custom TTL to map firewall distance), "
+                "os_fingerprint (send mixed TCP/ICMP probes for passive OS hints), "
+                "vlan_hop (802.1Q double-tag VLAN hopping frame — lab/pen-test only). "
+                "All operations use a timeout to avoid hanging."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "description": "Operation to perform",
+                        "enum": [
+                            "ping", "traceroute", "tcp_syn", "tcp_full",
+                            "arp_scan", "banner_grab", "udp_probe",
+                            "sip_invite", "http_get", "dns_query",
+                            "syn_flood_test", "xmas_scan", "null_scan",
+                            "fin_scan", "rst_probe", "frag_ping",
+                            "ttl_probe", "os_fingerprint", "vlan_hop"
+                        ],
+                        "default": "ping"
+                    },
+                    "target": {
+                        "type": "string",
+                        "description": "Target IP address or hostname (for arp_scan use CIDR e.g. 192.168.1.0/24)"
+                    },
+                    "port": {
+                        "type": "integer",
+                        "description": "TCP/UDP port — used for tcp_syn, tcp_full, banner_grab, udp_probe, http_get, sip_invite, syn_flood_test, xmas_scan, null_scan, fin_scan, rst_probe",
+                        "default": 80
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of packets / hops for ping, traceroute, syn_flood_test",
+                        "default": 4
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Per-packet timeout in seconds (1-10)",
+                        "default": 3
+                    },
+                    "ttl": {
+                        "type": "integer",
+                        "description": "Custom IP TTL value (1-255) — used for ttl_probe",
+                        "default": 64
+                    },
+                    "vlan_id": {
+                        "type": "integer",
+                        "description": "Outer VLAN ID for vlan_hop (1-4094)",
+                        "default": 1
+                    },
+                    "vlan_id2": {
+                        "type": "integer",
+                        "description": "Inner VLAN ID for vlan_hop double-tag (1-4094)",
+                        "default": 100
+                    },
+                    "payload": {
+                        "type": "string",
+                        "description": "Custom payload string for udp_probe or http_get Host header override"
+                    }
+                },
+                "required": ["target"]
+            }
+        ),
+        types.Tool(
             name="save_audit_results",
             description="Save completed audit results to the Gladius dashboard. Call this at the end of every audit.",
             inputSchema={
@@ -240,6 +354,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _send_email(**arguments)
     elif name == "run_nmap_scan":
         return await _run_nmap_scan(**arguments)
+    elif name == "run_dig":
+        return await _run_dig(**arguments)
+    elif name == "run_scapy":
+        return await _run_scapy(**arguments)
     elif name == "save_audit_results":
         return await _save_audit_results(**arguments)
     else:
@@ -623,6 +741,640 @@ async def _run_nmap_scan(
             return "ERROR: nmap not found. Rebuild the MCP container — the dockerfile now installs it."
         except Exception as exc:
             log.error(f"nmap error: {exc}")
+            return f"ERROR: {exc}"
+
+    output = await asyncio.to_thread(_blocking_run)
+    return [types.TextContent(type="text", text=output)]
+
+
+async def _run_dig(
+    target: str,
+    record_type: str = "A",
+    resolver: str = None,
+    options: str = None,
+) -> list[types.TextContent]:
+    """Run a dig DNS query and return the raw output."""
+    import re
+    import asyncio
+    import shlex
+    import subprocess
+
+    # Validate target — domains, IPs, IPv6, in-addr.arpa
+    if not re.match(r'^[a-zA-Z0-9.\-_:/\[\]@]+$', target):
+        return [types.TextContent(type="text", text="ERROR: Invalid target — only domain names and IP addresses are accepted.")]
+
+    # Validate record type
+    allowed_types = {"A","AAAA","MX","NS","TXT","SOA","CNAME","PTR","SRV","CAA","DNSKEY","DS","AXFR","ANY"}
+    record_type = record_type.upper() if record_type else "A"
+    if record_type not in allowed_types:
+        return [types.TextContent(type="text", text=f"ERROR: Invalid record type '{record_type}'.")]
+
+    cmd = ["dig"]
+
+    # Custom resolver
+    if resolver:
+        if re.match(r'^[0-9a-fA-F.:]+$', resolver):
+            cmd.append(f"@{resolver}")
+        else:
+            return [types.TextContent(type="text", text="ERROR: Invalid resolver address.")]
+
+    cmd += [target, record_type]
+
+    # Safe option whitelist — allow common +flags only
+    if options:
+        try:
+            extra = shlex.split(options)
+            safe_opts = [t for t in extra if re.match(r'^\+?[a-zA-Z0-9\-=]+$', t)]
+            cmd.extend(safe_opts)
+        except Exception:
+            pass
+
+    log.info(f"dig: {' '.join(cmd)}")
+
+    def _blocking_run() -> str:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            out = result.stdout.strip()
+            err = result.stderr.strip()
+            if err:
+                out = (out + "\n" + err).strip() if out else err
+            if not out:
+                out = f"dig exited {result.returncode} with no output."
+            return out
+        except subprocess.TimeoutExpired:
+            return "ERROR: dig timed out after 30 seconds."
+        except FileNotFoundError:
+            return "ERROR: dig not found. Install dnsutils in the MCP container."
+        except Exception as exc:
+            log.error(f"dig error: {exc}")
+            return f"ERROR: {exc}"
+
+    output = await asyncio.to_thread(_blocking_run)
+    return [types.TextContent(type="text", text=output)]
+
+
+
+async def _run_scapy(
+    target: str,
+    mode: str = "ping",
+    port: int = 80,
+    count: int = 4,
+    timeout: int = 3,
+    ttl: int = 64,
+    vlan_id: int = 1,
+    vlan_id2: int = 100,
+    payload: str = "",
+) -> list[types.TextContent]:
+    """Run a Scapy packet operation and return the results as text."""
+    import re
+    import asyncio
+    import subprocess
+
+    # Sanitise target — allow IPs, hostnames, CIDR
+    if not re.match(r'^[a-zA-Z0-9.\-_:/\[\]]+$', target):
+        return [types.TextContent(type="text", text="ERROR: Invalid target.")]
+
+    allowed_modes = {
+        "ping", "traceroute", "tcp_syn", "tcp_full",
+        "arp_scan", "banner_grab", "udp_probe",
+        "sip_invite", "http_get", "dns_query",
+        "syn_flood_test", "xmas_scan", "null_scan",
+        "fin_scan", "rst_probe", "frag_ping",
+        "ttl_probe", "os_fingerprint", "vlan_hop",
+    }
+    if mode not in allowed_modes:
+        return [types.TextContent(type="text", text=f"ERROR: Unknown mode '{mode}'.")]
+
+    timeout  = max(1, min(10,   int(timeout)))
+    count    = max(1, min(50,   int(count)))
+    port     = max(1, min(65535,int(port)))
+    ttl      = max(1, min(255,  int(ttl)))
+    vlan_id  = max(1, min(4094, int(vlan_id)))
+    vlan_id2 = max(1, min(4094, int(vlan_id2)))
+    # Sanitise payload — printable ASCII only
+    payload  = re.sub(r'[^\x20-\x7e]', '', str(payload))[:256]
+
+    # ── Scripts ──────────────────────────────────────────────────────────────
+
+    if mode == "ping":
+        script = f"""
+from scapy.all import IP, ICMP, sr1, conf
+conf.verb = 0
+results = []
+for i in range({count}):
+    pkt = sr1(IP(dst="{target}")/ICMP(), timeout={timeout}, verbose=0)
+    if pkt:
+        results.append(f"Reply from {{pkt.src}}: ttl={{pkt.ttl}} time={{pkt.time:.3f}}s")
+    else:
+        results.append("Request timed out")
+print("\n".join(results))
+"""
+
+    elif mode == "traceroute":
+        script = f"""
+from scapy.all import IP, UDP, ICMP, sr1, conf
+conf.verb = 0
+results = []
+for ttl in range(1, {count} + 1):
+    pkt = sr1(IP(dst="{target}", ttl=ttl)/UDP(dport=33434+ttl), timeout={timeout}, verbose=0)
+    if pkt is None:
+        results.append(f"  {{ttl:2d}}  * * *")
+    elif pkt.haslayer(ICMP) and pkt[ICMP].type == 11:
+        results.append(f"  {{ttl:2d}}  {{pkt.src}}")
+    elif pkt.haslayer(ICMP) and pkt[ICMP].type == 3:
+        results.append(f"  {{ttl:2d}}  {{pkt.src}}  [Destination reached]")
+        break
+    else:
+        results.append(f"  {{ttl:2d}}  {{pkt.src}}")
+        break
+print(f"Traceroute to {target} (max {count} hops):")
+print("\n".join(results))
+"""
+
+    elif mode == "tcp_syn":
+        script = f"""
+from scapy.all import IP, TCP, sr1, conf
+import random
+conf.verb = 0
+sport = random.randint(1024, 65535)
+pkt = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="S"), timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"No response from {target}:{port} (filtered or host down)")
+elif pkt.haslayer("TCP"):
+    flags = pkt["TCP"].flags
+    if flags == 0x12:
+        print(f"TCP SYN-ACK received from {target}:{port} — port OPEN")
+    elif flags == 0x14:
+        print(f"TCP RST-ACK received from {target}:{port} — port CLOSED")
+    else:
+        print(f"TCP response flags={{flags}} from {target}:{port}")
+else:
+    print(f"Non-TCP response: {{pkt.summary()}}")
+"""
+
+    elif mode == "tcp_full":
+        script = f"""
+from scapy.all import IP, TCP, sr1, send, conf
+import random, time
+conf.verb = 0
+sport = random.randint(1024, 65535)
+seq   = random.randint(1000, 9999999)
+# Step 1: SYN
+syn = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="S", seq=seq), timeout={timeout}, verbose=0)
+if syn is None:
+    print(f"SYN: No response from {target}:{port}")
+elif not syn.haslayer("TCP"):
+    print(f"SYN: Non-TCP response — {{syn.summary()}}")
+elif syn["TCP"].flags == 0x12:
+    print(f"SYN-ACK received from {target}:{port} — port OPEN")
+    # Step 2: ACK
+    ack_pkt = IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="A",
+                  seq=seq+1, ack=syn["TCP"].seq+1)
+    send(ack_pkt, verbose=0)
+    print(f"ACK sent — 3-way handshake complete")
+    # Step 3: RST to tear down cleanly
+    time.sleep(0.1)
+    rst_pkt = IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="R",
+                  seq=seq+1, ack=syn["TCP"].seq+1)
+    send(rst_pkt, verbose=0)
+    print(f"RST sent — connection torn down cleanly")
+elif syn["TCP"].flags & 0x04:
+    print(f"RST received from {target}:{port} — port CLOSED")
+else:
+    print(f"Unexpected flags={{syn['TCP'].flags}} from {target}:{port}")
+"""
+
+    elif mode == "arp_scan":
+        script = f"""
+from scapy.all import ARP, Ether, srp, conf
+conf.verb = 0
+ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff")/ARP(pdst="{target}"), timeout={timeout}, verbose=0)
+if not ans:
+    print("No hosts responded to ARP on {target}")
+else:
+    print(f"ARP scan results for {target}:")
+    print(f"  {{'IP':<18}} {{'MAC':<20}}")
+    print(f"  {{'—'*38}}")
+    for snd, rcv in ans:
+        print(f"  {{rcv.psrc:<18}} {{rcv.hwsrc:<20}}")
+    print(f"\n{{len(ans)}} host(s) found")
+"""
+
+    elif mode == "banner_grab":
+        script = f"""
+import socket
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout({timeout})
+    s.connect(("{target}", {port}))
+    try:
+        banner = s.recv(1024).decode("utf-8", errors="replace").strip()
+        print(f"Banner from {target}:{port}:")
+        print(banner if banner else "(no banner received)")
+    except Exception:
+        print(f"Connected to {target}:{port} but no banner received within {timeout}s")
+    s.close()
+except ConnectionRefusedError:
+    print(f"Connection refused: {target}:{port} is CLOSED")
+except socket.timeout:
+    print(f"Timeout connecting to {target}:{port} — port may be filtered")
+except Exception as e:
+    print(f"Error: {{e}}")
+"""
+
+    elif mode == "udp_probe":
+        probe_payload = payload if payload else "\x00" * 4
+        script = f"""
+from scapy.all import IP, UDP, ICMP, sr1, conf
+conf.verb = 0
+data = {repr(probe_payload)}
+pkt = sr1(IP(dst="{target}")/UDP(dport={port})/data, timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"UDP {target}:{port} — no response (open|filtered)")
+elif pkt.haslayer(ICMP):
+    icmp = pkt[ICMP]
+    if icmp.type == 3 and icmp.code == 3:
+        print(f"UDP {target}:{port} — ICMP Port Unreachable (port CLOSED)")
+    elif icmp.type == 3:
+        print(f"UDP {target}:{port} — ICMP Unreachable type=3 code={{icmp.code}} (filtered)")
+    else:
+        print(f"UDP {target}:{port} — ICMP type={{icmp.type}} code={{icmp.code}}")
+elif pkt.haslayer(UDP):
+    print(f"UDP {target}:{port} — UDP response received (port OPEN)")
+    print(f"Payload: {{bytes(pkt[UDP].payload)[:64]}}")
+else:
+    print(f"UDP {target}:{port} — unexpected response: {{pkt.summary()}}")
+"""
+
+    elif mode == "sip_invite":
+        sip_port = port if port != 80 else 5060
+        script = f"""
+from scapy.all import IP, UDP, sr1, conf
+import random
+conf.verb = 0
+call_id = hex(random.randint(0x10000, 0xFFFFFF))[2:]
+branch  = hex(random.randint(0x10000, 0xFFFFFF))[2:]
+src_ip  = "10.0.0.1"
+sip_msg = (
+    "INVITE sip:1000@{target} SIP/2.0\r\n"
+    f"Via: SIP/2.0/UDP {{src_ip}}:{sip_port};branch=z9hG4bK{{branch}}\r\n"
+    f"From: <sip:gladius@{{src_ip}}>;tag=gladius{call_id}\r\n"
+    "To: <sip:1000@{target}>\r\n"
+    f"Call-ID: {call_id}@{{src_ip}}\r\n"
+    "CSeq: 1 INVITE\r\n"
+    "Contact: <sip:gladius@{{src_ip}}>\r\n"
+    "Max-Forwards: 70\r\n"
+    "Content-Type: application/sdp\r\n"
+    "Content-Length: 0\r\n"
+    "\r\n"
+)
+pkt = sr1(
+    IP(dst="{target}")/UDP(dport={sip_port}, sport=random.randint(5000,5999))/sip_msg.encode(),
+    timeout={timeout}, verbose=0
+)
+if pkt is None:
+    print(f"SIP INVITE to {target}:{sip_port} — no response (host down or filtered)")
+elif pkt.haslayer(UDP):
+    payload = bytes(pkt[UDP].payload).decode("utf-8", errors="replace")
+    first_line = payload.split("\r\n")[0] if payload else "(empty)"
+    print(f"SIP response from {target}:{sip_port}:")
+    print(first_line)
+    if "100" in first_line: print("  → Trying (ringing or processing)")
+    elif "180" in first_line: print("  → Ringing")
+    elif "200" in first_line: print("  → OK (call accepted — SIP service exposed!)")
+    elif "403" in first_line: print("  → Forbidden (auth required)")
+    elif "404" in first_line: print("  → Not Found")
+    elif "405" in first_line: print("  → Method Not Allowed")
+    elif "486" in first_line: print("  → Busy Here")
+    else: print(f"  → Full response:\n{{payload[:400]}}")
+else:
+    print(f"Non-UDP response: {{pkt.summary()}}")
+"""
+
+    elif mode == "http_get":
+        http_port = port if port != 80 else 80
+        host_header = payload if payload else target
+        script = f"""
+from scapy.all import IP, TCP, sr1, sr, send, conf
+import random, time
+conf.verb = 0
+sport = random.randint(1024, 65535)
+seq   = random.randint(1000, 9999999)
+
+# SYN
+syn = sr1(IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="S", seq=seq),
+          timeout={timeout}, verbose=0)
+if not syn or not syn.haslayer("TCP") or syn["TCP"].flags != 0x12:
+    print(f"TCP handshake failed to {target}:{http_port} — port closed or filtered")
+    exit()
+
+seq += 1
+ack_num = syn["TCP"].seq + 1
+
+# ACK
+send(IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="A",
+     seq=seq, ack=ack_num), verbose=0)
+
+# HTTP GET
+http_req = (
+    f"GET / HTTP/1.1\r\n"
+    f"Host: {host_header}\r\n"
+    "User-Agent: Gladius-Security-Scanner/1.0\r\n"
+    "Accept: */*\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+)
+resp = sr1(
+    IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="PA",
+       seq=seq, ack=ack_num)/http_req.encode(),
+    timeout={timeout}, verbose=0
+)
+if resp and resp.haslayer("TCP") and resp.haslayer("Raw"):
+    raw = bytes(resp["Raw"].load).decode("utf-8", errors="replace")
+    lines = raw.split("\r\n")
+    status = lines[0] if lines else "(empty)"
+    headers = [l for l in lines[1:] if ":" in l][:12]
+    print(f"HTTP response from {target}:{http_port}")
+    print(f"Status: {{status}}")
+    print("Headers:")
+    for h in headers:
+        print(f"  {{h}}")
+elif resp:
+    print(f"TCP response (no HTTP data): {{resp.summary()}}")
+else:
+    print(f"No response to HTTP GET from {target}:{http_port}")
+
+# RST to close
+send(IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="R",
+     seq=seq+len(http_req), ack=ack_num), verbose=0)
+"""
+
+    elif mode == "dns_query":
+        script = f"""
+from scapy.all import IP, UDP, DNS, DNSQR, sr1, conf
+conf.verb = 0
+pkt = sr1(
+    IP(dst="{target}")/UDP(dport=53)/DNS(rd=1, qd=DNSQR(qname="{target}")),
+    timeout={timeout}, verbose=0
+)
+if pkt is None:
+    print(f"No DNS response from {target}:53 (not a resolver or filtered)")
+elif pkt.haslayer(DNS):
+    dns = pkt[DNS]
+    print(f"DNS response from {target}:53")
+    print(f"  RCODE: {dns.rcode} (" + ("NOERROR" if dns.rcode==0 else "ERROR") + ")")
+    print(f"  Answers: {{dns.ancount}}")
+    if dns.ancount > 0:
+        an = dns.an
+        while an:
+            try:
+                print(f"  → {{an.rrname.decode()}} {{an.type}} {{an.rdata}}")
+            except Exception:
+                print(f"  → {{an.summary()}}")
+            an = an.payload if an.payload and hasattr(an.payload, 'rrname') else None
+    if dns.rcode == 0 and dns.ancount == 0:
+        print("  (Open resolver responded but no A record found for this target)")
+else:
+    print(f"Unexpected response: {{pkt.summary()}}")
+"""
+
+    elif mode == "syn_flood_test":
+        burst = min(count, 20)   # hard cap — not a real flood
+        script = f"""
+from scapy.all import IP, TCP, send, conf
+import random, time
+conf.verb = 0
+print(f"SYN burst test: sending {burst} SYN packets to {target}:{port}")
+sent = 0
+for _ in range({burst}):
+    sport = random.randint(1024, 65535)
+    seq   = random.randint(0, 0xFFFFFF)
+    send(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="S", seq=seq), verbose=0)
+    sent += 1
+    time.sleep(0.05)
+print(f"Sent {{sent}} SYN packets — check target for SYN_RECV state accumulation")
+print("NOTE: This is a low-rate test burst, not a real flood. Authorised use only.")
+"""
+
+    elif mode == "xmas_scan":
+        script = f"""
+from scapy.all import IP, TCP, sr1, conf
+import random
+conf.verb = 0
+sport = random.randint(1024, 65535)
+# Xmas: FIN(0x01) + PSH(0x08) + URG(0x20) = 0x29
+pkt = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags=0x29), timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"Xmas scan {target}:{port} — No response → port OPEN or FILTERED (RFC 793)")
+elif pkt.haslayer("TCP") and pkt["TCP"].flags & 0x04:
+    print(f"Xmas scan {target}:{port} — RST received → port CLOSED")
+elif pkt.haslayer("ICMP"):
+    print(f"Xmas scan {target}:{port} — ICMP unreachable → port FILTERED")
+else:
+    print(f"Xmas scan {target}:{port} — Unexpected: {{pkt.summary()}}")
+"""
+
+    elif mode == "null_scan":
+        script = f"""
+from scapy.all import IP, TCP, sr1, conf
+import random
+conf.verb = 0
+sport = random.randint(1024, 65535)
+pkt = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags=0), timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"Null scan {target}:{port} — No response → port OPEN or FILTERED")
+elif pkt.haslayer("TCP") and pkt["TCP"].flags & 0x04:
+    print(f"Null scan {target}:{port} — RST received → port CLOSED")
+elif pkt.haslayer("ICMP"):
+    print(f"Null scan {target}:{port} — ICMP unreachable → FILTERED")
+else:
+    print(f"Null scan {target}:{port} — Unexpected: {{pkt.summary()}}")
+"""
+
+    elif mode == "fin_scan":
+        script = f"""
+from scapy.all import IP, TCP, sr1, conf
+import random
+conf.verb = 0
+sport = random.randint(1024, 65535)
+pkt = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="F"), timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"FIN scan {target}:{port} — No response → port OPEN or FILTERED (RFC 793)")
+elif pkt.haslayer("TCP") and pkt["TCP"].flags & 0x04:
+    print(f"FIN scan {target}:{port} — RST received → port CLOSED")
+elif pkt.haslayer("ICMP"):
+    print(f"FIN scan {target}:{port} — ICMP unreachable → FILTERED")
+else:
+    print(f"FIN scan {target}:{port} — Unexpected: {{pkt.summary()}}")
+"""
+
+    elif mode == "rst_probe":
+        script = f"""
+from scapy.all import IP, TCP, sr1, conf
+import random
+conf.verb = 0
+sport = random.randint(1024, 65535)
+# Send RST — a stateful firewall will silently drop it; a stateless one may pass it
+pkt = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="R", seq=1000),
+          timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"RST probe {target}:{port} — No response (stateful firewall likely dropped it)")
+elif pkt.haslayer("TCP"):
+    flags = pkt["TCP"].flags
+    print(f"RST probe {target}:{port} — TCP response flags={{flags}} (unexpected — may be stateless device)")
+elif pkt.haslayer("ICMP"):
+    print(f"RST probe {target}:{port} — ICMP response: {{pkt['ICMP'].type}}/{{pkt['ICMP'].code}}")
+else:
+    print(f"RST probe {target}:{port} — Unexpected: {{pkt.summary()}}")
+"""
+
+    elif mode == "frag_ping":
+        script = f"""
+from scapy.all import IP, ICMP, fragment, sr, conf
+conf.verb = 0
+# Build a large ICMP packet and fragment it into 2 fragments (tests fragment reassembly)
+big_pkt = IP(dst="{target}")/ICMP()/("X"*600)
+frags   = fragment(big_pkt, fragsize=300)
+print(f"Sending {{len(frags)}} ICMP fragments to {target}...")
+ans, unans = sr(frags, timeout={timeout}, verbose=0)
+if ans:
+    for snd, rcv in ans:
+        print(f"Reply from {{rcv.src}}: ttl={{rcv.ttl}}")
+    print(f"\nFragmented ICMP reassembled correctly — host processes IP fragments")
+else:
+    print(f"No reply to fragmented ICMP — host may be filtering fragments or is down")
+"""
+
+    elif mode == "ttl_probe":
+        script = f"""
+from scapy.all import IP, ICMP, sr1, conf
+conf.verb = 0
+pkt = sr1(IP(dst="{target}", ttl={ttl})/ICMP(), timeout={timeout}, verbose=0)
+if pkt is None:
+    print(f"TTL probe TTL={ttl} → {target} — No response (host unreachable at this TTL or filtered)")
+elif pkt.haslayer(ICMP):
+    icmp = pkt[ICMP]
+    if icmp.type == 11:
+        print(f"TTL probe TTL={ttl} — ICMP Time Exceeded from {{pkt.src}}")
+        print(f"  → Intermediate hop at TTL={ttl}: {{pkt.src}}")
+    elif icmp.type == 0:
+        print(f"TTL probe TTL={ttl} — Echo Reply from {{pkt.src}} (host reached within TTL={ttl})")
+        print(f"  → {target} is at most {ttl} hop(s) away")
+    elif icmp.type == 3:
+        print(f"TTL probe TTL={ttl} — ICMP Unreachable from {{pkt.src}} (code={{icmp.code}})")
+    else:
+        print(f"TTL probe TTL={ttl} — ICMP type={{icmp.type}} from {{pkt.src}}")
+else:
+    print(f"TTL probe TTL={ttl} — Non-ICMP response: {{pkt.summary()}}")
+"""
+
+    elif mode == "os_fingerprint":
+        script = f"""
+from scapy.all import IP, TCP, ICMP, UDP, sr1, conf
+import random
+conf.verb = 0
+results = []
+sport = random.randint(1024, 65535)
+
+# Probe 1: TCP SYN — check window size + options (key OS fingerprint indicators)
+syn = sr1(IP(dst="{target}")/TCP(sport=sport, dport={port}, flags="S",
+              options=[("MSS",1460),("SAckOK",""),("Timestamp",(0,0),),("WScale",7)]),
+          timeout={timeout}, verbose=0)
+if syn and syn.haslayer("TCP"):
+    tcp = syn["TCP"]
+    results.append(f"TCP SYN response:")
+    results.append(f"  Window size : {{tcp.window}}")
+    results.append(f"  Flags       : {{tcp.flags}}")
+    results.append(f"  Options     : {{tcp.options}}")
+    win = tcp.window
+    if win == 65535:
+        results.append("  → Window=65535: likely macOS/BSD")
+    elif win == 8192:
+        results.append("  → Window=8192: likely older Windows")
+    elif win in (5840, 5792, 14600, 29200, 65483):
+        results.append("  → Common Linux window size")
+    elif 14000 <= win <= 16000:
+        results.append("  → Possible Cisco IOS")
+    else:
+        results.append(f"  → Window={win}: unknown or modern OS (auto-tuning)")
+else:
+    results.append(f"TCP SYN to {target}:{port} — no response")
+
+# Probe 2: ICMP echo — check TTL for OS distance estimation
+icmp = sr1(IP(dst="{target}")/ICMP(), timeout={timeout}, verbose=0)
+if icmp:
+    ttl = icmp.ttl
+    results.append(f"ICMP Echo Reply TTL: {{ttl}}")
+    if ttl >= 128:
+        results.append(f"  → TTL {{ttl}}: likely Windows (default 128)")
+    elif ttl >= 64:
+        results.append(f"  → TTL {{ttl}}: likely Linux/macOS (default 64)")
+    elif ttl >= 60:
+        results.append(f"  → TTL {{ttl}}: possibly Cisco IOS (default 255, reduced)")
+    else:
+        results.append(f"  → TTL {{ttl}}: possibly many hops away or uncommon OS")
+else:
+    results.append("ICMP — no echo reply")
+
+print("\n".join(results))
+"""
+
+    elif mode == "vlan_hop":
+        script = f"""
+from scapy.all import Ether, Dot1Q, IP, ICMP, sendp, conf
+conf.verb = 0
+# 802.1Q double-tagging VLAN hopping frame
+# Outer tag = native VLAN (trunk port VLAN), inner tag = target VLAN
+pkt = (
+    Ether(dst="ff:ff:ff:ff:ff:ff") /
+    Dot1Q(vlan={vlan_id}) /          # Outer tag — stripped by switch
+    Dot1Q(vlan={vlan_id2}) /         # Inner tag — forwarded into target VLAN
+    IP(dst="{target}") /
+    ICMP()
+)
+print(f"VLAN hopping frame: outer VLAN={vlan_id} → inner VLAN={vlan_id2} → {target}")
+print(f"Sending on default interface (requires trunk/access port in VLAN {vlan_id})...")
+try:
+    sendp(pkt, verbose=0, count=3)
+    print(f"3 double-tagged frames sent.")
+    print(f"  If the switch trunk port uses VLAN {vlan_id} as native VLAN (untagged),")
+    print(f"  the outer tag is stripped and the inner VLAN {vlan_id2} frame is forwarded.")
+    print(f"  Mitigation: never use VLAN 1 as native VLAN; set all trunk ports explicitly.")
+except Exception as e:
+    print(f"Send error: {{e}}")
+"""
+
+    else:
+        script = f'print("ERROR: mode not implemented")'
+
+    # ── subprocess runner ──────────────────────────────────────────────────
+    def _blocking_run() -> str:
+        try:
+            result = subprocess.run(
+                ["python3", "-c", script],
+                capture_output=True,
+                text=True,
+                timeout=max(60, timeout * count * 2 + 15),
+            )
+            out = result.stdout.strip()
+            err = result.stderr.strip()
+            if err:
+                err_lines = [l for l in err.splitlines() if not any(x in l for x in
+                    ["WARNING", "Scapy", "DeprecationWarning", "conf", "IPv6",
+                     "pcap", "libpcap", "UserWarning", "FutureWarning"])]
+                err = "\n".join(err_lines).strip()
+            if err:
+                out = (out + "\n" + err).strip() if out else err
+            return out if out else f"(no output from scapy {mode})"
+        except subprocess.TimeoutExpired:
+            return f"ERROR: Scapy {mode} timed out."
+        except Exception as exc:
+            log.error(f"scapy error: {exc}")
             return f"ERROR: {exc}"
 
     output = await asyncio.to_thread(_blocking_run)
