@@ -18,7 +18,7 @@ APP_TOKEN         = os.getenv("SLACK_APP_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
 client_ai  = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-slack_web  = SlackWebClient(token=BOT_TOKEN)   # standalone web client for proactive msgs
+slack_web  = SlackWebClient(token=BOT_TOKEN)
 app        = App(token=BOT_TOKEN)
 
 # ── Persistent conversation history ───────────────────────────────────────────
@@ -47,13 +47,10 @@ _dm_channel = _load_dm_channel()
 
 
 def notify_slack(message: str, channel: str | None = None) -> bool:
-    """
-    Send a proactive message to Slack. Uses the stored DM channel by default.
-    Returns True on success, False on failure.
-    """
+    """Send a proactive message to Slack. Uses the stored DM channel by default."""
     target = channel or _dm_channel
     if not target:
-        log.warning("notify_slack: no channel available yet — user hasn't DM'd me")
+        log.warning("notify_slack: no channel available yet")
         return False
     try:
         chunks = _chunk_text(message)
@@ -164,7 +161,7 @@ infrastructure and can make changes as requested.
 ## CRITICAL: Two separate locations — live files vs git repo
 
 The live files (what containers actually run) and the git repository are in DIFFERENT directories.
-You have access to both. You must keep them in sync when making or verting changes.
+You have access to both. You must keep them in sync when making or reverting changes.
 
 ### Live file paths (inside your container) — what containers actually serve
 - /projects/gladius-api/server.py       — running FastAPI backend
@@ -185,42 +182,31 @@ You have access to both. You must keep them in sync when making or verting chang
 
 1. Edit the LIVE file (e.g. /projects/gladius-api/server.py) — takes effect immediately
 2. Restart the container if it's a Python service
-3. Copy the changed live file into the repo so git tracks it:
-   bash("cp /projects/gladius-api/server.py /projects/repo/gladius-api/server.py")
-   bash("cp /projects/web-projects/index.html /projects/repo/web-projects/gladius/index.html")
-4. Commit and push:
-   bash("cd /projects/repo && git add -A && git commit -m '...' && git push")
-
-## Workflow: reverting changes
-
-Git only tracks the repo copies. To revert a live file:
-
-1. Restore the repo copy to the desired state:
-   bash("cd /projects/repo && git checkout HEAD -- web-projects/gladius/index.html")
-2. Copy the restored repo file back to the live location:
-   bash("cp /projects/repo/web-projects/gladius/index.html /projects/web-projects/index.html")
-3. Restart the container if needed
+3. Copy the changed live file into the repo so git tracks it
+4. Commit and push
 
 ## Deployment after editing live files
 - After editing gladius-api/server.py:        bash("docker restart gladius-api")
 - After editing network-audit-mcp/server.py:  bash("docker restart network-audit-mcp && docker restart gladius-api")
-- After editing index.html:                   no restart needed — nginx serves it immediately
+- After editing index.html:                   no restart needed
 - After editing gladius-slack/app.py:         bash("docker restart gladius-slack")
 - After editing gladius-overseer/app.py:      bash("docker restart gladius-overseer")
   IMPORTANT: NEVER run docker stop, docker rm, or docker run for gladius-overseer.
-  Only ever use "docker restart gladius-overseer" — stop/rm will kill this process
-  mid-execution and the response will never be delivered.
+  Only ever use "docker restart gladius-overseer".
 
 ## Guidelines
 - Always keep the repo in sync with the live files after any change
 - Before making large or risky edits, commit the current state as a checkpoint first
 - After editing Python files, always restart the relevant container
-- Keep your Slack responses concise — a short summary only, no tool-by-tool breakdown
-- Check logs if something seems wrong: bash("docker logs <container_name>")
-- Keep responses concise — the user is an engineer, not a beginner
-- You have FULL persistent conversation history. Every message you and the user have exchanged
-  is stored on disk and provided to you on every turn. Never claim you don't have memory or
-  that history doesn't persist — it does. Reference prior conversation confidently and directly.
+- You have FULL persistent conversation history stored on disk.
+
+## RESPONSE FORMAT — CRITICAL
+- Your Slack replies must be SHORT and to the point — a few lines maximum
+- Never list or describe the tools you called, files you read, or commands you ran
+- Never say "I ran X" or "I checked Y" — just state the outcome
+- If you made changes: say what changed and confirm it's done. Nothing more.
+- If asked a question: answer it directly. No preamble.
+- If a task is complete: one short confirmation line. That's it.
 
 ## Proactive messaging
 - You can call notify_slack(message) at any time to send a message to the user unprompted.
@@ -315,8 +301,18 @@ def exec_tool(name: str, inp: dict) -> str:
             return f"Written: {path}"
 
         elif name == "bash":
+            cmd = inp["command"]
+            # If the command restarts this container, defer it so the reply
+            # is posted first — otherwise we kill ourselves before responding.
+            if "docker restart gladius-overseer" in cmd:
+                def _deferred():
+                    import time
+                    time.sleep(8)
+                    subprocess.run(cmd, shell=True)
+                threading.Thread(target=_deferred, daemon=True).start()
+                return "Restart scheduled — will execute in ~8 seconds after this reply is sent."
             result = subprocess.run(
-                inp["command"],
+                cmd,
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -356,7 +352,7 @@ def tool_label(name: str, inp: dict) -> str:
     return name
 
 
-def run_agent(history: list[dict], update_fn) -> str:
+def run_agent(history: list[dict]) -> str:
     """
     Run the Claude agentic tool-use loop with full conversation history.
     Returns the final text response.
@@ -385,9 +381,9 @@ def run_agent(history: list[dict], update_fn) -> str:
             if block.type != "tool_use":
                 continue
             label = tool_label(block.name, block.input)
-            update_fn(f"⏳ {label}")
+            log.info("Tool: %s", label)
             result = exec_tool(block.name, block.input)
-            update_fn(f"✅ {label}")
+            log.info("Tool done: %s", label)
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
@@ -428,7 +424,7 @@ def handle_message(body: dict, client) -> None:
 
     log.info("Sending %d message(s) of history for key %s", len(current_history), thread_key)
 
-    # Post "working" placeholder — shown while Claude runs, deleted when done
+    # Post "working" placeholder
     placeholder_ts = None
     try:
         placeholder = client.chat_postMessage(channel=channel, text="⚙️ Working...")
@@ -436,11 +432,8 @@ def handle_message(body: dict, client) -> None:
     except Exception as e:
         log.error("Failed to post placeholder: %s", e)
 
-    # Run Claude agent (tool labels go to log only — not shown to user)
-    def update_fn(label: str) -> None:
-        log.info("Tool: %s", label)
-
-    final_text = run_agent(current_history, update_fn)
+    # Run Claude agent — tools logged only, not shown to user
+    final_text = run_agent(current_history)
 
     # Persist assistant reply
     _append_history(thread_key, "assistant", final_text)
@@ -452,7 +445,7 @@ def handle_message(body: dict, client) -> None:
         except Exception as e:
             log.warning("Could not delete placeholder: %s", e)
 
-    # Post the final summary as a NEW message — triggers a real Slack notification
+    # Post final summary as a NEW message — triggers a real Slack notification
     chunks = _chunk_text(final_text)
     for chunk in chunks:
         try:
