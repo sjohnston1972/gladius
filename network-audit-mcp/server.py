@@ -850,9 +850,9 @@ async def _run_scapy(
     if mode not in allowed_modes:
         return [types.TextContent(type="text", text=f"ERROR: Unknown mode '{mode}'.")]
 
-    timeout  = max(1, min(10,   int(timeout)))
-    count    = max(1, min(50,   int(count)))
-    port     = max(1, min(65535,int(port)))
+    timeout  = max(1, min(10,    int(timeout)))
+    count    = max(1,            int(count))
+    port     = max(1, min(65535, int(port)))
     ttl      = max(1, min(255,  int(ttl)))
     vlan_id  = max(1, min(4094, int(vlan_id)))
     vlan_id2 = max(1, min(4094, int(vlan_id2)))
