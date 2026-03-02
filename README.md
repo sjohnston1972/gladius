@@ -44,7 +44,8 @@ Tell Gladius an IP address. It handles everything else — no scripts to run, no
 | **Templated HTML Reports** | Standalone HTML reports with compliance gauge, category scorecard, remediation plan with copyable CLI commands, and pre-deployment checklist. |
 | **Email Delivery** | Reports emailed as HTML attachments via SMTP. Ask in chat or click the email button — both produce the same templated output. |
 | **Audit History** | Last 10 audits stored in the browser. Reports tab shows history across devices with one-click export. |
-| **Slack Integration** | Chat with Gladius directly from Slack — DMs or @mentions. Audit results surface as formatted score cards inline. |
+| **Slack — Audit Bot** | Chat with Gladius directly from Slack — DMs or @mentions. Audit results surface as formatted score cards inline. |
+| **Slack — AI Overseer** | Separate Claude agent over Slack with direct access to project files, Docker, and git. Read code, make changes, restart containers, commit — all from Slack. Persistent conversation history across restarts. |
 | **9 Colour Themes** | Named after Roman gladius variants. Because aesthetics matter. |
 
 ---
@@ -53,19 +54,19 @@ Tell Gladius an IP address. It handles everything else — no scripts to run, no
 
 ```
 Browser  ──  nginx (web-projects)  ──  index.html
-   │                                                Slack
-   │  SSE stream / REST                               │
-   ▼                                                  │  Socket Mode
-gladius-api  (FastAPI :8080)  ◄────────────── gladius-slack (slack-bolt)
-   │  Runs Claude claude-sonnet-4-6 with tool use
-   │  Intercepts save/email calls, emits SSE events to browser
+   │                                                      Slack
+   │  SSE stream / REST                                     │
+   ▼                                        ┌──────────────┴───────────────┐
+gladius-api  (FastAPI :8080)  ◄─────────────┤ gladius-slack  (audit bot)   │
+   │  Runs Claude claude-sonnet-4-6          │ forwards msgs → /api/chat    │
+   │  Intercepts save/email calls            └──────────────────────────────┘
    │
-   │  stdio (MCP protocol)
-   ▼
-network-audit-mcp  (MCP server)
-   │  SSH ──────────────────────► Cisco devices  (Paramiko)
-   │  Vector search ─────────────► ChromaDB + MiniLM
-   │  CVE lookup ────────────────► NIST NVD API
+   │  stdio (MCP protocol)                   gladius-overseer  (AI overseer)
+   ▼                                          Claude agent — reads/writes files,
+network-audit-mcp  (MCP server)               runs docker & git commands,
+   │  SSH ──────────────────────► Cisco       persistent history on disk
+   │  Vector search ─────────────► ChromaDB
+   │  CVE lookup ────────────────► NIST NVD
    │  Email ─────────────────────► SMTP
    └─ save_audit_results ──► POST /api/audit/save ──► SSE ──► browser / Slack
 
@@ -81,7 +82,8 @@ chroma-db  (ChromaDB :8000)
 | `gladius-api` | FastAPI — Claude agent, SSE stream, REST API | 8080 |
 | `network-audit-mcp` | MCP server — all tools (SSH, KB, NVD, email) | stdio |
 | `chroma-db` | ChromaDB vector store — NIST/CIS knowledge base | 8000 |
-| `gladius-slack` | Slack bot — Socket Mode, DMs + @mentions | — |
+| `gladius-slack` | Slack audit bot — forwards messages to gladius-api | — |
+| `gladius-overseer` | Slack AI overseer — Claude with direct project + Docker access | — |
 
 ---
 
@@ -192,7 +194,7 @@ DEFAULT_RECIPIENT=
 GLADIUS_API_URL=http://gladius-api:8080
 ```
 
-**`gladius-slack/.env`**
+**`gladius-slack/.env`** — audit bot
 
 ```env
 SLACK_BOT_TOKEN=xoxb-...    # Bot token from OAuth & Permissions
@@ -200,9 +202,17 @@ SLACK_APP_TOKEN=xapp-...    # App-level token for Socket Mode
 GLADIUS_API_URL=http://gladius-api:8080
 ```
 
-**Slack app scopes required:** `chat:write`, `im:history`, `channels:history`, `app_mentions:read`
-**Socket Mode app token scope:** `connections:write`
-**Events to subscribe:** `message.im`, `app_mention`
+**`gladius-overseer/.env`** — AI overseer
+
+```env
+SLACK_BOT_TOKEN=xoxb-...    # Separate Slack app — bot token
+SLACK_APP_TOKEN=xapp-...    # App-level token for Socket Mode
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Both Slack apps require scopes: `chat:write`, `im:history`, `channels:history`, `app_mentions:read`
+Socket Mode app token scope: `connections:write`
+Events to subscribe: `message.im`, `app_mention`
 
 ---
 
@@ -220,6 +230,9 @@ docker restart gladius-api   # always restart API too — refreshes tool cache
 
 # After changing gladius-slack/app.py
 docker restart gladius-slack
+
+# After changing gladius-overseer/app.py
+docker restart gladius-overseer
 ```
 
 ---
@@ -243,7 +256,12 @@ gladius/
 │   ├── server.py          # MCP server — all Claude tools
 │   └── .env
 ├── gladius-slack/
-│   ├── app.py             # Slack bot — Socket Mode, DMs + @mentions
+│   ├── app.py             # Slack audit bot — forwards to gladius-api
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── .env
+├── gladius-overseer/
+│   ├── app.py             # Slack AI overseer — Claude with file/docker/git access
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   └── .env
