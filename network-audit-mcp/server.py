@@ -36,6 +36,9 @@ PSIRT_CLIENT_KEY     = os.getenv("PSIRT_CLIENT_KEY")
 PSIRT_CLIENT_SECRET  = os.getenv("PSIRT_CLIENT_SECRET")
 PSIRT_TOKEN_URL      = "https://id.cisco.com/oauth2/default/v1/token"
 PSIRT_API_BASE       = "https://apix.cisco.com/security/advisories/v2"
+EOX_CLIENT_KEY       = os.getenv("EOX_CLIENT_KEY")
+EOX_CLIENT_SECRET    = os.getenv("EOX_CLIENT_SECRET")
+EOX_API_BASE         = "https://apix.cisco.com/supporttools/eox/rest/5"
 
 _ssh_client  = None
 _ssh_channel = None
@@ -368,6 +371,37 @@ async def list_tools() -> list[types.Tool]:
                 },
                 "required": []
             }
+        ),
+        types.Tool(
+            name="query_eox",
+            description=(
+                "Query the Cisco EOX (End of Life / End of Sale) API for product lifecycle dates. "
+                "Use pids to look up specific product IDs e.g. 'WS-C3750G-24PS-S,CISCO2811'. "
+                "Wildcards supported e.g. 'C9300*'. Comma-separate multiple PIDs. "
+                "Use start_date/end_date (MM-DD-YYYY) for date-range queries to find products "
+                "reaching EoL in a given window. "
+                "Returns End-of-Sale, End-of-SW-Maintenance, Last Date of Support, and migration PIDs. "
+                "Products not yet EoL are indicated as such (SSA_ERR_026). "
+                "During a device audit, run 'show inventory' then call query_eox with the detected PIDs."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "pids": {
+                        "type": "string",
+                        "description": "Comma-separated product IDs e.g. 'WS-C3750G-24PS-S,CISCO2811'. Wildcards allowed: 'C9300*'."
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start date for date-range search (MM-DD-YYYY) e.g. '01-01-2024'"
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "End date for date-range search (MM-DD-YYYY) e.g. '12-31-2025'"
+                    }
+                },
+                "required": []
+            }
         )
     ]
 
@@ -400,6 +434,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _save_audit_results(**arguments)
     elif name == "query_psirt":
         return await _query_psirt(**arguments)
+    elif name == "query_eox":
+        return await _query_eox(**arguments)
     else:
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -1592,6 +1628,107 @@ async def _query_psirt(
         output += "\n"
 
     output += f"Total shown: {min(len(advisories), max_results)}"
+    return [types.TextContent(type="text", text=output)]
+
+
+async def _query_eox(
+    pids: str = None,
+    start_date: str = None,
+    end_date: str = None,
+) -> list[types.TextContent]:
+    """Query the Cisco EOX API for product End-of-Life / End-of-Sale dates."""
+    if not EOX_CLIENT_KEY or not EOX_CLIENT_SECRET:
+        return [types.TextContent(type="text", text="ERROR: EOX_CLIENT_KEY and EOX_CLIENT_SECRET not configured.")]
+    if not pids and not (start_date and end_date):
+        return [types.TextContent(type="text", text="ERROR: Provide pids or both start_date and end_date (MM-DD-YYYY).")]
+
+    log.info(f"EOX query: pids='{pids}' start='{start_date}' end='{end_date}'")
+
+    # Get OAuth token (same Cisco OAuth endpoint as PSIRT)
+    try:
+        token_resp = requests.post(
+            PSIRT_TOKEN_URL,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     EOX_CLIENT_KEY,
+                "client_secret": EOX_CLIENT_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        token_resp.raise_for_status()
+        token = token_resp.json().get("access_token")
+        if not token:
+            return [types.TextContent(type="text", text="ERROR: EOX OAuth token request returned no token.")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: EOX auth failed — {e}")]
+
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    try:
+        if pids:
+            pid_str = pids.strip().rstrip(",")
+            url = f"{EOX_API_BASE}/EOXByProductID/1/{pid_str}"
+        else:
+            url = f"{EOX_API_BASE}/EOXByDates/1/{start_date}/{end_date}"
+        resp = requests.get(url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: EOX API call failed — {e}")]
+
+    records = data.get("EOXRecord", [])
+    if not records:
+        return [types.TextContent(type="text", text="No EOX records returned.")]
+
+    def get_date(field):
+        return (field.get("value") or "") if isinstance(field, dict) else ""
+
+    output_lines = []
+    found = 0
+    skipped = 0
+
+    for rec in records:
+        err = rec.get("EOXError", {}) or {}
+        err_id = err.get("ErrorID", "")
+        if err_id:
+            pid_val = rec.get("EOXInputValue", "?")
+            if "026" in err_id:
+                skipped += 1
+                output_lines.append(f"{pid_val}: Not yet EoL (SSA_ERR_026 — no EoX record)\n")
+            else:
+                output_lines.append(f"{pid_val}: Error — {err_id}: {err.get('ErrorDescription', '')}\n")
+            continue
+
+        found += 1
+        pid  = rec.get("EOLProductID") or rec.get("EOXInputValue", "?")
+        desc = rec.get("ProductIDDescription", "")
+        eos  = get_date(rec.get("EndOfSaleDate"))
+        swm  = get_date(rec.get("EndOfSWMaintenanceReleases"))
+        ldos = get_date(rec.get("LastDateOfSupport"))
+        mig  = (rec.get("EOXMigrationDetails") or {}).get("MigrationProductId", "") or "—"
+        bull = rec.get("LinkToProductBulletinURL", "")
+
+        output_lines.append(f"PID:      {pid}")
+        if desc:
+            output_lines.append(f"Name:     {desc}")
+        output_lines.append(f"EoS:      {eos or '—'}")
+        output_lines.append(f"SW Maint: {swm or '—'}")
+        output_lines.append(f"LDoS:     {ldos or '—'}")
+        output_lines.append(f"Migrate:  {mig}")
+        if bull:
+            output_lines.append(f"Bulletin: {bull}")
+        output_lines.append("")
+
+    label = "Cisco EOX Results"
+    if pids:
+        label += f" — {pids}"
+    else:
+        label += f" — {start_date} to {end_date}"
+    summary = f"EoX records: {found}"
+    if skipped:
+        summary += f" | Not yet EoL: {skipped}"
+    output = f"{label}\n{'=' * 60}\n\n" + "\n".join(output_lines) + f"\n{summary}"
     return [types.TextContent(type="text", text=output)]
 
 

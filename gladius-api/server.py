@@ -48,6 +48,9 @@ PSIRT_CLIENT_KEY    = os.getenv("PSIRT_CLIENT_KEY")
 PSIRT_CLIENT_SECRET = os.getenv("PSIRT_CLIENT_SECRET")
 PSIRT_TOKEN_URL     = "https://id.cisco.com/oauth2/default/v1/token"
 PSIRT_API_BASE      = "https://apix.cisco.com/security/advisories/v2"
+EOX_CLIENT_KEY      = os.getenv("EOX_CLIENT_KEY")
+EOX_CLIENT_SECRET   = os.getenv("EOX_CLIENT_SECRET")
+EOX_API_BASE        = "https://apix.cisco.com/supporttools/eox/rest/5"
 
 # Track last successful Claude response for health reporting
 _last_claude_success: float = 0.0
@@ -97,6 +100,16 @@ When querying Cisco PSIRT (query_psirt tool):
 - During a device audit, call query_psirt with the detected platform (e.g. 'ios-xe') to find
   applicable Cisco advisories — these complement NVD CVE results with official Cisco guidance
 - Present advisory ID, CVSS score, severity, affected CVEs, and publication URL
+- Summarise findings and stop. Do not ask follow-up questions.
+
+When querying Cisco EOX / End-of-Life data (query_eox tool):
+- Use pids with comma-separated hardware PIDs e.g. 'WS-C3750G-24PS-S,CISCO2811'. Wildcards allowed: 'C9300*'
+- Use start_date/end_date (MM-DD-YYYY) for date-range searches e.g. '01-01-2024' to '12-31-2025'
+- During a device audit, run 'show inventory' to get hardware PIDs, then call query_eox with those PIDs
+- Products returning SSA_ERR_026 are not yet EoL — state this clearly rather than treating it as an error
+- Flag products within 12 months of any lifecycle milestone (EoS, LDoS) as HIGH severity findings
+- Flag products already past EoL as MEDIUM severity findings with the recommended migration PID
+- Include End-of-Sale, Last Date of Support, and migration PID in each finding
 - Summarise findings and stop. Do not ask follow-up questions.
 
 When running nmap scans:
@@ -545,6 +558,87 @@ async def psirt_search(q: str = "", severity: str = ""):
         return {"advisories": [_psirt_parse(a) for a in advisories], "total": len(advisories)}
     except Exception as e:
         log.error(f"PSIRT search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _eox_token() -> str:
+    cached = _cache_get("eox_token")
+    if cached:
+        return cached
+    resp = http_requests.post(
+        PSIRT_TOKEN_URL,
+        data={
+            "grant_type":    "client_credentials",
+            "client_id":     EOX_CLIENT_KEY,
+            "client_secret": EOX_CLIENT_SECRET,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    token = resp.json().get("access_token")
+    if not token:
+        raise ValueError("EOX token response contained no access_token")
+    _cache_set("eox_token", token)
+    return token
+
+def _eox_headers() -> dict:
+    return {"Authorization": f"Bearer {_eox_token()}", "Accept": "application/json"}
+
+def _eox_parse(rec: dict) -> dict:
+    err = rec.get("EOXError") or {}
+    err_id = err.get("ErrorID", "")
+    if err_id:
+        return {
+            "pid":       rec.get("EOXInputValue", "?"),
+            "error":     err_id,
+            "error_desc": err.get("ErrorDescription", ""),
+            "not_eol":   "026" in err_id,
+        }
+    def gd(f):
+        return (f.get("value") or "") if isinstance(f, dict) else ""
+    pid = rec.get("EOLProductID") or rec.get("EOXInputValue", "?")
+    mig = (rec.get("EOXMigrationDetails") or {}).get("MigrationProductId", "") or "—"
+    return {
+        "pid":         pid,
+        "description": rec.get("ProductIDDescription", ""),
+        "eos":         gd(rec.get("EndOfSaleDate")),
+        "sw_maint":    gd(rec.get("EndOfSWMaintenanceReleases")),
+        "ldos":        gd(rec.get("LastDateOfSupport")),
+        "migration":   mig,
+        "bulletin":    rec.get("LinkToProductBulletinURL", ""),
+        "error":       None,
+        "not_eol":     False,
+    }
+
+@app.get("/api/eox/search")
+async def eox_search(pids: str = "", start_date: str = "", end_date: str = ""):
+    """Query Cisco EOX API by product IDs or date range."""
+    if not EOX_CLIENT_KEY:
+        raise HTTPException(status_code=503, detail="EOX credentials not configured")
+    if not pids and not (start_date and end_date):
+        raise HTTPException(status_code=400, detail="Provide pids or start_date+end_date (MM-DD-YYYY)")
+    cache_key = f"eox_{pids}_{start_date}_{end_date}"
+    cached = _cache_get(cache_key)
+    if cached:
+        log.info(f"EOX search: cache hit")
+        return cached
+    try:
+        hdrs = _eox_headers()
+        if pids:
+            pid_str = pids.strip().rstrip(",")
+            url = f"{EOX_API_BASE}/EOXByProductID/1/{pid_str}"
+        else:
+            url = f"{EOX_API_BASE}/EOXByDates/1/{start_date}/{end_date}"
+        resp = http_requests.get(url, headers=hdrs, timeout=30)
+        resp.raise_for_status()
+        records = resp.json().get("EOXRecord", [])
+        parsed = [_eox_parse(r) for r in records]
+        result = {"records": parsed, "total": len(parsed)}
+        _cache_set(cache_key, result)
+        return result
+    except Exception as e:
+        log.error(f"EOX search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
