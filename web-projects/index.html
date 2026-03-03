@@ -2071,7 +2071,6 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchCVEs()">SEARCH NVD</button>
-        <button class="btn btn-ghost" onclick="sendCVEViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -2111,7 +2110,6 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchPSIRT()">SEARCH PSIRT</button>
-        <button class="btn btn-ghost" onclick="sendPSIRTViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -2149,7 +2147,6 @@
           <input type="date" class="form-input" id="eox-end" style="width:150px">
         </div>
         <button class="btn btn-primary" onclick="searchEOX()">SEARCH EOX</button>
-        <button class="btn btn-ghost" onclick="sendEOXViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -4350,7 +4347,12 @@ ${cves.length ? `<!-- CVE TAB -->
     }
     sorted.forEach(c => {
       html += `<tr style="cursor:pointer" onclick="window.open('${c.url}','_blank')">
-        <td class="cve-id">${c.id}</td>
+        <td class="cve-id" style="white-space:nowrap">
+          <div style="display:flex;align-items:center;gap:5px">
+            ${c.id}
+            <button onclick="event.stopPropagation();agentCVE('${c.id}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+          </div>
+        </td>
         <td class="${sevClass(c.severity)}">${c.score}</td>
         <td><span class="severity-badge ${badgeCls(c.severity)}">${c.severity}</span></td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${c.published}</td>
@@ -4411,7 +4413,12 @@ ${cves.length ? `<!-- CVE TAB -->
     advisories.forEach(a => {
       const cveList = (a.cves || []).slice(0, 3).join(', ') + (a.cve_count > 3 ? ` +${a.cve_count - 3}` : '');
       html += `<tr style="cursor:pointer" onclick="window.open('${a.url}','_blank')" title="${(a.summary||'').replace(/"/g,'&quot;')}">
-        <td class="cve-id" style="white-space:nowrap">${a.id}</td>
+        <td class="cve-id" style="white-space:nowrap">
+          <div style="display:flex;align-items:center;gap:5px">
+            ${a.id}
+            <button onclick="event.stopPropagation();agentPSIRT('${a.id}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+          </div>
+        </td>
         <td class="${sevClass(a.severity)}">${a.cvss}</td>
         <td><span class="severity-badge ${badgeCls(a.severity)}">${a.severity}</span></td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${a.published}</td>
@@ -4492,7 +4499,12 @@ ${cves.length ? `<!-- CVE TAB -->
       }
       const rowClick = r.bulletin ? `style="cursor:pointer" onclick="window.open('${r.bulletin}','_blank')" title="View EoL bulletin"` : '';
       html += `<tr ${rowClick}>
-        <td class="cve-id" style="white-space:nowrap">${r.pid}</td>
+        <td class="cve-id" style="white-space:nowrap">
+          <div style="display:flex;align-items:center;gap:5px">
+            ${r.pid}
+            <button onclick="event.stopPropagation();agentEOX('${r.pid}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+          </div>
+        </td>
         <td style="font-size:12px;color:var(--text-secondary)">${r.description || '—'}</td>
         <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.eos)}">${r.eos || '—'}</td>
         <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.sw_maint)}">${r.sw_maint || '—'}</td>
@@ -4514,6 +4526,23 @@ ${cves.length ? `<!-- CVE TAB -->
     prompt += '. List all EoL dates and recommended migration paths.';
     showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
     sendQuick(prompt);
+  }
+
+  // ── Per-row agent helpers ─────────────────────────────────────────────────
+
+  function agentCVE(id) {
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(`Get full details on ${id} — affected products, CVSS vector, exploitability, and remediation steps.`);
+  }
+
+  function agentPSIRT(id) {
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(`Get full details on Cisco PSIRT advisory ${id} — affected products, software versions, workarounds, and available patches.`);
+  }
+
+  function agentEOX(pid) {
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(`Query Cisco EOX for product ID "${pid}" — show all lifecycle dates, EoS, last date of support, and the recommended migration path.`);
   }
 </script>
   <!-- FINDING DETAIL PANEL -->
