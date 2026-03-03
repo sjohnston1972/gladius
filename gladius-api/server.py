@@ -336,6 +336,19 @@ async def kb_stats():
         return {"vector_count": None, "error": str(e)}
 
 
+# ── Simple TTL cache ──────────────────────────────────────────────────────────
+_cache: dict = {}          # key → {"data": ..., "ts": float}
+CACHE_TTL = 1800           # 30 minutes
+
+def _cache_get(key: str):
+    entry = _cache.get(key)
+    if entry and (time.monotonic() - entry["ts"]) < CACHE_TTL:
+        return entry["data"]
+    return None
+
+def _cache_set(key: str, data):
+    _cache[key] = {"data": data, "ts": time.monotonic()}
+
 def _nvd_headers() -> dict:
     return {"apiKey": NIST_API_KEY} if NIST_API_KEY else {}
 
@@ -384,6 +397,10 @@ def _nvd_parse(item: dict) -> dict:
 @app.get("/api/cve/latest")
 async def cve_latest():
     """Latest HIGH + CRITICAL CVEs from NVD (last 30 days, any vendor)."""
+    cached = _cache_get("cve_latest")
+    if cached:
+        log.info("CVE latest: cache hit")
+        return cached
     end_dt   = datetime.datetime.now(datetime.timezone.utc)
     start_dt = end_dt - datetime.timedelta(days=30)
     params   = {
@@ -398,7 +415,9 @@ async def cve_latest():
         vulns   = resp.json().get("vulnerabilities", [])
         results = [_nvd_parse(v) for v in vulns if _nvd_parse(v)["severity"] in ("HIGH", "CRITICAL")]
         results.sort(key=lambda x: x["published"], reverse=True)
-        return {"cves": results, "total": len(results)}
+        result = {"cves": results, "total": len(results)}
+        _cache_set("cve_latest", result)
+        return result
     except Exception as e:
         log.error(f"CVE latest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -432,6 +451,9 @@ async def cve_search(q: str = "", severity: str = "", days_back: int = 30):
 
 
 def _psirt_token() -> str:
+    cached = _cache_get("psirt_token")
+    if cached:
+        return cached
     resp = http_requests.post(
         PSIRT_TOKEN_URL,
         data={
@@ -446,6 +468,7 @@ def _psirt_token() -> str:
     token = resp.json().get("access_token")
     if not token:
         raise ValueError("PSIRT token response contained no access_token")
+    _cache_set("psirt_token", token)
     return token
 
 def _psirt_headers() -> dict:
@@ -472,18 +495,25 @@ async def psirt_latest():
     """Latest CRITICAL + HIGH Cisco PSIRT advisories."""
     if not PSIRT_CLIENT_KEY:
         raise HTTPException(status_code=503, detail="PSIRT credentials not configured")
+    cached = _cache_get("psirt_latest")
+    if cached:
+        log.info("PSIRT latest: cache hit")
+        return cached
     try:
         advisories = []
+        hdrs = _psirt_headers()
         for sev in ("critical", "high"):
             resp = http_requests.get(
                 f"{PSIRT_API_BASE}/severity/{sev}",
-                headers=_psirt_headers(),
+                headers=hdrs,
                 timeout=30,
             )
             resp.raise_for_status()
             advisories.extend(resp.json().get("advisories", []))
         advisories.sort(key=lambda a: a.get("firstPublished", ""), reverse=True)
-        return {"advisories": [_psirt_parse(a) for a in advisories[:50]], "total": len(advisories)}
+        result = {"advisories": [_psirt_parse(a) for a in advisories[:50]], "total": len(advisories)}
+        _cache_set("psirt_latest", result)
+        return result
     except Exception as e:
         log.error(f"PSIRT latest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
