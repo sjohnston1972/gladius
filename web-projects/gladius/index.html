@@ -4103,26 +4103,45 @@ ${cves.length ? `<!-- CVE TAB -->
       const health = healthRes.ok ? await healthRes.json() : {};
       const kb     = kbRes.ok    ? await kbRes.json()     : {};
 
-      const tools      = health.tools || [];
-      const toolCount  = health.tools_cached ?? tools.length ?? '?';
-      const vectors    = kb.vector_count != null ? kb.vector_count.toLocaleString() : '?';
-      const hasSSH     = tools.includes('connect_to_device');
-      const hasKB      = tools.includes('query_knowledge_base');
-      const hasNVD     = tools.includes('query_nvd');
-      const hasEmail   = tools.includes('send_email');
+      const tools     = health.tools || [];
+      const toolCount = health.tools_cached ?? tools.length ?? '?';
+      const vectors   = kb.vector_count != null ? kb.vector_count.toLocaleString() : '?';
 
-      const caps = [];
-      if (hasSSH)   caps.push('SSH connectivity');
-      if (hasKB)    caps.push(`NIST/CIS knowledge base (${vectors} vectors)`);
-      if (hasNVD)   caps.push('NVD vulnerability database');
-      if (hasEmail) caps.push('email reporting');
+      const has = t => tools.includes(t);
 
-      const capStr = caps.length
-        ? caps.slice(0,-1).join(', ') + (caps.length > 1 ? ', and ' : '') + caps.slice(-1)
-        : 'MCP tools';
+      // Build capability rows — only show what's actually loaded
+      const rows = [];
+
+      if (has('connect_to_device'))
+        rows.push(['Device Audit', 'SSH into Cisco IOS / IOS XE — run show commands, parse config, identify misconfigs']);
+      if (has('query_knowledge_base'))
+        rows.push(['Knowledge Base', `NIST 800-53 &amp; CIS IOS XE benchmark — ${vectors} vectors, semantic search`]);
+      if (has('query_nvd'))
+        rows.push(['NVD CVEs', 'NIST National Vulnerability Database — search by platform, severity, or date range']);
+      if (has('query_psirt'))
+        rows.push(['Cisco PSIRT', 'Official Cisco security advisories — search by product, severity, or advisory ID']);
+      if (has('run_nmap_scan'))
+        rows.push(['NMAP', 'Port scanning — quick, service detection, full port, OS fingerprint, vuln scripts']);
+      if (has('run_scapy'))
+        rows.push(['Scapy', '19 packet modes — ping, traceroute, SYN/TCP probes, stealth scans, OS fingerprint, VLAN hop']);
+      if (has('run_dig'))
+        rows.push(['DNS / dig', 'A, MX, NS, TXT, SOA, CNAME, PTR, CAA — SPF/DMARC/DKIM analysis, zone transfer test']);
+      if (has('send_email'))
+        rows.push(['Email Reports', 'Standalone HTML compliance report — CVSS gauge, findings table, remediation CLI commands']);
+      if (has('save_audit_results'))
+        rows.push(['Dashboard', 'Auto-saves audit results — compliance scores, findings, CVEs pushed to dashboard live']);
+
+      const rowsHtml = rows.map(([label, desc]) =>
+        `<div style="display:flex;gap:10px;margin:4px 0;font-size:13px;line-height:1.5">` +
+        `<span style="color:var(--accent);font-family:var(--font-mono);font-size:11px;white-space:nowrap;min-width:110px;padding-top:1px">${label}</span>` +
+        `<span style="color:var(--text-secondary)">${desc}</span></div>`
+      ).join('');
 
       if (bubble) bubble.innerHTML =
-        `Gladius online. I have access to your network via <strong>${toolCount} MCP tools</strong> — ${capStr}.<br><br>Tell me what to audit, or give me a command.`;
+        `<div style="margin-bottom:10px">Gladius online — <strong>${toolCount} MCP tools</strong> loaded.</div>` +
+        rowsHtml +
+        `<div style="margin-top:12px;color:var(--text-dim);font-size:12px;font-family:var(--font-mono)">` +
+        `Give me a target to audit, or ask me anything.</div>`;
 
       // Update settings page status lines too
       const mcpEl = document.getElementById('settings-mcp-status');
@@ -4132,7 +4151,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     } catch(e) {
       if (bubble) bubble.innerHTML =
-        `Gladius online. MCP server status unknown — check <strong>/api/health</strong>.<br><br>Tell me what to audit, or give me a command.`;
+        `Gladius online. MCP server status unknown — check <strong>/api/health</strong>.<br><br>Give me a target to audit, or ask me anything.`;
     }
   }
 
