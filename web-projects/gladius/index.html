@@ -2057,7 +2057,7 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchCVEs()">SEARCH NVD</button>
-        <button class="btn btn-ghost" onclick="showPage('chat',document.querySelector('.nav-item:nth-child(2)'));sendQuick('Query NVD for '+document.getElementById('cve-query').value)" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
+        <button class="btn btn-ghost" onclick="sendCVEViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -2097,7 +2097,7 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchPSIRT()">SEARCH PSIRT</button>
-        <button class="btn btn-ghost" onclick="showPage('chat',document.querySelector('.nav-item:nth-child(2)'));sendQuick('Query Cisco PSIRT for '+(document.getElementById('psirt-query').value||'latest advisories'))" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
+        <button class="btn btn-ghost" onclick="sendPSIRTViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -3523,6 +3523,13 @@ ${cves.length ? `<!-- CVE TAB -->
     show('scapy-ttl-grp',   ttlModes.includes(mode));
     show('scapy-vlan-grp',  vlanModes.includes(mode));
     show('scapy-vlan2-grp', vlanModes.includes(mode));
+
+    // Pre-populate target for modes with a canonical test destination
+    const defaultTargets = { sip_invite: 'siphappens.com' };
+    const targetEl = document.getElementById('scapy-target');
+    if (targetEl && !targetEl.value && defaultTargets[mode]) {
+      targetEl.value = defaultTargets[mode];
+    }
   }
 
   function _startScapySpinner() {
@@ -3920,21 +3927,25 @@ ${cves.length ? `<!-- CVE TAB -->
       if (isCve && f.cve_id)
         html += sec('CVE ID', link(`https://nvd.nist.gov/vuln/detail/${f.cve_id}`, f.cve_id));
 
-      if (f.impact)
-        html += sec('Impact', prose(f.impact));
+      const impactText = f.impact || f.description || f.detail || '';
+      if (impactText)
+        html += sec('Impact', prose(impactText));
 
-      if (f.fix)
-        html += sec('Remediation', prose(f.fix));
+      const fixText = f.fix || f.remediation || f.mitigation || f.recommendation || '';
+      if (fixText)
+        html += sec('Remediation', prose(fixText));
 
-      if (f.commands) {
-        const cmds = Array.isArray(f.commands)
-          ? f.commands.join('\n')
-          : String(f.commands).replace(/,\s*/g, '\n');
+      const cmdsRaw = f.commands || f.command || f.cli || '';
+      if (cmdsRaw) {
+        const cmds = Array.isArray(cmdsRaw)
+          ? cmdsRaw.join('\n')
+          : String(cmdsRaw).replace(/,\s*/g, '\n');
         html += sec('Commands', code(cmds));
       }
 
-      if (f.ref)
-        html += sec('Reference', link(f.ref));
+      const refUrl = f.ref || f.reference || f.url || f.link || '';
+      if (refUrl)
+        html += sec('Reference', link(refUrl));
 
       body.innerHTML = html || prose('<span style="color:var(--text-dim)">No details recorded for this finding.</span>');
     }
@@ -4175,6 +4186,31 @@ ${cves.length ? `<!-- CVE TAB -->
       .catch(err => {
         tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// NVD fetch failed (${err}) — check gladius-api logs</td></tr>`;
       });
+  }
+
+  function sendCVEViaAgent() {
+    const q        = (document.getElementById('cve-query')?.value || '').trim();
+    const severity = document.getElementById('cve-severity')?.value || '';
+    const days     = document.getElementById('cve-days')?.value || '30';
+    let prompt = 'Query NVD';
+    if (q) prompt += ` for "${q}"`;
+    if (severity) prompt += `, severity filter: ${severity}`;
+    prompt += `, last ${days} days`;
+    prompt += '. Sort newest first and show the most relevant results.';
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(prompt);
+  }
+
+  function sendPSIRTViaAgent() {
+    const q        = (document.getElementById('psirt-query')?.value || '').trim();
+    const severity = document.getElementById('psirt-severity')?.value || '';
+    let prompt = 'Query Cisco PSIRT';
+    if (q) prompt += ` for product "${q}"`;
+    if (severity) prompt += `, severity filter: ${severity}`;
+    if (!q && !severity) prompt += ' for latest advisories';
+    prompt += '. Show the most recent results first.';
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(prompt);
   }
 
   function searchCVEs() {

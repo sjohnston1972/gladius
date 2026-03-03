@@ -1054,46 +1054,94 @@ else:
     elif mode == "sip_invite":
         sip_port = port if port != 80 else 5060
         script = f"""
-from scapy.all import IP, UDP, sr1, conf
+from scapy.all import IP, UDP, TCP, sr1, send, conf
 import random
 conf.verb = 0
-call_id = hex(random.randint(0x10000, 0xFFFFFF))[2:]
-branch  = hex(random.randint(0x10000, 0xFFFFFF))[2:]
-src_ip  = "10.0.0.1"
-sip_msg = (
-    "INVITE sip:1000@{target} SIP/2.0\r\n"
-    f"Via: SIP/2.0/UDP {{src_ip}}:{sip_port};branch=z9hG4bK{{branch}}\r\n"
-    f"From: <sip:gladius@{{src_ip}}>;tag=gladius{call_id}\r\n"
-    "To: <sip:1000@{target}>\r\n"
-    f"Call-ID: {call_id}@{{src_ip}}\r\n"
-    "CSeq: 1 INVITE\r\n"
-    "Contact: <sip:gladius@{{src_ip}}>\r\n"
-    "Max-Forwards: 70\r\n"
-    "Content-Type: application/sdp\r\n"
-    "Content-Length: 0\r\n"
-    "\r\n"
-)
-pkt = sr1(
-    IP(dst="{target}")/UDP(dport={sip_port}, sport=random.randint(5000,5999))/sip_msg.encode(),
+
+target   = "{target}"
+sip_port = {sip_port}
+call_id  = hex(random.randint(0x10000, 0xFFFFFF))[2:]
+branch   = hex(random.randint(0x10000, 0xFFFFFF))[2:]
+src_ip   = "10.0.0.1"
+crlf     = "\\r\\n"
+
+def build_sip(transport):
+    lines = [
+        f"INVITE sip:1000@{{target}} SIP/2.0",
+        f"Via: SIP/2.0/{{transport}} {{src_ip}}:{{sip_port}};branch=z9hG4bK{{branch}}",
+        f"From: <sip:gladius@{{src_ip}}>;tag=gladius{{call_id}}",
+        f"To: <sip:1000@{{target}}>",
+        f"Call-ID: {{call_id}}@{{src_ip}}",
+        "CSeq: 1 INVITE",
+        f"Contact: <sip:gladius@{{src_ip}}>",
+        "Max-Forwards: 70",
+        "Content-Type: application/sdp",
+        "Content-Length: 0",
+        "", "",
+    ]
+    return crlf.join(lines)
+
+def decode_sip(raw):
+    first = raw.split("\\r\\n")[0] if raw else "(empty)"
+    detail = ""
+    if "100" in first:   detail = "  Trying (proxy is processing)"
+    elif "180" in first: detail = "  Ringing"
+    elif "200" in first: detail = "  200 OK — SIP service exposed!"
+    elif "403" in first: detail = "  Forbidden (auth required)"
+    elif "404" in first: detail = "  Not Found"
+    elif "405" in first: detail = "  Method Not Allowed"
+    elif "486" in first: detail = "  Busy Here"
+    elif "401" in first: detail = "  Unauthorised — SIP digest auth required"
+    elif "407" in first: detail = "  Proxy Auth Required"
+    return first, detail
+
+# ── UDP first ─────────────────────────────────────────────────────
+sip_msg = build_sip("UDP")
+print(f"[UDP] Sending SIP INVITE to {{target}}:{{sip_port}} ...")
+udp_pkt = sr1(
+    IP(dst=target)/UDP(dport=sip_port, sport=random.randint(5000,5999))/sip_msg.encode(),
     timeout={timeout}, verbose=0
 )
-if pkt is None:
-    print(f"SIP INVITE to {target}:{sip_port} — no response (host down or filtered)")
-elif pkt.haslayer(UDP):
-    payload = bytes(pkt[UDP].payload).decode("utf-8", errors="replace")
-    first_line = payload.split("\r\n")[0] if payload else "(empty)"
-    print(f"SIP response from {target}:{sip_port}:")
-    print(first_line)
-    if "100" in first_line: print("  → Trying (ringing or processing)")
-    elif "180" in first_line: print("  → Ringing")
-    elif "200" in first_line: print("  → OK (call accepted — SIP service exposed!)")
-    elif "403" in first_line: print("  → Forbidden (auth required)")
-    elif "404" in first_line: print("  → Not Found")
-    elif "405" in first_line: print("  → Method Not Allowed")
-    elif "486" in first_line: print("  → Busy Here")
-    else: print(f"  → Full response:\n{{payload[:400]}}")
+
+if udp_pkt is not None and udp_pkt.haslayer(UDP):
+    raw = bytes(udp_pkt[UDP].payload).decode("utf-8", errors="replace")
+    first, detail = decode_sip(raw)
+    print(f"[UDP] SIP response from {{target}}:{{sip_port}}")
+    print(f"  {{first}}")
+    if detail: print(detail)
 else:
-    print(f"Non-UDP response: {{pkt.summary()}}")
+    print(f"[UDP] No response — port filtered or no SIP/UDP service")
+    print(f"[TCP] Trying SIP over TCP {{target}}:{{sip_port}} ...")
+
+    # ── TCP fallback ───────────────────────────────────────────────
+    sport = random.randint(10000, 60000)
+    seq   = random.randint(1000, 9999999)
+    syn_ack = sr1(IP(dst=target)/TCP(sport=sport, dport=sip_port, flags="S", seq=seq),
+                  timeout={timeout}, verbose=0)
+    if not syn_ack or not syn_ack.haslayer(TCP) or (syn_ack[TCP].flags & 0x12) != 0x12:
+        print(f"[TCP] Port {{sip_port}} closed or filtered — no SIP service detected")
+    else:
+        print(f"[TCP] Port {{sip_port}} OPEN (SYN-ACK from {{syn_ack[IP].src}})")
+        seq += 1
+        ack_num = syn_ack[TCP].seq + 1
+        send(IP(dst=target)/TCP(sport=sport, dport=sip_port, flags="A",
+             seq=seq, ack=ack_num), verbose=0)
+        sip_msg_tcp = build_sip("TCP")
+        resp = sr1(
+            IP(dst=target)/TCP(sport=sport, dport=sip_port, flags="PA",
+               seq=seq, ack=ack_num)/sip_msg_tcp.encode(),
+            timeout={timeout}, verbose=0
+        )
+        if resp and resp.haslayer("Raw"):
+            raw = bytes(resp["Raw"].load).decode("utf-8", errors="replace")
+            first, detail = decode_sip(raw)
+            print(f"[TCP] SIP response from {{target}}:{{sip_port}}")
+            print(f"  {{first}}")
+            if detail: print(detail)
+        elif resp and resp.haslayer(TCP) and (resp[TCP].flags & 0x04):
+            print(f"[TCP] RST received — server rejected connection (likely kernel RST race; port is open)")
+        else:
+            print(f"[TCP] No SIP response after INVITE (server may require TLS on port 5061)")
 """
 
     elif mode == "http_get":
@@ -1121,14 +1169,16 @@ send(IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="A",
      seq=seq, ack=ack_num), verbose=0)
 
 # HTTP GET
-http_req = (
-    f"GET / HTTP/1.1\r\n"
-    f"Host: {host_header}\r\n"
-    "User-Agent: Gladius-Security-Scanner/1.0\r\n"
-    "Accept: */*\r\n"
-    "Connection: close\r\n"
-    "\r\n"
-)
+crlf = "\\r\\n"
+http_req = crlf.join([
+    "GET / HTTP/1.1",
+    f"Host: {host_header}",
+    "User-Agent: Gladius-Security-Scanner/1.0",
+    "Accept: */*",
+    "Connection: close",
+    "",
+    "",
+])
 resp = sr1(
     IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="PA",
        seq=seq, ack=ack_num)/http_req.encode(),
@@ -1136,7 +1186,7 @@ resp = sr1(
 )
 if resp and resp.haslayer("TCP") and resp.haslayer("Raw"):
     raw = bytes(resp["Raw"].load).decode("utf-8", errors="replace")
-    lines = raw.split("\r\n")
+    lines = raw.split("\\r\\n")
     status = lines[0] if lines else "(empty)"
     headers = [l for l in lines[1:] if ":" in l][:12]
     print(f"HTTP response from {target}:{http_port}")

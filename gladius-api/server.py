@@ -113,10 +113,18 @@ When auditing devices:
 6. Call save_audit_results with ALL findings and calculated compliance scores — ALWAYS do this at the end of every audit, without being asked
 7. Offer to push remediations or email a report
 
-When building findings for save_audit_results:
-- Set type="hardening" for configuration and compliance findings (missing banners, weak passwords, CDP enabled etc.)
-- Set type="cve" for any CVE vulnerabilities found via query_nvd — always include the cve_id field (e.g. "CVE-2024-20399")
-- CVE findings should use the CVE ID as the title (e.g. "CVE-2024-20399") and include the NVD URL in the ref field
+When building findings for save_audit_results, every finding object MUST use these exact field names:
+- title:    string — finding name; use the CVE ID for CVE findings (e.g. "CVE-2024-20399")
+- severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "PASS"
+- type:     "hardening" | "cve"
+- category: string — control group e.g. "Access Security", "Network Management", "Logging & Monitoring"
+- impact:   string — what this misconfiguration or vulnerability allows an attacker to do
+- fix:      string — how to remediate in plain English
+- commands: string — exact IOS / IOS XE CLI commands to fix the issue (comma-separated if multiple)
+- ref:      string — URL reference: NVD page for CVEs, CIS/NIST URL for hardening findings
+- cve_id:   string — CVE identifier for type=cve findings only (e.g. "CVE-2024-20399")
+
+All nine fields must be present in every finding. Use empty string "" for any field that is not applicable rather than omitting the field.
 
 Compliance score calculation (for save_audit_results):
 - overall: percentage of checks that are PASS or LOW (not HIGH or MEDIUM), excluding CVE findings
