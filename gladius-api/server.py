@@ -41,9 +41,13 @@ MCP_ARGS          = ["exec", "-i", "network-audit-mcp", "python", "/app/server.p
 
 CHROMA_HOST  = os.getenv("CHROMA_HOST", "chroma-db")
 CHROMA_PORT  = os.getenv("CHROMA_PORT", "8000")
-NIST_API_KEY = os.getenv("NIST_API_KEY")
-NVD_BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-NVD_TEST_URL = f"{NVD_BASE_URL}?cveId=CVE-2021-44228"
+NIST_API_KEY        = os.getenv("NIST_API_KEY")
+NVD_BASE_URL        = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+NVD_TEST_URL        = f"{NVD_BASE_URL}?cveId=CVE-2021-44228"
+PSIRT_CLIENT_KEY    = os.getenv("PSIRT_CLIENT_KEY")
+PSIRT_CLIENT_SECRET = os.getenv("PSIRT_CLIENT_SECRET")
+PSIRT_TOKEN_URL     = "https://id.cisco.com/oauth2/default/v1/token"
+PSIRT_API_BASE      = "https://apix.cisco.com/security/advisories/v2"
 
 # Track last successful Claude response for health reporting
 _last_claude_success: float = 0.0
@@ -414,6 +418,85 @@ async def cve_search(q: str = "", severity: str = "", days_back: int = 30):
         return {"cves": results, "total": data.get("totalResults", len(results))}
     except Exception as e:
         log.error(f"CVE search failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _psirt_token() -> str:
+    resp = http_requests.post(
+        PSIRT_TOKEN_URL,
+        data={
+            "grant_type":    "client_credentials",
+            "client_id":     PSIRT_CLIENT_KEY,
+            "client_secret": PSIRT_CLIENT_SECRET,
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    token = resp.json().get("access_token")
+    if not token:
+        raise ValueError("PSIRT token response contained no access_token")
+    return token
+
+def _psirt_headers() -> dict:
+    return {"Authorization": f"Bearer {_psirt_token()}", "Accept": "application/json"}
+
+def _psirt_parse(adv: dict) -> dict:
+    cves = adv.get("cves", [])
+    return {
+        "id":        adv.get("advisoryId", ""),
+        "title":     adv.get("advisoryTitle", ""),
+        "cvss":      adv.get("cvssBaseScore", "N/A"),
+        "severity":  adv.get("sir", "").upper(),
+        "cves":      cves,
+        "cve_count": len(cves),
+        "published": adv.get("firstPublished", "")[:10],
+        "updated":   adv.get("lastUpdated", "")[:10],
+        "url":       adv.get("publicationUrl", ""),
+        "summary":   adv.get("summary", "")[:400],
+        "products":  adv.get("productNames", [])[:5],
+    }
+
+@app.get("/api/psirt/latest")
+async def psirt_latest():
+    """Latest CRITICAL + HIGH Cisco PSIRT advisories."""
+    if not PSIRT_CLIENT_KEY:
+        raise HTTPException(status_code=503, detail="PSIRT credentials not configured")
+    try:
+        advisories = []
+        for sev in ("critical", "high"):
+            resp = http_requests.get(
+                f"{PSIRT_API_BASE}/severity/{sev}",
+                headers=_psirt_headers(),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            advisories.extend(resp.json().get("advisories", []))
+        advisories.sort(key=lambda a: a.get("firstPublished", ""), reverse=True)
+        return {"advisories": [_psirt_parse(a) for a in advisories[:50]], "total": len(advisories)}
+    except Exception as e:
+        log.error(f"PSIRT latest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/psirt/search")
+async def psirt_search(q: str = "", severity: str = ""):
+    """Search Cisco PSIRT advisories by product name or severity."""
+    if not PSIRT_CLIENT_KEY:
+        raise HTTPException(status_code=503, detail="PSIRT credentials not configured")
+    try:
+        hdrs = _psirt_headers()
+        if q:
+            resp = http_requests.get(f"{PSIRT_API_BASE}/product", headers=hdrs, params={"product": q}, timeout=30)
+        elif severity:
+            resp = http_requests.get(f"{PSIRT_API_BASE}/severity/{severity.lower()}", headers=hdrs, timeout=30)
+        else:
+            resp = http_requests.get(f"{PSIRT_API_BASE}/latest/50", headers=hdrs, timeout=30)
+        resp.raise_for_status()
+        advisories = resp.json().get("advisories", [])
+        advisories.sort(key=lambda a: a.get("firstPublished", ""), reverse=True)
+        return {"advisories": [_psirt_parse(a) for a in advisories], "total": len(advisories)}
+    except Exception as e:
+        log.error(f"PSIRT search failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

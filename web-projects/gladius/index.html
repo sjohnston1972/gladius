@@ -1317,6 +1317,16 @@
     text-align: right;
   }
 
+  /* ── PSIRT PAGE ── */
+  #page-psirt {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    flex-direction: column;
+  }
+  #page-psirt.active { display: flex; }
+
   /* ── CVE PAGE ── */
   #page-cve {
     display: none;
@@ -1721,6 +1731,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       <span>CVE</span>
     </div>
+    <div class="nav-item" onclick="showPage('psirt', this)" title="Cisco PSIRT">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>PSIRT</span>
+    </div>
   </div>
 
   <div class="sidebar-spacer"></div>
@@ -2065,6 +2079,46 @@
       </div>
     </div>
 
+    <!-- PSIRT PAGE -->
+    <div id="page-psirt" class="page">
+      <div class="cve-search">
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Search Cisco PSIRT — Product / Platform</label>
+          <input type="text" class="form-input" placeholder="ios-xe, ios, nx-os, asa, firepower" id="psirt-query" style="width:100%" onkeydown="if(event.key==='Enter')searchPSIRT()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Severity</label>
+          <select class="form-select" id="psirt-severity">
+            <option value="">All</option>
+            <option value="critical">CRITICAL</option>
+            <option value="high">HIGH</option>
+            <option value="medium">MEDIUM</option>
+            <option value="low">LOW</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="searchPSIRT()">SEARCH PSIRT</button>
+        <button class="btn btn-ghost" onclick="loadLatestPSIRT()" style="font-size:11px;padding:8px 12px">LOAD LATEST</button>
+      </div>
+
+      <div class="cve-table">
+        <table>
+          <thead>
+            <tr>
+              <th>ADVISORY ID</th>
+              <th>CVSS</th>
+              <th>SEVERITY</th>
+              <th>PUBLISHED</th>
+              <th>CVEs</th>
+              <th>TITLE</th>
+            </tr>
+          </thead>
+          <tbody id="psirt-tbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Loading latest Cisco PSIRT advisories…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- SETTINGS PAGE -->
     <div id="page-settings" class="page" style="padding:20px;overflow-y:auto;flex-direction:column;gap:16px">
 
@@ -2238,12 +2292,14 @@
       chat: 'AGENT CHAT',
       nmap: 'NMAP SCANNER',
       scapy: 'SCAPY PACKET FORGE',
+      psirt: 'CISCO PSIRT',
       reports: 'REPORTS',
       cve: 'CVE LOOKUP',
       settings: 'CONFIGURATION'
     };
     document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
-    if (name === 'cve' && !_cvesLoaded) loadLatestCVEs();
+    if (name === 'cve'   && !_cvesLoaded)   loadLatestCVEs();
+    if (name === 'psirt' && !_psirtLoaded)  loadLatestPSIRT();
   }
 
   // ── CHAT ──
@@ -4181,6 +4237,67 @@ ${cves.length ? `<!-- CVE TAB -->
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${c.published}</td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:nowrap">${c.vendor}</td>
         <td style="font-size:13px;color:var(--text-secondary)">${c.description}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
+  // ── PSIRT TAB ──────────────────────────────────────────────────────────────
+  let _psirtLoaded = false;
+
+  function loadLatestPSIRT() {
+    _psirtLoaded = true;
+    const tbody = document.getElementById('psirt-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Fetching latest CRITICAL &amp; HIGH advisories from Cisco PSIRT…</td></tr>';
+    fetch('/api/psirt/latest')
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || r.status)))
+      .then(data => renderPSIRTTable(data.advisories, `Latest CRITICAL &amp; HIGH — ${data.total} advisories`))
+      .catch(err => {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// PSIRT fetch failed: ${err}</td></tr>`;
+      });
+  }
+
+  function searchPSIRT() {
+    const q        = (document.getElementById('psirt-query')?.value || '').trim();
+    const severity = document.getElementById('psirt-severity')?.value || '';
+    const tbody    = document.getElementById('psirt-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Querying Cisco PSIRT…</td></tr>';
+    const params = new URLSearchParams();
+    if (q)        params.set('q', q);
+    if (severity) params.set('severity', severity);
+    const label = [q ? `Product: ${q}` : '', severity ? severity.toUpperCase() : ''].filter(Boolean).join(' · ') || 'Latest advisories';
+    fetch(`/api/psirt/search?${params}`)
+      .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || r.status)))
+      .then(data => renderPSIRTTable(data.advisories, `${label} — ${data.total} found`))
+      .catch(err => {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// PSIRT search failed: ${err}</td></tr>`;
+      });
+  }
+
+  function renderPSIRTTable(advisories, subtitle) {
+    const tbody = document.getElementById('psirt-tbody');
+    if (!tbody) return;
+    if (!advisories || !advisories.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// No advisories found</td></tr>`;
+      return;
+    }
+    const sevClass = s => s === 'CRITICAL' ? 'score-critical' : s === 'HIGH' ? 'score-high' : '';
+    const badgeCls = s => s === 'CRITICAL' || s === 'HIGH' ? 'high' : s === 'MEDIUM' ? 'medium' : 'low';
+    let html = '';
+    if (subtitle) {
+      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${subtitle}</td></tr>`;
+    }
+    advisories.forEach(a => {
+      const cveList = (a.cves || []).slice(0, 3).join(', ') + (a.cve_count > 3 ? ` +${a.cve_count - 3}` : '');
+      html += `<tr style="cursor:pointer" onclick="window.open('${a.url}','_blank')" title="${(a.summary||'').replace(/"/g,'&quot;')}">
+        <td class="cve-id" style="white-space:nowrap">${a.id}</td>
+        <td class="${sevClass(a.severity)}">${a.cvss}</td>
+        <td><span class="severity-badge ${badgeCls(a.severity)}">${a.severity}</span></td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${a.published}</td>
+        <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)">${cveList || '—'}</td>
+        <td style="font-size:13px;color:var(--text-secondary)">${a.title}</td>
       </tr>`;
     });
     tbody.innerHTML = html;

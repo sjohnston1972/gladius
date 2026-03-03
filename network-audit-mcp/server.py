@@ -29,9 +29,13 @@ CHROMA_HOST     = os.getenv("CHROMA_HOST", "chroma-db")
 CHROMA_PORT     = int(os.getenv("CHROMA_PORT", 8000))
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "network_security_guidelines")
 EMBED_MODEL     = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
-NIST_API_KEY    = os.getenv("NIST_API_KEY")
-LAB_USERNAME    = os.getenv("LAB_USERNAME")
-LAB_PASSWORD    = os.getenv("LAB_PASSWORD")
+NIST_API_KEY         = os.getenv("NIST_API_KEY")
+LAB_USERNAME         = os.getenv("LAB_USERNAME")
+LAB_PASSWORD         = os.getenv("LAB_PASSWORD")
+PSIRT_CLIENT_KEY     = os.getenv("PSIRT_CLIENT_KEY")
+PSIRT_CLIENT_SECRET  = os.getenv("PSIRT_CLIENT_SECRET")
+PSIRT_TOKEN_URL      = "https://id.cisco.com/oauth2/default/v1/token"
+PSIRT_API_BASE       = "https://apix.cisco.com/security/advisories/v2"
 
 _ssh_client  = None
 _ssh_channel = None
@@ -330,6 +334,40 @@ async def list_tools() -> list[types.Tool]:
                 },
                 "required": ["device", "ip", "findings", "score"]
             }
+        ),
+        types.Tool(
+            name="query_psirt",
+            description=(
+                "Query the Cisco PSIRT openVuln API for security advisories. "
+                "Use search_term for product search e.g. 'ios-xe', 'ios', 'nx-os'. "
+                "Use severity to filter by CRITICAL/HIGH/MEDIUM/LOW. "
+                "Use advisory_id for a specific advisory e.g. 'cisco-sa-20240327-ios'. "
+                "Returns advisory ID, title, CVSS score, severity, associated CVEs, and publication URL."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "search_term": {
+                        "type": "string",
+                        "description": "Product name to search e.g. 'ios-xe', 'ios', 'nx-os', 'asa'"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Filter by severity level",
+                        "enum": ["critical", "high", "medium", "low", "informational"]
+                    },
+                    "advisory_id": {
+                        "type": "string",
+                        "description": "Specific advisory ID e.g. 'cisco-sa-20240327-ios'"
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum advisories to return (default 20)",
+                        "default": 20
+                    }
+                },
+                "required": []
+            }
         )
     ]
 
@@ -360,6 +398,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _run_scapy(**arguments)
     elif name == "save_audit_results":
         return await _save_audit_results(**arguments)
+    elif name == "query_psirt":
+        return await _query_psirt(**arguments)
     else:
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -1405,6 +1445,104 @@ async def _save_audit_results(device: str, ip: str, findings: list, score: dict,
     except Exception as e:
         log.error(f"Audit save error: {e}", exc_info=True)
         return [types.TextContent(type="text", text=f"ERROR: Could not save audit — {e}")]
+
+
+async def _query_psirt(
+    search_term: str = None,
+    severity: str = None,
+    advisory_id: str = None,
+    max_results: int = 20,
+) -> list[types.TextContent]:
+    """Query the Cisco PSIRT openVuln API for security advisories."""
+    if not PSIRT_CLIENT_KEY or not PSIRT_CLIENT_SECRET:
+        return [types.TextContent(type="text", text="ERROR: PSIRT_CLIENT_KEY and PSIRT_CLIENT_SECRET not configured.")]
+
+    log.info(f"PSIRT query: search_term='{search_term}' severity={severity} advisory_id={advisory_id}")
+
+    # Get OAuth token
+    try:
+        token_resp = requests.post(
+            PSIRT_TOKEN_URL,
+            data={
+                "grant_type":    "client_credentials",
+                "client_id":     PSIRT_CLIENT_KEY,
+                "client_secret": PSIRT_CLIENT_SECRET,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
+        )
+        token_resp.raise_for_status()
+        token = token_resp.json().get("access_token")
+        if not token:
+            return [types.TextContent(type="text", text="ERROR: PSIRT OAuth token request returned no token.")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: PSIRT auth failed — {e}")]
+
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    # Choose endpoint
+    try:
+        if advisory_id:
+            url = f"{PSIRT_API_BASE}/advisory/{advisory_id}"
+            params = {}
+        elif search_term:
+            url = f"{PSIRT_API_BASE}/product"
+            params = {"product": search_term}
+        elif severity:
+            url = f"{PSIRT_API_BASE}/severity/{severity.lower()}"
+            params = {}
+        else:
+            url = f"{PSIRT_API_BASE}/latest/{min(max_results, 100)}"
+            params = {}
+
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: PSIRT API call failed — {e}")]
+
+    advisories = data.get("advisories", [])
+    if not advisories and "advisoryId" in data:
+        advisories = [data]  # single advisory lookup
+
+    if not advisories:
+        return [types.TextContent(type="text", text="No advisories found for the given criteria.")]
+
+    # Build output
+    label = f"Cisco PSIRT Advisories"
+    if advisory_id:
+        label += f" — {advisory_id}"
+    elif search_term:
+        label += f" — Product: {search_term}"
+    elif severity:
+        label += f" — Severity: {severity.upper()}"
+    else:
+        label += f" — Latest {len(advisories)}"
+
+    output = f"{label}\n{'=' * 60}\n\n"
+
+    for adv in advisories[:max_results]:
+        adv_id    = adv.get("advisoryId", "Unknown")
+        title     = adv.get("advisoryTitle", "No title")
+        cvss      = adv.get("cvssBaseScore", "N/A")
+        sir       = adv.get("sir", "").upper()
+        cves      = ", ".join(adv.get("cves", [])) or "—"
+        published = adv.get("firstPublished", "")[:10]
+        url_link  = adv.get("publicationUrl", "")
+        summary   = adv.get("summary", "")
+
+        output += f"[{sir}] {adv_id}\n"
+        output += f"Title    : {title}\n"
+        output += f"CVSS     : {cvss}  Published: {published}\n"
+        output += f"CVEs     : {cves}\n"
+        if url_link:
+            output += f"URL      : {url_link}\n"
+        if summary:
+            output += f"Summary  : {summary[:300]}{'…' if len(summary) > 300 else ''}\n"
+        output += "\n"
+
+    output += f"Total shown: {min(len(advisories), max_results)}"
+    return [types.TextContent(type="text", text=output)]
 
 
 def _clear_buffer(timeout: int = 5) -> str:
