@@ -2097,7 +2097,7 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchPSIRT()">SEARCH PSIRT</button>
-        <button class="btn btn-ghost" onclick="loadLatestPSIRT()" style="font-size:11px;padding:8px 12px">LOAD LATEST</button>
+        <button class="btn btn-ghost" onclick="showPage('chat',document.querySelector('.nav-item:nth-child(2)'));sendQuick('Query Cisco PSIRT for '+(document.getElementById('psirt-query').value||'latest advisories'))" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
