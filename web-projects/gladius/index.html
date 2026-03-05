@@ -2238,9 +2238,9 @@
       <div class="chat-container">
         <div class="chat-header">
           <div class="agent-indicator">
-            <div class="agent-avatar">G</div>
+            <div class="agent-avatar">A</div>
             <div class="agent-info">
-              <div class="name">GLADIUS</div>
+              <div class="name">AUDIT AGENT</div>
               <div class="sub">CLAUDE CODE · MCP ACTIVE · 8 TOOLS</div>
             </div>
           </div>
@@ -2249,12 +2249,12 @@
 
         <div class="chat-messages" id="chat-messages">
           <div class="msg agent">
-            <div class="msg-avatar agent">G</div>
+            <div class="msg-avatar agent">A</div>
             <div>
               <div class="msg-bubble" id="welcome-bubble">
                 Gladius online. Connecting to MCP server…
               </div>
-              <div class="msg-meta" id="welcome-meta">GLADIUS · —</div>
+              <div class="msg-meta" id="welcome-meta">AUDIT AGENT · —</div>
             </div>
           </div>
         </div>
@@ -2264,7 +2264,7 @@
         </div>
 
         <div class="chat-input-area">
-          <textarea class="chat-input" id="chat-input" placeholder="Give Gladius a command..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+          <textarea class="chat-input" id="chat-input" placeholder="Give the Audit Agent a command..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
           <button class="send-btn" onclick="sendMessage()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
@@ -2296,7 +2296,7 @@
             <div class="design-msg-avatar">D</div>
             <div>
               <div class="msg-bubble" id="design-welcome-bubble">
-                Design Agent online. I can help you make informed design choices for your network — colour palettes, topology conventions, visual hierarchy, and UI standards. Ask me anything about design.
+                Design Agent online. Specialising in network design — Cisco Validated Designs, topology planning, IP addressing strategies, routing architecture, and infrastructure best practices. Load your CVD documents via the Ingest page and ask me anything about network design.
               </div>
               <div class="msg-meta" id="design-welcome-meta">DESIGN · —</div>
             </div>
@@ -2304,14 +2304,11 @@
         </div>
 
         <div class="quick-cmds" id="design-quick-cmds-row">
-          <button class="design-quick-cmd" onclick="sendDesignQuick('What colour should I use for a critical alert node?')">Critical node colour</button>
-          <button class="design-quick-cmd" onclick="sendDesignQuick('Recommend a colour palette for a dark-mode network dashboard')">Dark mode palette</button>
-          <button class="design-quick-cmd" onclick="sendDesignQuick('What typography hierarchy should I use for a network security UI?')">Typography hierarchy</button>
-          <button class="design-quick-cmd" onclick="sendDesignQuick('How should I visually distinguish active, passive and offline nodes on a network map?')">Node state conventions</button>
+          <!-- rendered by renderDesignQuickCmds() -->
         </div>
 
         <div class="chat-input-area">
-          <textarea class="chat-input design-chat-input" id="design-input" placeholder="Ask the Design Agent about colours, layouts, typography, node conventions…" rows="1" onkeydown="handleDesignKey(event)" oninput="autoResize(this)"></textarea>
+          <textarea class="chat-input design-chat-input" id="design-input" placeholder="Ask the Design Agent about network design, CVDs, topology, routing, addressing…" rows="1" onkeydown="handleDesignKey(event)" oninput="autoResize(this)"></textarea>
           <button class="design-send-btn" onclick="sendDesignMessage()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
@@ -3108,12 +3105,12 @@
       msgEl.className = 'msg agent';
       msgEl.innerHTML = `
         <div class="avatar-orbit active" id="${orbitId}">
-          <div class="msg-avatar agent">G</div>
+          <div class="msg-avatar agent">A</div>
           <div class="orbit-dot"></div>
         </div>
         <div>
           <div class="msg-bubble" id="${msgId}"></div>
-          <div class="msg-meta">GLADIUS · ${now}</div>
+          <div class="msg-meta">AUDIT AGENT · ${now}</div>
         </div>`;
       let msgAdded = false;
 
@@ -3259,7 +3256,7 @@
       <div class="msg-avatar ${role}">${initials}</div>
       <div>
         <div class="msg-bubble">${formatMessage(text)}</div>
-        <div class="msg-meta">${role === 'agent' ? 'GLADIUS' : 'STEVEN'} · ${now}</div>
+        <div class="msg-meta">${role === 'agent' ? 'AUDIT AGENT' : 'USER'} · ${now}</div>
       </div>`;
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -3271,7 +3268,7 @@
     div.className = 'msg agent';
     div.innerHTML = `
       <div class="avatar-orbit active" id="typing-orbit">
-        <div class="msg-avatar agent">G</div>
+        <div class="msg-avatar agent">A</div>
         <div class="orbit-dot"></div>
       </div>
       <div>
@@ -4748,7 +4745,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const ts  = now.toTimeString().slice(0,8);
     const meta = document.getElementById('welcome-meta');
     const bubble = document.getElementById('welcome-bubble');
-    if (meta) meta.textContent = `GLADIUS · ${ts}`;
+    if (meta) meta.textContent = `AUDIT AGENT · ${ts}`;
 
     try {
       const [healthRes, kbRes] = await Promise.all([
@@ -5368,7 +5365,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     designStreaming = true;
 
-    const { bubble, orbitWrap } = appendDesignMsg('design', '<em style="color:var(--text-dim)">Thinking…</em>', true);
+    const { bubble, orbitWrap } = appendDesignMsg('design', '<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>', true);
     let fullText = '';
     let firstChunk = true;
 
@@ -5433,6 +5430,118 @@ ${cves.length ? `<!-- CVE TAB -->
     if (meta) meta.textContent = `DESIGN · ${now}`;
   })();
 
+  // ── DESIGN QUICK COMMANDS ─────────────────────────────────────────────────
+  const DEFAULT_DESIGN_CMDS = [
+    { label: 'CVD Summary',       prompt: 'Summarise the key design principles from the loaded Cisco Validated Design documents' },
+    { label: 'WAN Architecture',  prompt: 'What WAN architecture options does the CVD recommend and what are the trade-offs?' },
+    { label: 'IP Addressing',     prompt: 'What IP addressing strategy is recommended for a campus network design?' },
+    { label: 'Routing Design',    prompt: 'What routing protocols and design patterns are recommended for a multi-site enterprise network?' },
+    { label: 'HA Patterns',       prompt: 'What high-availability design patterns are covered in the loaded design documentation?' },
+  ];
+
+  function loadDesignCmds() {
+    try {
+      const saved = localStorage.getItem('gladius-design-cmds');
+      return saved ? JSON.parse(saved) : DEFAULT_DESIGN_CMDS;
+    } catch(e) { return DEFAULT_DESIGN_CMDS; }
+  }
+
+  function saveDesignCmds(cmds) {
+    localStorage.setItem('gladius-design-cmds', JSON.stringify(cmds));
+  }
+
+  function renderDesignQuickCmds() {
+    const row = document.getElementById('design-quick-cmds-row');
+    if (!row) return;
+    const cmds = loadDesignCmds();
+    row.innerHTML = '';
+    cmds.forEach((cmd, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'quick-cmd-wrap';
+
+      const tip = document.createElement('div');
+      tip.className = 'quick-cmd-tooltip';
+      tip.textContent = cmd.prompt;
+
+      const btn = document.createElement('button');
+      btn.className = 'quick-cmd';
+      btn.style.borderColor = 'rgba(77,77,255,0.4)';
+      btn.style.color = '#4d4dff';
+      btn.style.background = 'rgba(77,77,255,0.06)';
+      btn.textContent = cmd.label;
+      btn.addEventListener('mouseover', () => { btn.style.borderColor = '#4d4dff'; btn.style.background = 'rgba(77,77,255,0.15)'; });
+      btn.addEventListener('mouseout',  () => { btn.style.borderColor = 'rgba(77,77,255,0.4)'; btn.style.background = 'rgba(77,77,255,0.06)'; });
+      btn.addEventListener('click', () => { document.getElementById('design-input').value = cmd.prompt; sendDesignMessage(); });
+
+      const edit = document.createElement('button');
+      edit.className = 'quick-cmd-edit';
+      edit.title = 'Edit';
+      edit.textContent = '✎';
+      edit.addEventListener('click', () => openDesignCmdModal(i));
+
+      wrap.appendChild(tip);
+      wrap.appendChild(btn);
+      wrap.appendChild(edit);
+      row.appendChild(wrap);
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'quick-cmd';
+    addBtn.style.cssText = 'opacity:0.5;border-color:rgba(77,77,255,0.3);color:#4d4dff;';
+    addBtn.textContent = '+ Add';
+    addBtn.addEventListener('click', () => openDesignCmdModal(-1));
+    row.appendChild(addBtn);
+  }
+
+  let _editingDesignIdx = null;
+
+  function openDesignCmdModal(idx) {
+    _editingDesignIdx = idx;
+    const cmds = loadDesignCmds();
+    const cmd = idx >= 0 ? cmds[idx] : { label: '', prompt: '' };
+    document.getElementById('dcmd-label-input').value = cmd.label;
+    document.getElementById('dcmd-prompt-input').value = cmd.prompt;
+    document.getElementById('dcmd-modal-title').textContent = idx >= 0 ? 'EDIT DESIGN COMMAND' : 'ADD DESIGN COMMAND';
+    document.getElementById('dcmd-delete-btn').style.display = idx >= 0 ? 'inline-block' : 'none';
+    document.getElementById('dcmd-modal-overlay').classList.add('active');
+    document.getElementById('dcmd-label-input').focus();
+  }
+
+  function closeDesignCmdModal() {
+    document.getElementById('dcmd-modal-overlay').classList.remove('active');
+  }
+
+  function saveDesignCmdModal() {
+    const label  = document.getElementById('dcmd-label-input').value.trim();
+    const prompt = document.getElementById('dcmd-prompt-input').value.trim();
+    if (!label || !prompt) return;
+    const cmds = loadDesignCmds();
+    if (_editingDesignIdx >= 0) {
+      cmds[_editingDesignIdx] = { label, prompt };
+    } else {
+      cmds.push({ label, prompt });
+    }
+    saveDesignCmds(cmds);
+    renderDesignQuickCmds();
+    closeDesignCmdModal();
+  }
+
+  function deleteDesignCmd() {
+    if (_editingDesignIdx < 0) return;
+    const cmds = loadDesignCmds();
+    cmds.splice(_editingDesignIdx, 1);
+    saveDesignCmds(cmds);
+    renderDesignQuickCmds();
+    closeDesignCmdModal();
+  }
+
+  function resetDesignCmds() {
+    saveDesignCmds(DEFAULT_DESIGN_CMDS);
+    renderDesignQuickCmds();
+    closeDesignCmdModal();
+  }
+
+  renderDesignQuickCmds();
 
 </script>
   <!-- FINDING DETAIL PANEL -->
@@ -5454,6 +5563,24 @@ ${cves.length ? `<!-- CVE TAB -->
       </div>
     </div>
   </div>
+
+  <!-- Design Quick Command Edit Modal -->
+  <div class="qcmd-modal-overlay" id="dcmd-modal-overlay" onclick="if(event.target===this)closeDesignCmdModal()">
+    <div class="qcmd-modal" style="border-color:#4d4dff">
+      <h3 id="dcmd-modal-title" style="color:#4d4dff">EDIT DESIGN COMMAND</h3>
+      <label>Button Label</label>
+      <input type="text" id="dcmd-label-input" placeholder="e.g. CVD Summary" maxlength="30" style="border-color:rgba(77,77,255,0.4)">
+      <label>Prompt sent to Design Agent</label>
+      <textarea id="dcmd-prompt-input" rows="4" placeholder="e.g. Summarise the key design principles from the loaded CVD documents" style="border-color:rgba(77,77,255,0.4)"></textarea>
+      <div class="qcmd-modal-btns">
+        <button class="btn btn-ghost" id="dcmd-delete-btn" style="margin-right:auto;color:var(--danger);border-color:var(--danger)" onclick="deleteDesignCmd()">Delete</button>
+        <button class="btn btn-ghost" onclick="resetDesignCmds()">Reset Defaults</button>
+        <button class="btn btn-ghost" onclick="closeDesignCmdModal()">Cancel</button>
+        <button class="btn btn-primary" style="border-color:#4d4dff;color:#4d4dff;background:rgba(77,77,255,0.12)" onclick="saveDesignCmdModal()">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div class="detail-panel" id="detail-panel">
     <div class="detail-header">
       <div class="severity-badge" id="detail-severity">HIGH</div>
