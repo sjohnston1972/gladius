@@ -1108,7 +1108,183 @@ async def ingest_collections():
     return {"collections": counts}
 
 
-SNMP_URL = os.getenv("SNMP_SERVICE_URL", "http://gladius-snmp:8000")
+SNMP_URL           = os.getenv("SNMP_SERVICE_URL", "http://gladius-snmp:8000")
+SLACK_BOT_TOKEN  = os.getenv("SLACK_BOT_TOKEN", "")
+SLACK_ALERT_CHANNEL = os.getenv("SLACK_ALERT_CHANNEL", "")  # channel ID or user ID to post alerts to
+
+# ── SNMP ALERT — background investigation + Slack DM ──────────────────────────
+
+class SnmpAlertRequest(BaseModel):
+    device_id:  str
+    name:       str
+    host:       str
+    old_status: str
+    new_status: str
+    snmp_data:  dict = {}
+
+
+def _slack_dm(text: str) -> None:
+    """Post an alert to SLACK_ALERT_CHANNEL (channel ID or user ID)."""
+    if not SLACK_BOT_TOKEN or not SLACK_ALERT_CHANNEL:
+        log.warning("Slack alert skipped — SLACK_BOT_TOKEN or SLACK_ALERT_CHANNEL not configured")
+        return
+    try:
+        r = http_requests.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}", "Content-Type": "application/json"},
+            json={"channel": SLACK_ALERT_CHANNEL, "text": text},
+            timeout=10,
+        )
+        resp = r.json()
+        if not resp.get("ok"):
+            log.warning("Slack DM failed: %s", resp.get("error"))
+        else:
+            log.info("Slack alert sent to %s", SLACK_ALERT_CHANNEL)
+    except Exception as e:
+        log.error("Slack DM error: %s", e)
+
+
+async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
+    """
+    Run the agentic MCP loop without streaming. Collects full response text and audit.
+    Used for background alert investigations.
+    """
+    tools = cached_tools
+    if not tools:
+        return "No tools available — cannot investigate.", None
+
+    server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
+    text_parts: list[str] = []
+    audit: dict | None = None
+
+    try:
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as mcp_session:
+                await mcp_session.initialize()
+                loop_messages = list(messages)
+
+                while True:
+                    response = client.messages.create(
+                        model=MODEL,
+                        max_tokens=8192,
+                        system=SYSTEM_PROMPT,
+                        messages=loop_messages,
+                        tools=tools,
+                    )
+
+                    assistant_content = []
+
+                    for block in response.content:
+                        if block.type == "text":
+                            assistant_content.append({"type": "text", "text": block.text})
+                            text_parts.append(block.text)
+
+                        elif block.type == "tool_use":
+                            tool_name   = block.name
+                            tool_input  = block.input
+                            tool_use_id = block.id
+                            assistant_content.append({
+                                "type": "tool_use", "id": tool_use_id,
+                                "name": tool_name, "input": tool_input,
+                            })
+                            log.info("Alert investigation tool: %s", tool_name)
+
+                            try:
+                                result      = await mcp_session.call_tool(tool_name, tool_input)
+                                result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                                is_error    = bool(result.isError)
+                                if tool_name == "save_audit_results" and not is_error:
+                                    audit = dict(tool_input)
+                            except Exception as e:
+                                result_text = f"Tool error: {e}"
+                                is_error = True
+
+                            loop_messages.append({"role": "assistant", "content": assistant_content})
+                            loop_messages.append({
+                                "role": "user",
+                                "content": [{
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": [{"type": "text", "text": result_text}],
+                                    "is_error": is_error,
+                                }]
+                            })
+                            assistant_content = []
+
+                    if response.stop_reason != "tool_use":
+                        break
+
+    except Exception as e:
+        log.error("Alert investigation error: %s", e, exc_info=True)
+        return f"Investigation failed: {e}", None
+
+    return "".join(text_parts), audit
+
+
+async def investigate_snmp_alert(alert: dict) -> None:
+    """Background task: investigate a degraded device and DM the findings."""
+    name       = alert["name"]
+    host       = alert["host"]
+    old_status = alert["old_status"]
+    new_status = alert["new_status"]
+    snmp_data  = alert.get("snmp_data", {})
+
+    status_emoji = "🔴" if new_status == "error" else "🟡"
+    log.info("Starting alert investigation for %s (%s) %s→%s", name, host, old_status, new_status)
+
+    # Notify immediately that investigation has started
+    _slack_dm(
+        f"{status_emoji} *SNMP Alert — {name}* (`{host}`)\n"
+        f"Status changed *{old_status.upper()} → {new_status.upper()}*\n"
+        f"Investigating now..."
+    )
+
+    snmp_summary = "\n".join(f"  {k}: {v}" for k, v in snmp_data.items() if k not in ("status", "last_poll", "last_success", "error", "response_ms"))
+    investigation_prompt = (
+        f"SNMP ALERT: Device *{name}* (IP: {host}) has changed status from "
+        f"**{old_status}** to **{new_status}**.\n\n"
+        f"Last SNMP data collected before the alert:\n{snmp_summary or 'None available'}\n"
+        f"Error: {snmp_data.get('error', 'none')}\n\n"
+        f"Please investigate this device thoroughly:\n"
+        f"1. Run SNMP poll (snmp_poll) to get current system status\n"
+        f"2. Attempt SSH connection and run relevant show commands (show version, show interfaces, show log)\n"
+        f"3. Check for relevant CVEs for the device IOS version\n"
+        f"4. Provide a clear diagnosis: what likely caused the status change, severity, and recommended actions\n"
+        f"Be concise — this will be sent as a Slack alert."
+    )
+
+    messages = [{"role": "user", "content": investigation_prompt}]
+    final_text, audit = await run_agent_investigation(messages)
+
+    if not final_text:
+        final_text = "Investigation completed but no findings were returned."
+
+    # Build DM — keep it Slack-friendly
+    score_line = ""
+    if audit:
+        sc = audit.get("score", {})
+        score_line = f"\nAudit score — Overall: *{sc.get('overall','?')}* | NIST: {sc.get('nist','?')} | CIS: {sc.get('cis','?')}"
+        findings = audit.get("findings", [])
+        crits = sum(1 for f in findings if f.get("severity") == "CRITICAL")
+        highs = sum(1 for f in findings if f.get("severity") == "HIGH")
+        if crits or highs:
+            score_line += f"\n:rotating_light: {crits} CRITICAL, {highs} HIGH findings"
+
+    _slack_dm(
+        f"{status_emoji} *Investigation complete — {name}* (`{host}`){score_line}\n\n"
+        f"{final_text[:3000]}"
+        + ("…" if len(final_text) > 3000 else "")
+    )
+    log.info("Alert investigation complete for %s", name)
+
+
+@app.post("/api/snmp/alert", status_code=202)
+async def snmp_alert(alert: SnmpAlertRequest):
+    """Receive a status-change alert from gladius-snmp and kick off a background investigation."""
+    log.info("SNMP alert received: %s (%s) %s→%s", alert.name, alert.host, alert.old_status, alert.new_status)
+    asyncio.create_task(investigate_snmp_alert(alert.dict()))
+    return {"status": "investigating", "device": alert.name, "host": alert.host}
+
 
 # ── DESIGN AGENT ──────────────────────────────────────────────────────────────
 

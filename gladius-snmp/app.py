@@ -7,6 +7,7 @@ import json
 import time
 import asyncio
 import logging
+import requests
 from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -25,8 +26,9 @@ from pysnmp.hlapi import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("gladius-snmp")
 
-DEVICES_FILE  = Path(os.getenv("DEVICES_FILE", "/data/devices.json"))
-POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "60"))   # seconds between polls
+DEVICES_FILE    = Path(os.getenv("DEVICES_FILE", "/data/devices.json"))
+POLL_INTERVAL   = int(os.getenv("POLL_INTERVAL", "60"))   # seconds between polls
+GLADIUS_API_URL = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
 
 # ── OIDs polled for every device ───────────────────────────────────────────────
 SYSTEM_OIDS = {
@@ -39,8 +41,9 @@ SYSTEM_OIDS = {
 }
 
 # ── In-memory stores ───────────────────────────────────────────────────────────
-_devices: dict[str, dict] = {}   # id → device config
-_status:  dict[str, dict] = {}   # id → latest poll result
+_devices:     dict[str, dict] = {}   # id → device config
+_status:      dict[str, dict] = {}   # id → latest poll result
+_last_alerted: dict[str, str] = {}   # id → last status we alerted on (to avoid repeat alerts)
 
 # ── Device persistence ─────────────────────────────────────────────────────────
 def _load_devices():
@@ -139,6 +142,32 @@ def _poll_device_sync(dev: dict) -> dict:
         }
 
 
+# ── Alert helpers ──────────────────────────────────────────────────────────────
+_STATUS_SEVERITY = {"ok": 0, "unknown": 0, "warn": 1, "error": 2}
+
+def _should_alert(dev_id: str, new_status: str) -> bool:
+    """Return True if the status has degraded since our last alert."""
+    prev = _last_alerted.get(dev_id, "ok")
+    return _STATUS_SEVERITY.get(new_status, 0) > _STATUS_SEVERITY.get(prev, 0)
+
+
+def _send_alert_sync(dev: dict, old_status: str, new_status: str, snmp_data: dict) -> None:
+    """POST an alert to gladius-api. Runs in a thread."""
+    payload = {
+        "device_id":  dev["id"],
+        "name":       dev.get("name", dev["host"]),
+        "host":       dev["host"],
+        "old_status": old_status,
+        "new_status": new_status,
+        "snmp_data":  snmp_data,
+    }
+    try:
+        r = requests.post(f"{GLADIUS_API_URL}/api/snmp/alert", json=payload, timeout=10)
+        log.info("Alert POSTed for %s: %s→%s (HTTP %d)", dev.get("name"), old_status, new_status, r.status_code)
+    except Exception as e:
+        log.warning("Failed to send alert for %s: %s", dev.get("name"), e)
+
+
 # ── Background polling loop ────────────────────────────────────────────────────
 async def _poll_all():
     while True:
@@ -148,10 +177,24 @@ async def _poll_all():
             if not dev:
                 continue
             result = await asyncio.to_thread(_poll_device_sync, dev)
+            old_status = _staleness(_status.get(dev_id, {})) if dev_id in _status else "unknown"
             _status[dev_id] = result
+            new_status = _staleness(result)
             log.info("Polled %s (%s) → %s %dms",
                      dev.get("name", dev["host"]), dev["host"],
-                     result["status"], result["response_ms"])
+                     new_status, result["response_ms"])
+
+            # Fire alert on status degradation
+            if _should_alert(dev_id, new_status):
+                _last_alerted[dev_id] = new_status
+                asyncio.create_task(
+                    asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result))
+                )
+            elif new_status == "ok" and _last_alerted.get(dev_id, "ok") != "ok":
+                # Device recovered — reset so we alert again if it degrades again
+                _last_alerted[dev_id] = "ok"
+                log.info("Device %s recovered → alert state reset", dev.get("name", dev["host"]))
+
         await asyncio.sleep(POLL_INTERVAL)
 
 

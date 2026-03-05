@@ -3,3 +3,4 @@ uvicorn[standard]
 pysnmp<6
 pyasn1<0.5
 pydantic
+requests
