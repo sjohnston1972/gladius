@@ -1327,6 +1327,16 @@
   }
   #page-psirt.active { display: flex; }
 
+  /* ── EOX PAGE ── */
+  #page-eox {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    flex-direction: column;
+  }
+  #page-eox.active { display: flex; }
+
   /* ── CVE PAGE ── */
   #page-cve {
     display: none;
@@ -1575,11 +1585,37 @@
     --font-body: 'Inter', sans-serif;
   }
 
+  /* ── SKIN: RIPOSTE ── Cyberpunk Command · Charcoal · Electric Blue */
+  html[data-skin="riposte"] {
+    --bg-deep: #1a1c1e;
+    --bg-panel: #23272a;
+    --bg-card: #2b2f33;
+    --bg-hover: #31363b;
+    --border: #3a4048;
+    --border-bright: #4a5260;
+    --accent: #00a3ff;
+    --accent-dim: rgba(0,163,255,0.12);
+    --accent-glow: rgba(0,163,255,0.20);
+    --danger: #ff4d4d;
+    --danger-dim: rgba(255,77,77,0.14);
+    --warn: #ffb000;
+    --warn-dim: rgba(255,176,0,0.14);
+    --success: #00e676;
+    --success-dim: rgba(0,230,118,0.12);
+    --text-primary: #ffffff;
+    --text-secondary: #a0aec0;
+    --text-dim: #5a6a80;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-ui: 'Rajdhani', sans-serif;
+    --font-body: 'Exo 2', sans-serif;
+  }
+
   /* scan line overlay — dark skins only */
   html[data-skin="gladius"] body::after,
   html[data-skin="spatha"] body::after,
   html[data-skin="pugio"] body::after,
-  html[data-skin="parazonium"] body::after {
+  html[data-skin="parazonium"] body::after,
+  html[data-skin="riposte"] body::after {
     content: '';
     position: fixed;
     inset: 0;
@@ -1734,6 +1770,10 @@
     <div class="nav-item" onclick="showPage('psirt', this)" title="Cisco PSIRT">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       <span>PSIRT</span>
+    </div>
+    <div class="nav-item" onclick="showPage('eox', this)" title="Cisco EOX — End of Life">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>EOX</span>
     </div>
   </div>
 
@@ -2057,7 +2097,6 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchCVEs()">SEARCH NVD</button>
-        <button class="btn btn-ghost" onclick="sendCVEViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -2097,7 +2136,6 @@
           </select>
         </div>
         <button class="btn btn-primary" onclick="searchPSIRT()">SEARCH PSIRT</button>
-        <button class="btn btn-ghost" onclick="sendPSIRTViaAgent()" title="Search via AI agent instead" style="font-size:11px;padding:8px 12px">VIA AGENT</button>
       </div>
 
       <div class="cve-table">
@@ -2114,6 +2152,43 @@
           </thead>
           <tbody id="psirt-tbody">
             <tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Loading latest Cisco PSIRT advisories…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- EOX PAGE -->
+    <div id="page-eox" class="page">
+      <div class="cve-search">
+        <div class="form-group" style="flex:1">
+          <label class="form-label">Product IDs (comma-separated, wildcards supported)</label>
+          <input type="text" class="form-input" placeholder="WS-C3750G-24PS-S, CISCO2811, C9300*" id="eox-pids" style="width:100%" onkeydown="if(event.key==='Enter')searchEOX()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">EoS From</label>
+          <input type="date" class="form-input" id="eox-start" style="width:150px">
+        </div>
+        <div class="form-group">
+          <label class="form-label">EoS To</label>
+          <input type="date" class="form-input" id="eox-end" style="width:150px">
+        </div>
+        <button class="btn btn-primary" onclick="searchEOX()">SEARCH EOX</button>
+      </div>
+
+      <div class="cve-table">
+        <table>
+          <thead>
+            <tr>
+              <th>PID</th>
+              <th>DESCRIPTION</th>
+              <th>END OF SALE</th>
+              <th>SW MAINT</th>
+              <th>LAST DATE OF SUPPORT</th>
+              <th>MIGRATION PID</th>
+            </tr>
+          </thead>
+          <tbody id="eox-tbody">
+            <tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Enter product PIDs or select a date range to find EoL products</td></tr>
           </tbody>
         </table>
       </div>
@@ -2242,6 +2317,17 @@
               <div class="skin-btn-desc">Cloud · High Contrast</div>
             </button>
 
+            <!-- Riposte -->
+            <button class="skin-btn" data-skin="riposte" onclick="setSkin('riposte')">
+              <div class="skin-swatches">
+                <div class="skin-swatch" style="background:#23272a"></div>
+                <div class="skin-swatch" style="background:#00a3ff"></div>
+                <div class="skin-swatch" style="background:#00e676"></div>
+              </div>
+              <div class="skin-btn-name">Riposte</div>
+              <div class="skin-btn-desc">Cyberpunk · Command</div>
+            </button>
+
           </div>
         </div>
       </div>
@@ -2293,6 +2379,7 @@
       nmap: 'NMAP SCANNER',
       scapy: 'SCAPY PACKET FORGE',
       psirt: 'CISCO PSIRT',
+      eox: 'CISCO EOX',
       reports: 'REPORTS',
       cve: 'CVE LOOKUP',
       settings: 'CONFIGURATION'
@@ -4054,6 +4141,15 @@ ${cves.length ? `<!-- CVE TAB -->
         text = `Audit results saved — ${input.device || _sessionDevice?.ip || '?'} · ${input.ip || ''} (${input.findings_count ?? '?'} findings)`;
         hi = input.device || null;
         break;
+      case 'query_eox': {
+        const eoxParts = [];
+        if (input.pids)       eoxParts.push(`PIDs: ${input.pids}`);
+        if (input.start_date) eoxParts.push(`from ${input.start_date}`);
+        if (input.end_date)   eoxParts.push(`to ${input.end_date}`);
+        text = `EOX query — ${eoxParts.join(', ') || 'lookup'}${_deviceTag()}`;
+        hi = 'EOX';
+        break;
+      }
       default:
         text = `Tool: ${toolName}${_deviceTag()}`;
         hi = null;
@@ -4131,6 +4227,8 @@ ${cves.length ? `<!-- CVE TAB -->
         rows.push(['NVD CVEs', 'NIST National Vulnerability Database — search by platform, severity, or date range']);
       if (has('query_psirt'))
         rows.push(['Cisco PSIRT', 'Official Cisco security advisories — search by product, severity, or advisory ID']);
+      if (has('query_eox'))
+        rows.push(['Cisco EOX', 'End-of-Life / End-of-Sale lookup — product lifecycle dates and migration PIDs']);
       if (has('run_nmap_scan'))
         rows.push(['NMAP', 'Port scanning — quick, service detection, full port, OS fingerprint, vuln scripts']);
       if (has('run_scapy'))
@@ -4286,7 +4384,12 @@ ${cves.length ? `<!-- CVE TAB -->
     }
     sorted.forEach(c => {
       html += `<tr style="cursor:pointer" onclick="window.open('${c.url}','_blank')">
-        <td class="cve-id">${c.id}</td>
+        <td class="cve-id" style="white-space:nowrap">
+          <div style="display:flex;align-items:center;gap:5px">
+            ${c.id}
+            <button onclick="event.stopPropagation();agentCVE('${c.id}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+          </div>
+        </td>
         <td class="${sevClass(c.severity)}">${c.score}</td>
         <td><span class="severity-badge ${badgeCls(c.severity)}">${c.severity}</span></td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${c.published}</td>
@@ -4347,7 +4450,12 @@ ${cves.length ? `<!-- CVE TAB -->
     advisories.forEach(a => {
       const cveList = (a.cves || []).slice(0, 3).join(', ') + (a.cve_count > 3 ? ` +${a.cve_count - 3}` : '');
       html += `<tr style="cursor:pointer" onclick="window.open('${a.url}','_blank')" title="${(a.summary||'').replace(/"/g,'&quot;')}">
-        <td class="cve-id" style="white-space:nowrap">${a.id}</td>
+        <td class="cve-id" style="white-space:nowrap">
+          <div style="display:flex;align-items:center;gap:5px">
+            ${a.id}
+            <button onclick="event.stopPropagation();agentPSIRT('${a.id}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+          </div>
+        </td>
         <td class="${sevClass(a.severity)}">${a.cvss}</td>
         <td><span class="severity-badge ${badgeCls(a.severity)}">${a.severity}</span></td>
         <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${a.published}</td>
@@ -4356,6 +4464,122 @@ ${cves.length ? `<!-- CVE TAB -->
       </tr>`;
     });
     tbody.innerHTML = html;
+  }
+
+  // ── EOX TAB ──────────────────────────────────────────────────────────────
+
+  function searchEOX() {
+    const pids     = (document.getElementById('eox-pids')?.value || '').trim();
+    const startRaw = document.getElementById('eox-start')?.value || '';
+    const endRaw   = document.getElementById('eox-end')?.value || '';
+    const tbody    = document.getElementById('eox-tbody');
+    if (!pids && !(startRaw && endRaw)) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// Enter product PIDs or select a start and end date</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// Querying Cisco EOX…</td></tr>`;
+    // Convert YYYY-MM-DD (HTML date input) → MM-DD-YYYY (EOX API)
+    function toMDY(iso) {
+      if (!iso) return '';
+      const [y, m, d] = iso.split('-');
+      return `${m}-${d}-${y}`;
+    }
+    const params = new URLSearchParams();
+    if (pids)              params.set('pids', pids);
+    if (startRaw && endRaw) {
+      params.set('start_date', toMDY(startRaw));
+      params.set('end_date',   toMDY(endRaw));
+    }
+    fetch(`/api/eox/search?${params}`)
+      .then(r => r.json())
+      .then(data => renderEOXTable(data.records, `${data.total} record(s) found`))
+      .catch(err => {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// EOX search failed: ${err}</td></tr>`;
+      });
+  }
+
+  function renderEOXTable(records, subtitle) {
+    const tbody = document.getElementById('eox-tbody');
+    if (!tbody) return;
+    if (!records || !records.length) {
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// No EOX records found</td></tr>`;
+      return;
+    }
+    const today = new Date();
+    const soon  = new Date(today); soon.setMonth(soon.getMonth() + 12);
+    function dateStyle(iso) {
+      if (!iso || iso === '—') return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      if (d < today) return 'color:var(--danger)';
+      if (d < soon)  return 'color:var(--warning,#f5a623)';
+      return '';
+    }
+    let html = '';
+    if (subtitle) {
+      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${subtitle}</td></tr>`;
+    }
+    records.forEach(r => {
+      if (r.error && !r.not_eol) {
+        html += `<tr>
+          <td class="cve-id">${r.pid}</td>
+          <td colspan="5" style="color:var(--danger);font-family:var(--font-mono);font-size:12px">Error: ${r.error} — ${r.error_desc || ''}</td>
+        </tr>`;
+        return;
+      }
+      if (r.not_eol) {
+        html += `<tr>
+          <td class="cve-id">${r.pid}</td>
+          <td colspan="5" style="color:var(--text-dim);font-family:var(--font-mono);font-size:12px">Not yet EoL — no EoX record (SSA_ERR_026)</td>
+        </tr>`;
+        return;
+      }
+      const rowClick = r.bulletin ? `style="cursor:pointer" onclick="window.open('${r.bulletin}','_blank')" title="View EoL bulletin"` : '';
+      html += `<tr ${rowClick}>
+        <td class="cve-id" style="white-space:nowrap">
+          <div style="display:flex;align-items:center;gap:5px">
+            ${r.pid}
+            <button onclick="event.stopPropagation();agentEOX('${r.pid}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+          </div>
+        </td>
+        <td style="font-size:12px;color:var(--text-secondary)">${r.description || '—'}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.eos)}">${r.eos || '—'}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.sw_maint)}">${r.sw_maint || '—'}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.ldos)}">${r.ldos || '—'}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${r.migration || '—'}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
+  function sendEOXViaAgent() {
+    const pids  = (document.getElementById('eox-pids')?.value || '').trim();
+    const start = document.getElementById('eox-start')?.value || '';
+    const end   = document.getElementById('eox-end')?.value || '';
+    let prompt  = 'Query Cisco EOX';
+    if (pids)          prompt += ` for product IDs: ${pids}`;
+    if (start && end)  prompt += ` with EoS date range ${start} to ${end}`;
+    if (!pids && !start) prompt += ' — show latest EoL announcements';
+    prompt += '. List all EoL dates and recommended migration paths.';
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(prompt);
+  }
+
+  // ── Per-row agent helpers ─────────────────────────────────────────────────
+
+  function agentCVE(id) {
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(`Get full details on ${id} — affected products, CVSS vector, exploitability, and remediation steps.`);
+  }
+
+  function agentPSIRT(id) {
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(`Get full details on Cisco PSIRT advisory ${id} — affected products, software versions, workarounds, and available patches.`);
+  }
+
+  function agentEOX(pid) {
+    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    sendQuick(`Query Cisco EOX for product ID "${pid}" — show all lifecycle dates, EoS, last date of support, and the recommended migration path.`);
   }
 </script>
   <!-- FINDING DETAIL PANEL -->
