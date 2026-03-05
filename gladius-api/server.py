@@ -835,7 +835,7 @@ async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
 SUPPORTED_TYPES = {"pdf", "md", "markdown", "txt", "text", "json", "html", "csv"}
 
 COLLECTIONS = [
-    "nvd-advisories",
+    "network_security_guidelines",
     "design-guidelines",
     "network-topologies",
     "compliance-frameworks",
@@ -892,7 +892,7 @@ def _extract_text(file_bytes: bytes, filename: str, doc_type: str) -> str:
 @app.post("/api/ingest")
 async def ingest_document(
     file: UploadFile = File(...),
-    collection: str  = Form("nvd-advisories"),
+    collection: str  = Form("network_security_guidelines"),
     doc_type: str    = Form("auto"),
 ):
     """Ingest a document into a named Chroma collection."""

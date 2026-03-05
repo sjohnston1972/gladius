@@ -2601,9 +2601,9 @@
                 Select the Chroma collection to ingest documents into. Each collection is a separate knowledge domain — agents query only their assigned collection.
               </p>
               <div class="collection-cards" id="collection-cards">
-                <div class="collection-card selected" data-collection="nvd-advisories" onclick="selectCollection(this)">
-                  <div class="collection-card-count" id="count-nvd-advisories">— docs</div>
-                  <div class="collection-card-name">NVD Advisories</div>
+                <div class="collection-card selected" data-collection="network_security_guidelines" onclick="selectCollection(this)">
+                  <div class="collection-card-count" id="count-network_security_guidelines">— docs</div>
+                  <div class="collection-card-name">Security Guidelines</div>
                   <div class="collection-card-desc">CVE / NIST security data</div>
                 </div>
                 <div class="collection-card" data-collection="design-guidelines" onclick="selectCollection(this)">
@@ -4966,7 +4966,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   // ── DOCUMENT INGESTION ──────────────────────────────────────────────────────
-  let _selectedCollection = 'nvd-advisories';
+  let _selectedCollection = 'network_security_guidelines';
   let _selectedDocType    = 'auto';
   let _selectedFile       = null;
 
@@ -5086,7 +5086,7 @@ ${cves.length ? `<!-- CVE TAB -->
   async function loadCollectionStats() {
     const overview = document.getElementById('collection-overview');
     const collections = [
-      { id: 'nvd-advisories',       label: 'NVD Advisories',      desc: 'CVE / NIST security data' },
+      { id: 'network_security_guidelines', label: 'Security Guidelines', desc: 'CVE / NIST security data' },
       { id: 'design-guidelines',    label: 'Design Guidelines',   desc: 'UI/UX · Network design' },
       { id: 'network-topologies',   label: 'Network Topologies',  desc: 'Architecture patterns' },
       { id: 'compliance-frameworks', label: 'Compliance',         desc: 'CIS · NIST · ISO 27001' },
