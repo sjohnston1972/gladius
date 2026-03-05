@@ -29,6 +29,19 @@ import hashlib
 
 load_dotenv()
 
+# Lazy-loaded embedding model (shared across requests)
+_embed_model = None
+EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+
+def get_embed_model():
+    global _embed_model
+    if _embed_model is None:
+        from sentence_transformers import SentenceTransformer
+        log.info(f"Loading embedding model: {EMBED_MODEL}")
+        _embed_model = SentenceTransformer(EMBED_MODEL)
+        log.info("Embedding model loaded.")
+    return _embed_model
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -319,6 +332,54 @@ async def health_full():
                 results["claude_api"] = {"status": "error", "detail": "ANTHROPIC_API_KEY not set"}
         except Exception as e:
             results["claude_api"] = {"status": "error", "detail": str(e)}
+
+    # ── 6. Gladius SNMP ───────────────────────────────────────────────────────
+    try:
+        t0 = time.monotonic()
+        r  = http_requests.get(f"{SNMP_URL}/health", timeout=3)
+        ms = int((time.monotonic() - t0) * 1000)
+        if r.status_code == 200:
+            results["gladius_snmp"] = {"status": "ok", "detail": f"Running ({ms}ms)"}
+        else:
+            results["gladius_snmp"] = {"status": "error", "detail": f"HTTP {r.status_code}"}
+    except Exception:
+        results["gladius_snmp"] = {"status": "error", "detail": "Container unreachable"}
+
+    # ── 7. Gladius Slack ──────────────────────────────────────────────────────
+    try:
+        t0 = time.monotonic()
+        r  = http_requests.get("http://gladius-slack:9090/health", timeout=3)
+        ms = int((time.monotonic() - t0) * 1000)
+        if r.status_code == 200:
+            results["gladius_slack"] = {"status": "ok", "detail": f"Running ({ms}ms)"}
+        else:
+            results["gladius_slack"] = {"status": "error", "detail": f"HTTP {r.status_code}"}
+    except Exception:
+        results["gladius_slack"] = {"status": "error", "detail": "Container unreachable"}
+
+    # ── 7. Cisco PSIRT API ────────────────────────────────────────────────────
+    if not PSIRT_CLIENT_KEY:
+        results["psirt"] = {"status": "warn", "detail": "Credentials not configured"}
+    else:
+        try:
+            t0 = time.monotonic()
+            _psirt_token()
+            ms = int((time.monotonic() - t0) * 1000)
+            results["psirt"] = {"status": "ok", "detail": f"Auth OK ({ms}ms)"}
+        except Exception as e:
+            results["psirt"] = {"status": "error", "detail": str(e)}
+
+    # ── 7. Cisco EOX API ──────────────────────────────────────────────────────
+    if not EOX_CLIENT_KEY:
+        results["eox"] = {"status": "warn", "detail": "Credentials not configured"}
+    else:
+        try:
+            t0 = time.monotonic()
+            _eox_token()
+            ms = int((time.monotonic() - t0) * 1000)
+            results["eox"] = {"status": "ok", "detail": f"Auth OK ({ms}ms)"}
+        except Exception as e:
+            results["eox"] = {"status": "error", "detail": str(e)}
 
     # Overall status — error if any component is in error
     overall = "ok"
@@ -904,8 +965,8 @@ async def ingest_document(
     file_bytes = await file.read()
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    if len(file_bytes) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (max 20MB)")
+    if len(file_bytes) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 100MB)")
 
     # Extract text
     try:
@@ -934,7 +995,7 @@ async def ingest_document(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Chroma unavailable: {e}")
 
-    # Generate IDs and embeddings (use Chroma's default embedding)
+    # Generate IDs, embeddings, and metadata
     file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
     ids       = [f"{file_hash}_{i}" for i in range(len(chunks))]
     metadatas = [
@@ -947,14 +1008,21 @@ async def ingest_document(
         for i in range(len(chunks))
     ]
 
-    # Upsert into Chroma (no embedding model — Chroma will use its default)
+    try:
+        model = get_embed_model()
+        embeddings = model.encode(chunks).tolist()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
+
+    # Upsert into Chroma with explicit embeddings
     try:
         upsert_r = http_requests.post(
             f"{base}/collections/{col_id}/upsert",
             json={
-                "ids":       ids,
-                "documents": chunks,
-                "metadatas": metadatas,
+                "ids":        ids,
+                "documents":  chunks,
+                "embeddings": embeddings,
+                "metadatas":  metadatas,
             },
             timeout=60,
         )
@@ -985,6 +1053,40 @@ async def ingest_document(
     }
 
 
+@app.get("/api/ingest/collections/{collection_id}/docs")
+async def ingest_collection_docs(collection_id: str):
+    """Return unique source filenames ingested into a collection."""
+    if collection_id not in COLLECTIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown collection: {collection_id}")
+    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+    try:
+        list_r = http_requests.get(f"{base}/collections", timeout=5)
+        list_r.raise_for_status()
+        existing = {c["name"]: c["id"] for c in (list_r.json() if isinstance(list_r.json(), list) else [])}
+        if collection_id not in existing:
+            return {"docs": []}
+        col_id = existing[collection_id]
+        # Fetch all metadata (no embeddings/documents needed)
+        get_r = http_requests.post(
+            f"{base}/collections/{col_id}/get",
+            json={"include": ["metadatas"], "limit": 10000},
+            timeout=10,
+        )
+        get_r.raise_for_status()
+        metadatas = get_r.json().get("metadatas") or []
+        seen = set()
+        docs = []
+        for m in metadatas:
+            src = m.get("source", "unknown")
+            if src not in seen:
+                seen.add(src)
+                docs.append(src)
+        docs.sort()
+        return {"docs": docs}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Chroma unavailable: {e}")
+
+
 @app.get("/api/ingest/collections")
 async def ingest_collections():
     """Return document counts for all known collections."""
@@ -1006,6 +1108,7 @@ async def ingest_collections():
     return {"collections": counts}
 
 
+SNMP_URL = os.getenv("SNMP_SERVICE_URL", "http://gladius-snmp:8000")
 
 # ── DESIGN AGENT ──────────────────────────────────────────────────────────────
 
@@ -1028,6 +1131,7 @@ You have access to a RAG knowledge base (design-guidelines collection) containin
 - For topology recommendations, describe the design pattern clearly
 - For IP addressing, give concrete examples and CIDR notation
 - For routing, specify protocols, timers, and redistribution boundaries where relevant
+- **Use Mermaid diagrams** whenever a topology, flow, or hierarchy would benefit from visual representation. Wrap diagrams in ```mermaid code blocks. Prefer `graph TD` for topologies and hierarchies, `sequenceDiagram` for traffic flows, `flowchart LR` for decision trees. Keep node labels concise.
 
 ## Scope
 - Campus and branch network design (access/distribution/core)
@@ -1077,10 +1181,11 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
                     design_col = next((c for c in cols if c["name"] == "design-guidelines"), None)
                     if design_col:
                         col_id = design_col["id"]
+                        query_embedding = get_embed_model().encode(last_user_msg).tolist()
                         query_r = http_requests.post(
                             f"{base}/collections/{col_id}/query",
                             json={
-                                "query_texts": [last_user_msg],
+                                "query_embeddings": [query_embedding],
                                 "n_results": 5,
                                 "include": ["documents", "metadatas"],
                             },
@@ -1114,10 +1219,9 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
 
         for block in response.content:
             if block.type == "text":
-                for i, word in enumerate(block.text.split(" ")):
-                    chunk = word + (" " if i < len(block.text.split(" ")) - 1 else "")
-                    yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
-                    await asyncio.sleep(0.01)
+                for word in block.text.split(" "):
+                    yield f"data: {json.dumps({'type': 'text', 'content': word + ' '})}\n\n"
+                    await asyncio.sleep(0.005)
 
         global _last_claude_success
         _last_claude_success = time.monotonic()

@@ -284,10 +284,12 @@
   .sidebar-label {
     font-family: var(--font-mono);
     font-size: 10px;
-    color: var(--text-dim);
-    letter-spacing: 1px;
+    color: var(--accent);
+    letter-spacing: 2px;
     text-transform: uppercase;
     margin-bottom: 4px;
+    opacity: 0.85;
+    text-shadow: 0 0 10px var(--accent-glow);
   }
 
   .nav-item {
@@ -1015,6 +1017,14 @@
     color: var(--accent);
   }
   .msg-bubble hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+  .msg-table { border-collapse: collapse; width: 100%; margin: 10px 0; font-family: var(--font-mono); font-size: 12px; }
+  .msg-table th, .msg-table td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+  .msg-table th { background: var(--bg-deep); color: var(--accent); font-weight: 600; letter-spacing: 0.5px; }
+  .msg-table tr:nth-child(even) td { background: var(--bg-deep); }
+  .msg-table td { color: var(--text-secondary); }
+  .mermaid-pending, .mermaid-rendered { margin: 12px 0; text-align: center; }
+  .mermaid-rendered svg { max-width: 100%; height: auto; }
+  .mermaid-error { font-family: var(--font-mono); font-size: 11px; color: var(--danger); padding: 8px; background: var(--bg-deep); border-radius: 4px; }
 
   .msg-bubble pre {
     background: var(--bg-deep);
@@ -1036,7 +1046,7 @@
     text-align: right;
   }
 
-  .msg.agent .msg-meta { text-align: left; }
+  .msg.agent .msg-meta, .msg.design-agent .msg-meta { text-align: left; }
 
   .tool-call {
     background: var(--bg-deep);
@@ -1115,11 +1125,11 @@
     font-size: 12px;
     padding: 4px 10px;
     border-radius: 3px;
-    border: 1px solid var(--border);
-    color: var(--text-dim);
+    border: 1px solid var(--accent-glow);
+    color: var(--accent);
     cursor: pointer;
     transition: all 0.2s;
-    background: transparent;
+    background: var(--accent-dim);
   }
 
   .quick-cmd:hover {
@@ -1326,6 +1336,16 @@
     flex-direction: column;
   }
   #page-psirt.active { display: flex; }
+
+  /* ── SNMP PAGE ── */
+  #page-snmp {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    overflow-y: auto;
+    flex-direction: column;
+  }
+  #page-snmp.active { display: flex; }
 
   /* ── EOX PAGE ── */
   #page-eox {
@@ -1913,37 +1933,37 @@
     width: 32px;
     height: 32px;
     border-radius: 6px;
-    background: rgba(77,77,255,0.15);
-    border: 1px solid #4d4dff;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-ui);
     font-size: 16px;
     font-weight: 700;
-    color: #4d4dff;
+    color: var(--accent);
   }
 
   .design-msg-avatar {
     width: 28px;
     height: 28px;
     border-radius: 6px;
-    background: rgba(77,77,255,0.15);
-    border: 1px solid #4d4dff;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
     display: flex;
     align-items: center;
     justify-content: center;
     font-family: var(--font-ui);
     font-size: 13px;
     font-weight: 700;
-    color: #4d4dff;
+    color: var(--accent);
     flex-shrink: 0;
     margin-top: 2px;
   }
 
   .msg.design-agent .msg-bubble {
-    background: rgba(77,77,255,0.06);
-    border: 1px solid rgba(77,77,255,0.35);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
     color: var(--text-primary);
     border-radius: 2px 8px 8px 8px;
   }
@@ -1953,9 +1973,9 @@
     position: absolute;
     width: 6px;
     height: 6px;
-    background: #4d4dff;
+    background: var(--accent);
     border-radius: 50%;
-    box-shadow: 0 0 6px #4d4dff, 0 0 12px #4d4dff;
+    box-shadow: 0 0 6px var(--accent), 0 0 12px var(--accent);
     top: -4px;
     left: calc(50% - 3px);
     transform-origin: 3px 18px;
@@ -1972,27 +1992,27 @@
     font-size: 12px;
     padding: 4px 10px;
     border-radius: 3px;
-    border: 1px solid rgba(77,77,255,0.4);
-    color: #4d4dff;
+    border: 1px solid var(--accent-glow);
+    color: var(--accent);
     cursor: pointer;
     transition: all 0.2s;
-    background: rgba(77,77,255,0.06);
+    background: var(--accent-dim);
   }
 
   .design-quick-cmd:hover {
-    border-color: #4d4dff;
-    background: rgba(77,77,255,0.15);
+    border-color: var(--accent);
+    background: var(--accent-dim);
   }
 
   .design-chat-input:focus {
-    border-color: #4d4dff !important;
+    border-color: var(--accent) !important;
   }
 
   .design-send-btn {
     width: 40px;
     height: 40px;
-    background: rgba(77,77,255,0.12);
-    border: 1px solid #4d4dff;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
     border-radius: 6px;
     cursor: pointer;
     display: flex;
@@ -2003,14 +2023,15 @@
   }
 
   .design-send-btn:hover {
-    background: #4d4dff;
-    box-shadow: 0 0 12px rgba(77,77,255,0.4);
+    background: var(--accent);
+    box-shadow: 0 0 12px var(--accent-glow);
   }
 
-  .design-send-btn svg { width: 16px; height: 16px; color: #4d4dff; }
+  .design-send-btn svg { width: 16px; height: 16px; color: var(--accent); }
   .design-send-btn:hover svg { color: #fff; }
 
 </style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 </head>
 <body>
 
@@ -2100,6 +2121,10 @@
     <div class="nav-item" onclick="showPage('eox', this)" title="Cisco EOX — End of Life">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
       <span>EOX</span>
+    </div>
+    <div class="nav-item" onclick="showPage('snmp', this)" title="SNMP Poller">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      <span>SNMP</span>
     </div>
   </div>
 
@@ -2280,13 +2305,13 @@
           <div class="agent-indicator">
             <div class="design-agent-avatar">D</div>
             <div class="agent-info">
-              <div class="name" style="color:#4d4dff">DESIGN AGENT</div>
+              <div class="name" style="color:var(--accent)">DESIGN AGENT</div>
               <div class="sub">DESIGN GUIDELINES · RAG ENABLED · DESIGN-GUIDELINES COLLECTION</div>
             </div>
           </div>
           <div style="flex:1"></div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px">
-            <div style="width:6px;height:6px;border-radius:50%;background:#4d4dff;box-shadow:0 0 6px #4d4dff;animation:pulse 2s ease-in-out infinite"></div>
+            <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);animation:pulse 2s ease-in-out infinite"></div>
             DESIGN KB ACTIVE
           </div>
         </div>
@@ -2295,9 +2320,7 @@
           <div class="msg design-agent">
             <div class="design-msg-avatar">D</div>
             <div>
-              <div class="msg-bubble" id="design-welcome-bubble">
-                Design Agent online. Specialising in network design — Cisco Validated Designs, topology planning, IP addressing strategies, routing architecture, and infrastructure best practices. Load your CVD documents via the Ingest page and ask me anything about network design.
-              </div>
+              <div class="msg-bubble" id="design-welcome-bubble">Design Agent online. Initialising…</div>
               <div class="msg-meta" id="design-welcome-meta">DESIGN · —</div>
             </div>
           </div>
@@ -2573,6 +2596,109 @@
       </div>
     </div>
 
+    <!-- SNMP PAGE -->
+    <div id="page-snmp" class="page">
+
+      <!-- Add Device Panel -->
+      <div class="panel" id="snmp-add-panel" style="display:none;max-width:100%">
+        <div class="panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          <div class="panel-title">ADD DEVICE</div>
+          <button onclick="snmpToggleAdd()" style="margin-left:auto;background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;line-height:1" title="Close">×</button>
+        </div>
+        <div class="panel-body">
+          <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+            <div class="form-group">
+              <label class="form-label">Name / Label</label>
+              <input type="text" class="form-input" placeholder="SW-CORE-01" id="snmp-add-name" style="width:140px">
+            </div>
+            <div class="form-group">
+              <label class="form-label">IP / Hostname</label>
+              <input type="text" class="form-input" placeholder="192.168.1.1" id="snmp-add-host" onkeydown="if(event.key==='Enter')snmpAddDevice()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Port</label>
+              <input type="number" class="form-input" value="161" id="snmp-add-port" style="width:70px">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Version</label>
+              <select class="form-select" id="snmp-add-version" onchange="snmpAddVersionChanged()">
+                <option value="2c">SNMPv2c</option>
+                <option value="1">SNMPv1</option>
+                <option value="3">SNMPv3</option>
+              </select>
+            </div>
+            <div class="form-group" id="snmp-add-comm-grp">
+              <label class="form-label">Community</label>
+              <input type="text" class="form-input" placeholder="public" id="snmp-add-community" style="width:110px">
+            </div>
+            <div id="snmp-add-v3-grp" style="display:none;flex-wrap:wrap;gap:12px;align-items:flex-end">
+              <div class="form-group">
+                <label class="form-label">Username</label>
+                <input type="text" class="form-input" placeholder="snmpuser" id="snmp-add-username" style="width:110px">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Auth Key</label>
+                <input type="password" class="form-input" placeholder="authpass" id="snmp-add-auth-key" style="width:110px">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Priv Key</label>
+                <input type="password" class="form-input" placeholder="privpass" id="snmp-add-priv-key" style="width:110px">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Auth</label>
+                <select class="form-select" id="snmp-add-auth-proto" style="width:80px">
+                  <option value="SHA">SHA</option><option value="MD5">MD5</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Priv</label>
+                <select class="form-select" id="snmp-add-priv-proto" style="width:80px">
+                  <option value="AES">AES</option><option value="DES">DES</option>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="snmp-add-btn" onclick="snmpAddDevice()">+ ADD</button>
+          </div>
+          <div id="snmp-add-error" style="font-family:var(--font-mono);font-size:12px;color:var(--danger);margin-top:8px;display:none"></div>
+        </div>
+      </div>
+
+      <!-- Device Table -->
+      <div class="panel" style="flex:1">
+        <div class="panel-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          <div class="panel-title">SNMP MONITOR</div>
+          <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:8px" id="snmp-device-count"></span>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button onclick="snmpRefresh()" style="background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 10px;border-radius:4px;cursor:pointer" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">↻ REFRESH</button>
+            <button onclick="snmpToggleAdd()" id="snmp-add-toggle-btn" style="background:var(--accent-dim);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 10px;border-radius:4px;cursor:pointer">+ ADD DEVICE</button>
+          </div>
+        </div>
+        <div class="panel-body" style="padding:0;overflow:auto">
+          <table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12px" id="snmp-device-table">
+            <thead>
+              <tr style="border-bottom:1px solid var(--border)">
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal;width:36px"></th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Name</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">IP</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Hostname</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Description</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Uptime</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Interfaces</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">RTT</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Last Poll</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal;width:60px"></th>
+              </tr>
+            </thead>
+            <tbody id="snmp-device-tbody">
+              <tr><td colspan="10" style="padding:30px;text-align:center;color:var(--text-dim)">// Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
     <!-- SETTINGS PAGE -->
     <div id="page-settings" class="page" style="padding:20px;overflow-y:auto;flex-direction:column;gap:16px">
 
@@ -2711,31 +2837,16 @@
         </div>
       </div>
 
-      <!-- System Config Panel -->
+      <!-- Health Panel -->
       <div class="panel" style="max-width:820px">
         <div class="panel-header">
-          <div class="panel-title">Configuration</div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <div class="panel-title">Health</div>
+          <button onclick="refreshSettingsHealth()" style="margin-left:auto;background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 10px;border-radius:4px;cursor:pointer" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">↻ REFRESH</button>
         </div>
-        <div class="panel-body" style="display:flex;flex-direction:column;gap:20px">
-          <div>
-            <div class="form-label" style="margin-bottom:8px">MCP Server</div>
-            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">network-audit-mcp · docker exec -i network-audit-mcp python /app/server.py</div>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px" id="settings-mcp-status">● CONNECTED · — tools loaded</div>
-          </div>
-          <div>
-            <div class="form-label" style="margin-bottom:8px">Knowledge Base</div>
-            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">chroma-db:8000 · collection: network_security_guidelines</div>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px" id="settings-kb-status">● READY · — vectors · all-MiniLM-L6-v2</div>
-          </div>
-          <div>
-            <div class="form-label" style="margin-bottom:8px">Email Agent</div>
-            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)"><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a3c4cfc2c7cad6d08dc2d6d1c6cfcad6d091939196e3c4cec2cacf8dc0ccce">[email&#160;protected]</a> → <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="8dfef9e8fbe4e8a3e7e2e5e3fef9e2e3cdeae0ece4e1a3eee2e0">[email&#160;protected]</a></div>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● SMTP CONFIGURED · smtp.gmail.com:587</div>
-          </div>
-          <div>
-            <div class="form-label" style="margin-bottom:8px">NIST NVD API</div>
-            <div style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">services.nvd.nist.gov · API key configured</div>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--success);margin-top:4px">● ACTIVE</div>
+        <div class="panel-body">
+          <div id="settings-health-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px">
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);padding:20px 0;grid-column:1/-1">// Loading health status…</div>
           </div>
         </div>
       </div>
@@ -2910,6 +3021,41 @@
 </div><!-- /main -->
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  // ── MERMAID ──
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    themeVariables: {
+      darkMode: true,
+      background: '#0a0a0f',
+      primaryColor: '#1a1a2e',
+      primaryTextColor: '#c8c8d4',
+      primaryBorderColor: '#2a2a3e',
+      lineColor: 'var(--accent)',
+      secondaryColor: '#0d0d1a',
+      tertiaryColor: '#0a0a0f',
+      edgeLabelBackground: '#0d0d1a',
+      clusterBkg: '#0d0d1a',
+      titleColor: 'var(--accent)',
+    },
+    flowchart: { curve: 'basis' },
+  });
+
+  async function renderMermaidIn(el) {
+    el.querySelectorAll('.mermaid-pending').forEach(async block => {
+      const code = block.getAttribute('data-code');
+      try {
+        block.classList.remove('mermaid-pending');
+        block.classList.add('mermaid-rendered');
+        const { svg } = await mermaid.render('mg-' + Math.random().toString(36).slice(2), code);
+        block.innerHTML = svg;
+      } catch(e) {
+        block.classList.add('mermaid-error');
+        block.textContent = '// diagram error: ' + e.message;
+      }
+    });
+  }
+
   // ── PAGE NAVIGATION ──
   function showPage(name, el) {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -2926,12 +3072,21 @@
       reports: 'REPORTS',
       cve: 'CVE LOOKUP',
       settings: 'CONFIGURATION',
-      ingest: 'DOCUMENT INGESTION'
+      ingest: 'DOCUMENT INGESTION',
+      snmp: 'SNMP POLLER'
     };
     document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
-    if (name === 'cve'   && !_cvesLoaded)   loadLatestCVEs();
-    if (name === 'psirt' && !_psirtLoaded)  loadLatestPSIRT();
-    if (name === 'ingest') loadCollectionStats();
+    if (name === 'cve'      && !_cvesLoaded)  loadLatestCVEs();
+    if (name === 'psirt'   && !_psirtLoaded) loadLatestPSIRT();
+    if (name === 'ingest')  loadCollectionStats();
+    if (name === 'settings') refreshSettingsHealth();
+    if (name === 'snmp') {
+      snmpRefresh();
+      clearInterval(_snmpRefreshTimer);
+      _snmpRefreshTimer = setInterval(snmpRefresh, 30000);
+    } else {
+      clearInterval(_snmpRefreshTimer);
+    }
   }
 
   // ── CHAT ──
@@ -3288,8 +3443,7 @@
   function formatMessage(text) {
     if (!text) return '';
 
-    // Auto-paragraph: Claude sometimes streams without newlines between thoughts.
-    // Insert a double-newline before common sentence-starting transition phrases.
+    // Auto-paragraph
     const transitions = [
       'Good —', 'Excellent.', 'Excellent —', 'All data', 'Now let', 'Let me',
       'On it.', 'Connected.', 'Done.', 'Perfect.', 'Great.', 'Roger.',
@@ -3300,9 +3454,42 @@
       const safe = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       text = text.replace(new RegExp('(?<!\n)(' + safe + ')', 'g'), '\n\n$1');
     });
-
-    // Section headers like "HIGH SEVERITY FINDINGS:" — break before them
     text = text.replace(/(?<!\n)((?:HIGH|MEDIUM|LOW|PASS|CVE)[\w\s]*:)/g, '\n\n$1');
+
+    // ── Mermaid extraction: replace ```mermaid blocks with placeholders ──
+    const mermaidPlaceholders = [];
+    text = text.replace(/```mermaid\n([\s\S]*?)```/g, (_, code) => {
+      const key = `\x00MERMAID${mermaidPlaceholders.length}\x00`;
+      mermaidPlaceholders.push(code.trim());
+      return key;
+    });
+
+    // ── Table extraction: replace table blocks with placeholders before HTML escaping ──
+    const tablePlaceholders = [];
+    const isTableRow  = l => /^\s*\|.+\|/.test(l);
+    const isAsciiRule = l => /^\s*\+[-+]+\+\s*$/.test(l);
+    const isTableLine = l => isTableRow(l) || isAsciiRule(l);
+
+    const lines = text.split('\n');
+    const processedLines = [];
+    let i = 0;
+    while (i < lines.length) {
+      if (isTableLine(lines[i])) {
+        const block = [];
+        while (i < lines.length && isTableLine(lines[i])) {
+          block.push(lines[i]);
+          i++;
+        }
+        const tableHtml = _renderTableBlock(block);
+        const key = `\x00TABLE${tablePlaceholders.length}\x00`;
+        tablePlaceholders.push(tableHtml);
+        processedLines.push(key);
+      } else {
+        processedLines.push(lines[i]);
+        i++;
+      }
+    }
+    text = processedLines.join('\n');
 
     let html = text
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -3319,7 +3506,67 @@
       .replace(/(<li[^>]*>.*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
       .replace(/\n\n+/g, '</p><p>')
       .replace(/\n/g, '<br>');
-    return '<p>' + html + '</p>';
+
+    html = '<p>' + html + '</p>';
+
+    // Restore table placeholders (outside <p> tags)
+    tablePlaceholders.forEach((tableHtml, idx) => {
+      html = html.replace(
+        new RegExp('(?:<p>)?\\x00TABLE' + idx + '\\x00(?:</p>)?', 'g'),
+        tableHtml
+      );
+    });
+
+    // Restore mermaid placeholders — rendered after stream completes
+    mermaidPlaceholders.forEach((code, idx) => {
+      const escaped = code.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+      const safeCode = escaped.replace(/"/g, '&quot;');
+      html = html.replace(
+        new RegExp('(?:<p>)?\\x00MERMAID' + idx + '\\x00(?:</p>)?', 'g'),
+        `<div class="mermaid-pending" data-code="${safeCode}"></div>`
+      );
+    });
+
+    return html;
+  }
+
+  function _renderTableBlock(lines) {
+    // Filter out ASCII art border lines (+----+)
+    const rows = lines.filter(l => !/^\s*\+[-+]+\+\s*$/.test(l));
+    if (!rows.length) return '';
+
+    const parseCells = row =>
+      row.split('|').slice(1, -1).map(c => c.trim());
+
+    const isSepRow = row => /^\|[\s\-:|]+\|$/.test(row.trim().replace(/\s*\|\s*/g, '|'));
+
+    const esc = s => s
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    let headerRow = null;
+    const bodyRows = [];
+    let sepFound = false;
+
+    for (const row of rows) {
+      if (!sepFound && isSepRow(row)) { sepFound = true; continue; }
+      if (!sepFound && headerRow === null) { headerRow = parseCells(row); }
+      else { bodyRows.push(parseCells(row)); }
+    }
+    // No separator — treat first row as header
+    if (!sepFound && headerRow && bodyRows.length === 0 && rows.length > 1) {
+      bodyRows.push(...rows.slice(1).map(parseCells));
+    }
+
+    let t = '<table class="msg-table"><thead><tr>';
+    if (headerRow) t += headerRow.map(c => `<th>${esc(c)}</th>`).join('');
+    t += '</tr></thead><tbody>';
+    for (const row of bodyRows) {
+      t += '<tr>' + row.map(c => `<td>${esc(c)}</td>`).join('') + '</tr>';
+    }
+    t += '</tbody></table>';
+    return t;
   }
 
 
@@ -3871,8 +4118,8 @@ ${cves.length ? `<!-- CVE TAB -->
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);text-align:right">COMPLIANCE</div>
         </div>
         <div style="display:flex;gap:6px;flex-shrink:0">
-          <button class="btn btn-ghost report-action-btn" data-action="export" data-idx="${idx}" style="font-size:11px;padding:5px 10px" title="Export HTML report">⬇ Export</button>
-          <button class="btn btn-ghost report-action-btn" data-action="email" data-idx="${idx}" style="font-size:11px;padding:5px 10px" title="Email report">✉ Email</button>
+          <button class="btn report-action-btn" data-action="export" data-idx="${idx}" style="font-size:11px;padding:5px 10px;background:transparent;border:1px solid var(--success);color:var(--success);border-radius:4px;" title="Export HTML report">⬇ Export</button>
+          <button class="btn report-action-btn" data-action="email" data-idx="${idx}" style="font-size:11px;padding:5px 10px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:4px;" title="Email report">✉ Email</button>
         </div>
       `;
       item.querySelector('[data-action="export"]').addEventListener('click', e => { e.stopPropagation(); exportReport(idx); });
@@ -4286,6 +4533,9 @@ ${cves.length ? `<!-- CVE TAB -->
     [
       { id: 'nist-chip',   label: 'NIST NVD' },
       { id: 'claude-chip', label: 'CLAUDE'   },
+      { id: 'psirt-chip',  label: 'PSIRT'    },
+      { id: 'eox-chip',    label: 'EOX'      },
+      { id: 'slack-chip',  label: 'SLACK'    },
     ].forEach(({ id, label }) => {
       if (!document.getElementById(id)) {
         const chip = document.createElement('div');
@@ -4321,10 +4571,13 @@ ${cves.length ? `<!-- CVE TAB -->
       const data = await res.json();
       const c = data.components || {};
 
-      renderChip('mcp-chip',    'MCP',      (c.mcp            || {}).status, (c.mcp            || {}).detail);
-      renderChip('chroma-chip', 'CHROMA-DB',       (c.knowledge_base || {}).status, (c.knowledge_base || {}).detail);
-      renderChip('nist-chip',   'NIST', (c.nist_nvd       || {}).status, (c.nist_nvd       || {}).detail);
-      renderChip('claude-chip', 'ANTHROPIC',   (c.claude_api     || {}).status, (c.claude_api     || {}).detail);
+      renderChip('mcp-chip',    'MCP',       (c.mcp            || {}).status, (c.mcp            || {}).detail);
+      renderChip('chroma-chip', 'CHROMA-DB', (c.knowledge_base || {}).status, (c.knowledge_base || {}).detail);
+      renderChip('nist-chip',   'NIST',      (c.nist_nvd       || {}).status, (c.nist_nvd       || {}).detail);
+      renderChip('claude-chip', 'ANTHROPIC', (c.claude_api     || {}).status, (c.claude_api     || {}).detail);
+      renderChip('psirt-chip',  'PSIRT',     (c.psirt          || {}).status, (c.psirt          || {}).detail);
+      renderChip('eox-chip',    'EOX',       (c.eox            || {}).status, (c.eox            || {}).detail);
+      renderChip('slack-chip',  'SLACK',     (c.gladius_slack  || {}).status, (c.gladius_slack  || {}).detail);
 
       const anyError = Object.values(c).some(v => v.status === 'error');
       if (dot) {
@@ -4332,7 +4585,7 @@ ${cves.length ? `<!-- CVE TAB -->
         dot.title     = anyError ? 'One or more components degraded' : 'All systems operational';
       }
     } catch (err) {
-      ['mcp-chip','chroma-chip','nist-chip','claude-chip'].forEach(id => {
+      ['mcp-chip','chroma-chip','nist-chip','claude-chip','psirt-chip','eox-chip','slack-chip'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
           el.className = 'status-chip offline';
@@ -4341,6 +4594,192 @@ ${cves.length ? `<!-- CVE TAB -->
         }
       });
       if (dot) { dot.className = 'status-dot offline'; dot.title = 'API unreachable'; }
+    }
+  }
+
+  // ── SNMP MONITOR ─────────────────────────────────────────────────────────
+
+  let _snmpRefreshTimer = null;
+
+  function snmpToggleAdd() {
+    const panel = document.getElementById('snmp-add-panel');
+    const open  = panel.style.display === 'none' || panel.style.display === '';
+    panel.style.display = open ? 'flex' : 'none';
+    panel.style.flexDirection = 'column';
+    if (open) document.getElementById('snmp-add-host').focus();
+  }
+
+  function snmpAddVersionChanged() {
+    const v = document.getElementById('snmp-add-version').value;
+    document.getElementById('snmp-add-comm-grp').style.display  = v === '3' ? 'none' : '';
+    document.getElementById('snmp-add-v3-grp').style.display    = v === '3' ? 'flex' : 'none';
+  }
+
+  async function snmpAddDevice() {
+    const host = (document.getElementById('snmp-add-host')?.value || '').trim();
+    if (!host) return;
+    const version = document.getElementById('snmp-add-version').value;
+    const errEl   = document.getElementById('snmp-add-error');
+    const btn     = document.getElementById('snmp-add-btn');
+    const payload = {
+      name:    (document.getElementById('snmp-add-name')?.value || '').trim() || host,
+      host,
+      port:    parseInt(document.getElementById('snmp-add-port')?.value || '161'),
+      version,
+      community:     version !== '3' ? (document.getElementById('snmp-add-community')?.value || 'public') : 'public',
+      username:      version === '3' ? (document.getElementById('snmp-add-username')?.value  || '') : '',
+      auth_key:      version === '3' ? (document.getElementById('snmp-add-auth-key')?.value  || '') : '',
+      priv_key:      version === '3' ? (document.getElementById('snmp-add-priv-key')?.value  || '') : '',
+      auth_protocol: version === '3' ? (document.getElementById('snmp-add-auth-proto')?.value || 'SHA') : 'SHA',
+      priv_protocol: version === '3' ? (document.getElementById('snmp-add-priv-proto')?.value || 'AES') : 'AES',
+    };
+    btn.disabled = true; btn.textContent = '…';
+    errEl.style.display = 'none';
+    try {
+      const resp = await fetch('/api/snmp/devices', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      // clear form
+      ['snmp-add-name','snmp-add-host','snmp-add-auth-key','snmp-add-priv-key','snmp-add-username'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+      document.getElementById('snmp-add-community').value = 'public';
+      snmpToggleAdd();
+      snmpRefresh();
+    } catch(e) {
+      errEl.textContent = '// ' + e.message;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = '+ ADD';
+    }
+  }
+
+  async function snmpDeleteDevice(id) {
+    if (!confirm('Remove this device from monitoring?')) return;
+    await fetch(`/api/snmp/devices/${id}`, { method: 'DELETE' });
+    snmpRefresh();
+  }
+
+  async function snmpPollNow(id) {
+    const row = document.getElementById(`snmp-row-${id}`);
+    if (row) row.style.opacity = '0.5';
+    try {
+      const resp = await fetch(`/api/snmp/devices/${id}/poll`, { method: 'POST' });
+      const data = await resp.json();
+      if (resp.ok) _snmpRenderRow(data);
+    } finally {
+      if (row) row.style.opacity = '';
+    }
+  }
+
+  async function snmpRefresh() {
+    try {
+      const resp = await fetch('/api/snmp/devices');
+      const data = await resp.json();
+      const devs = data.devices || [];
+      const tbody = document.getElementById('snmp-device-tbody');
+      const count = document.getElementById('snmp-device-count');
+      if (!tbody) return;
+      if (!devs.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px">// No devices — click + ADD DEVICE to start monitoring</td></tr>';
+        if (count) count.textContent = '';
+        return;
+      }
+      if (count) count.textContent = `${devs.length} device${devs.length !== 1 ? 's' : ''}`;
+      // Update existing rows or rebuild
+      const existingIds = new Set([...tbody.querySelectorAll('tr[id]')].map(r => r.id.replace('snmp-row-','')));
+      const newIds      = new Set(devs.map(d => d.id));
+      // Remove rows for deleted devices
+      existingIds.forEach(id => { if (!newIds.has(id)) { const r = document.getElementById(`snmp-row-${id}`); if(r) r.remove(); } });
+      devs.forEach(d => _snmpRenderRow(d, tbody));
+    } catch(e) {
+      const tbody = document.getElementById('snmp-device-tbody');
+      if (tbody) tbody.innerHTML = `<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px">// SNMP service unreachable: ${e.message}</td></tr>`;
+    }
+  }
+
+  function _snmpRenderRow(d, tbody) {
+    const statusColor = d.status === 'ok'      ? 'var(--success)'
+                      : d.status === 'warn'    ? 'var(--warn, #f59e0b)'
+                      : d.status === 'error'   ? 'var(--danger)'
+                      :                          'var(--text-dim)';
+    const statusTitle = d.status === 'ok'    ? 'Reachable'
+                      : d.status === 'warn'  ? 'Stale — not polled recently'
+                      : d.status === 'error' ? (d.error || 'Unreachable')
+                      : 'Not yet polled';
+    const lastPoll = d.last_poll
+      ? new Date(d.last_poll).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})
+      : '—';
+    const desc = (d.sysDescr || '—').replace(/\s+/g, ' ').substring(0, 60) + ((d.sysDescr || '').length > 60 ? '…' : '');
+    const rtt  = d.response_ms != null ? `${d.response_ms}ms` : '—';
+    const html = `
+      <td style="padding:10px 14px">
+        <div title="${statusTitle}" style="width:10px;height:10px;border-radius:50%;background:${statusColor};box-shadow:0 0 6px ${statusColor};margin:0 auto"></div>
+      </td>
+      <td style="padding:10px 14px;color:var(--text-primary);font-weight:600">${d.name}</td>
+      <td style="padding:10px 14px;color:var(--accent)">${d.host}</td>
+      <td style="padding:10px 14px;color:var(--text-secondary)">${d.sysName || '—'}</td>
+      <td style="padding:10px 14px;color:var(--text-dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.sysDescr || ''}">${desc}</td>
+      <td style="padding:10px 14px;color:var(--text-secondary)">${d.sysUpTime || '—'}</td>
+      <td style="padding:10px 14px;color:var(--text-secondary);text-align:center">${d.ifNumber || '—'}</td>
+      <td style="padding:10px 14px;color:${d.response_ms > 500 ? 'var(--warn,#f59e0b)' : 'var(--text-secondary)'}">${rtt}</td>
+      <td style="padding:10px 14px;color:var(--text-dim)">${lastPoll}</td>
+      <td style="padding:10px 14px;white-space:nowrap">
+        <button onclick="snmpPollNow('${d.id}')" title="Poll now" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-dim)'">↻</button>
+        <button onclick="snmpDeleteDevice('${d.id}')" title="Remove" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;padding:2px 4px" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-dim)'">✕</button>
+      </td>`;
+    let row = document.getElementById(`snmp-row-${d.id}`);
+    if (row) {
+      row.innerHTML = html;
+    } else {
+      if (!tbody) tbody = document.getElementById('snmp-device-tbody');
+      row = document.createElement('tr');
+      row.id = `snmp-row-${d.id}`;
+      row.style.cssText = 'border-bottom:1px solid var(--border);transition:background 0.15s';
+      row.onmouseover = () => row.style.background = 'var(--bg-card)';
+      row.onmouseout  = () => row.style.background = '';
+      row.innerHTML = html;
+      tbody.appendChild(row);
+    }
+  }
+
+  // ── SETTINGS HEALTH PANEL ──
+  const _HEALTH_SERVICES = [
+    { key: 'gladius_api',   label: 'GLADIUS API',   desc: 'FastAPI · port 8080'              },
+    { key: 'gladius_snmp',  label: 'SNMP SERVICE',  desc: 'gladius-snmp · port 8000'         },
+    { key: 'gladius_slack', label: 'SLACK BOT',     desc: 'gladius-slack · Socket Mode'      },
+    { key: 'mcp',           label: 'MCP SERVER',    desc: 'network-audit-mcp · stdio'        },
+    { key: 'knowledge_base',label: 'KNOWLEDGE BASE',desc: 'chroma-db · network_security_guidelines' },
+    { key: 'nist_nvd',      label: 'NIST NVD',      desc: 'services.nvd.nist.gov'            },
+    { key: 'claude_api',    label: 'ANTHROPIC',     desc: 'api.anthropic.com · claude-sonnet-4-6' },
+    { key: 'psirt',         label: 'CISCO PSIRT',   desc: 'apix.cisco.com/security/advisories' },
+    { key: 'eox',           label: 'CISCO EOX',     desc: 'apix.cisco.com/supporttools/eox'  },
+  ];
+
+  async function refreshSettingsHealth() {
+    const grid = document.getElementById('settings-health-grid');
+    if (!grid) return;
+    grid.innerHTML = '<div style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);padding:20px 0;grid-column:1/-1">// Polling services…</div>';
+    try {
+      const res  = await fetch('/api/health/full');
+      const data = res.ok ? await res.json() : {};
+      const c    = data.components || {};
+      grid.innerHTML = _HEALTH_SERVICES.map(svc => {
+        const s      = c[svc.key] || {};
+        const status = s.status || 'error';
+        const detail = s.detail || (res.ok ? 'No data' : 'API unreachable');
+        const color  = status === 'ok'   ? 'var(--success)'
+                     : status === 'warn' ? 'var(--warn, #f59e0b)'
+                     :                     'var(--danger)';
+        return `<div style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:12px 14px;display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;box-shadow:0 0 6px ${color}"></div>
+            <div style="font-family:var(--font-ui);font-size:11px;font-weight:700;letter-spacing:1px;color:var(--text-primary)">${svc.label}</div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);line-height:1.4">${svc.desc}</div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:${color}">${detail}</div>
+        </div>`;
+      }).join('');
+    } catch(e) {
+      grid.innerHTML = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:20px 0;grid-column:1/-1">// Health check failed: ${e.message}</div>`;
     }
   }
 
@@ -4792,20 +5231,15 @@ ${cves.length ? `<!-- CVE TAB -->
       ).join('');
 
       if (bubble) bubble.innerHTML =
-        `<div style="margin-bottom:10px">Gladius online — <strong>${toolCount} MCP tools</strong> loaded.</div>` +
+        `<div style="margin-bottom:10px">Audit Agent online — <strong>${toolCount} MCP tools</strong> loaded.</div>` +
         rowsHtml +
         `<div style="margin-top:12px;color:var(--text-dim);font-size:12px;font-family:var(--font-mono)">` +
         `Give me a target to audit, or ask me anything.</div>`;
 
-      // Update settings page status lines too
-      const mcpEl = document.getElementById('settings-mcp-status');
-      const kbEl  = document.getElementById('settings-kb-status');
-      if (mcpEl) mcpEl.textContent = `● CONNECTED · ${toolCount} tools loaded`;
-      if (kbEl)  kbEl.textContent  = `● READY · ${vectors} vectors · all-MiniLM-L6-v2`;
 
     } catch(e) {
       if (bubble) bubble.innerHTML =
-        `Gladius online. MCP server status unknown — check <strong>/api/health</strong>.<br><br>Give me a target to audit, or ask me anything.`;
+        `Audit Agent online. MCP server status unknown — check <strong>/api/health</strong>.<br><br>Give me a target to audit, or ask me anything.`;
     }
   }
 
@@ -5260,23 +5694,73 @@ ${cves.length ? `<!-- CVE TAB -->
 
       overview.innerHTML = collections.map(col => {
         const count = counts[col.id] ?? '—';
-        const countEl = document.getElementById('count-' + col.id);
-        if (countEl) countEl.textContent = (typeof count === 'number' ? count : '—') + ' docs';
         return `
-          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
-            <div style="flex:1;">
-              <div style="font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--text-primary);letter-spacing:1px;">${col.label}</div>
-              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-top:2px;">${col.desc}</div>
+          <div style="border-bottom:1px solid var(--border);">
+            <div onclick="toggleCollectionDocs('${col.id}')" style="display:flex;align-items:center;gap:12px;padding:10px 0;cursor:pointer;">
+              <div style="flex:1;">
+                <div style="font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--text-primary);letter-spacing:1px;">${col.label}</div>
+                <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-top:2px;">${col.desc}</div>
+              </div>
+              <div style="text-align:right;display:flex;align-items:center;gap:10px;">
+                <div>
+                  <div style="font-family:var(--font-ui);font-size:18px;font-weight:700;color:var(--accent);">${typeof count === 'number' ? count : '—'}</div>
+                  <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">CHUNKS</div>
+                </div>
+                <div id="chevron-${col.id}" style="color:var(--text-dim);font-size:12px;transition:transform 0.2s;">▶</div>
+              </div>
             </div>
-            <div style="text-align:right;">
-              <div style="font-family:var(--font-ui);font-size:18px;font-weight:700;color:var(--accent);">${typeof count === 'number' ? count : '—'}</div>
-              <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">CHUNKS</div>
+            <div id="docs-${col.id}" style="display:none;padding:0 0 10px 0;">
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);">// loading...</div>
             </div>
           </div>`;
       }).join('');
     } catch(e) {
       overview.innerHTML = '<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:10px;">// Could not load collection stats</div>';
     }
+  }
+
+  const _collectionDocsCache = {};
+  async function toggleCollectionDocs(colId) {
+    const panel  = document.getElementById('docs-' + colId);
+    const chev   = document.getElementById('chevron-' + colId);
+    const open   = panel.style.display !== 'none';
+
+    if (open) {
+      panel.style.display = 'none';
+      chev.style.transform = '';
+      return;
+    }
+
+    panel.style.display = 'block';
+    chev.style.transform = 'rotate(90deg)';
+
+    if (_collectionDocsCache[colId]) {
+      renderCollectionDocs(colId, _collectionDocsCache[colId]);
+      return;
+    }
+
+    panel.innerHTML = '<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);">// loading...</div>';
+    try {
+      const resp = await fetch(`/api/ingest/collections/${colId}/docs`);
+      const data = resp.ok ? await resp.json() : { docs: [] };
+      _collectionDocsCache[colId] = data.docs;
+      renderCollectionDocs(colId, data.docs);
+    } catch(e) {
+      panel.innerHTML = '<div style="font-family:var(--font-mono);font-size:11px;color:var(--danger);">// failed to load</div>';
+    }
+  }
+
+  function renderCollectionDocs(colId, docs) {
+    const panel = document.getElementById('docs-' + colId);
+    if (!docs.length) {
+      panel.innerHTML = '<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:4px 0;">// no documents ingested</div>';
+      return;
+    }
+    panel.innerHTML = docs.map(d => `
+      <div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
+        <span style="color:var(--accent);font-size:10px;">▸</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${d}</span>
+      </div>`).join('');
   }
 
   // Drag-and-drop for drop zone
@@ -5398,6 +5882,7 @@ ${cves.length ? `<!-- CVE TAB -->
             } else if (ev.type === 'done') {
               if (orbitWrap) orbitWrap.classList.remove('design-active');
               designMessages.push({ role: 'assistant', content: fullText });
+              renderMermaidIn(bubble);
             } else if (ev.type === 'error') {
               bubble.innerHTML = `<span style="color:var(--danger)">Error: ${escapeHtml(ev.content)}</span>`;
               if (orbitWrap) orbitWrap.classList.remove('design-active');
@@ -5415,8 +5900,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   function renderDesignMarkdown(text) {
-    // Reuse the same markdown renderer as the main chat
-    return renderMarkdown(text);
+    return renderBubbleContent(text, []);
   }
 
   function escapeHtml(s) {
@@ -5424,10 +5908,52 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   // Init design welcome timestamp
-  (function() {
+  (async function() {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const meta = document.getElementById('design-welcome-meta');
-    if (meta) meta.textContent = `DESIGN · ${now}`;
+    const meta   = document.getElementById('design-welcome-meta');
+    const bubble = document.getElementById('design-welcome-bubble');
+    if (meta) meta.textContent = `DESIGN AGENT · ${now}`;
+
+    try {
+      const [docsRes, collectionsRes] = await Promise.all([
+        fetch('/api/ingest/collections/design-guidelines/docs'),
+        fetch('/api/ingest/collections'),
+      ]);
+      const docsData   = docsRes.ok   ? await docsRes.json()   : { docs: [] };
+      const colData    = collectionsRes.ok ? await collectionsRes.json() : { collections: {} };
+      const docs       = docsData.docs || [];
+      const chunkCount = colData.collections?.['design-guidelines'] ?? 0;
+
+      const rows = [
+        ['RAG Knowledge Base', `design-guidelines collection — ${chunkCount.toLocaleString()} vectors, semantic search`],
+        ['CVD Guidance',       'Cisco Validated Designs — topology patterns, architecture best practices'],
+        ['Network Design',     'Campus, WAN, DC fabric, IP addressing, routing protocol selection'],
+        ['High Availability',  'VSS, StackWise, HSRP, dual-homing, redundancy patterns'],
+        ['Mermaid Diagrams',   'Ask for a topology or flow — rendered as an interactive diagram'],
+      ];
+
+      const rowsHtml = rows.map(([label, desc]) =>
+        `<div style="display:flex;gap:10px;margin:4px 0;font-size:13px;line-height:1.5">` +
+        `<span style="color:var(--accent);font-family:var(--font-mono);font-size:11px;white-space:nowrap;min-width:110px;padding-top:1px">${label}</span>` +
+        `<span style="color:var(--text-secondary)">${desc}</span></div>`
+      ).join('');
+
+      const docsLine = docs.length
+        ? `<div style="margin-top:8px;color:var(--text-dim);font-size:12px;font-family:var(--font-mono)">` +
+          `Loaded documents: ${docs.map(d => `<span style="color:var(--accent)">${d}</span>`).join(', ')}</div>`
+        : `<div style="margin-top:8px;color:var(--text-dim);font-size:12px;font-family:var(--font-mono)">` +
+          `No documents loaded — use the <strong>Ingest</strong> page to add CVDs.</div>`;
+
+      if (bubble) bubble.innerHTML =
+        `<div style="margin-bottom:10px">Design Agent online — <strong>RAG enabled</strong>.</div>` +
+        rowsHtml + docsLine +
+        `<div style="margin-top:12px;color:var(--text-dim);font-size:12px;font-family:var(--font-mono)">` +
+        `Ask me anything about network design, or request a topology diagram.</div>`;
+
+    } catch(e) {
+      if (bubble) bubble.innerHTML =
+        `Design Agent online. Ask me anything about network design, CVDs, topology, or routing architecture.`;
+    }
   })();
 
   // ── DESIGN QUICK COMMANDS ─────────────────────────────────────────────────
@@ -5465,12 +5991,12 @@ ${cves.length ? `<!-- CVE TAB -->
 
       const btn = document.createElement('button');
       btn.className = 'quick-cmd';
-      btn.style.borderColor = 'rgba(77,77,255,0.4)';
-      btn.style.color = '#4d4dff';
-      btn.style.background = 'rgba(77,77,255,0.06)';
+      btn.style.borderColor = 'var(--accent-glow)';
+      btn.style.color = 'var(--accent)';
+      btn.style.background = 'var(--accent-dim)';
       btn.textContent = cmd.label;
-      btn.addEventListener('mouseover', () => { btn.style.borderColor = '#4d4dff'; btn.style.background = 'rgba(77,77,255,0.15)'; });
-      btn.addEventListener('mouseout',  () => { btn.style.borderColor = 'rgba(77,77,255,0.4)'; btn.style.background = 'rgba(77,77,255,0.06)'; });
+      btn.addEventListener('mouseover', () => { btn.style.borderColor = 'var(--accent)'; btn.style.background = 'var(--accent-dim)'; });
+      btn.addEventListener('mouseout',  () => { btn.style.borderColor = 'var(--accent-glow)'; btn.style.background = 'var(--accent-dim)'; });
       btn.addEventListener('click', () => { document.getElementById('design-input').value = cmd.prompt; sendDesignMessage(); });
 
       const edit = document.createElement('button');
@@ -5487,7 +6013,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     const addBtn = document.createElement('button');
     addBtn.className = 'quick-cmd';
-    addBtn.style.cssText = 'opacity:0.5;border-color:rgba(77,77,255,0.3);color:#4d4dff;';
+    addBtn.style.cssText = 'opacity:0.5;border-color:var(--accent-glow);color:var(--accent);';
     addBtn.textContent = '+ Add';
     addBtn.addEventListener('click', () => openDesignCmdModal(-1));
     row.appendChild(addBtn);
@@ -5566,17 +6092,17 @@ ${cves.length ? `<!-- CVE TAB -->
 
   <!-- Design Quick Command Edit Modal -->
   <div class="qcmd-modal-overlay" id="dcmd-modal-overlay" onclick="if(event.target===this)closeDesignCmdModal()">
-    <div class="qcmd-modal" style="border-color:#4d4dff">
-      <h3 id="dcmd-modal-title" style="color:#4d4dff">EDIT DESIGN COMMAND</h3>
+    <div class="qcmd-modal" style="border-color:var(--accent)">
+      <h3 id="dcmd-modal-title" style="color:var(--accent)">EDIT DESIGN COMMAND</h3>
       <label>Button Label</label>
-      <input type="text" id="dcmd-label-input" placeholder="e.g. CVD Summary" maxlength="30" style="border-color:rgba(77,77,255,0.4)">
+      <input type="text" id="dcmd-label-input" placeholder="e.g. CVD Summary" maxlength="30" style="border-color:var(--accent-glow)">
       <label>Prompt sent to Design Agent</label>
-      <textarea id="dcmd-prompt-input" rows="4" placeholder="e.g. Summarise the key design principles from the loaded CVD documents" style="border-color:rgba(77,77,255,0.4)"></textarea>
+      <textarea id="dcmd-prompt-input" rows="4" placeholder="e.g. Summarise the key design principles from the loaded CVD documents" style="border-color:var(--accent-glow)"></textarea>
       <div class="qcmd-modal-btns">
         <button class="btn btn-ghost" id="dcmd-delete-btn" style="margin-right:auto;color:var(--danger);border-color:var(--danger)" onclick="deleteDesignCmd()">Delete</button>
         <button class="btn btn-ghost" onclick="resetDesignCmds()">Reset Defaults</button>
         <button class="btn btn-ghost" onclick="closeDesignCmdModal()">Cancel</button>
-        <button class="btn btn-primary" style="border-color:#4d4dff;color:#4d4dff;background:rgba(77,77,255,0.12)" onclick="saveDesignCmdModal()">Save</button>
+        <button class="btn btn-primary" style="border-color:var(--accent);color:var(--accent);background:var(--accent-dim)" onclick="saveDesignCmdModal()">Save</button>
       </div>
     </div>
   </div>

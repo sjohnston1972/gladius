@@ -1,0 +1,16 @@
+services:
+  gladius-snmp:
+    container_name: gladius-snmp
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - ./app.py:/app/app.py
+      - ./data:/data
+
+networks:
+  net_core:
+    external: true

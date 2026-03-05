@@ -32,6 +32,7 @@ EMBED_MODEL     = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 NIST_API_KEY         = os.getenv("NIST_API_KEY")
 LAB_USERNAME         = os.getenv("LAB_USERNAME")
 LAB_PASSWORD         = os.getenv("LAB_PASSWORD")
+SNMP_SERVICE_URL     = os.getenv("SNMP_SERVICE_URL", "http://gladius-snmp:8000")
 PSIRT_CLIENT_KEY     = os.getenv("PSIRT_CLIENT_KEY")
 PSIRT_CLIENT_SECRET  = os.getenv("PSIRT_CLIENT_SECRET")
 PSIRT_TOKEN_URL      = "https://id.cisco.com/oauth2/default/v1/token"
@@ -64,6 +65,18 @@ async def list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "The security question or topic to look up"},
+                    "num_results": {"type": "integer", "description": "Number of results to return (default 5)", "default": 5}
+                },
+                "required": ["query"]
+            }
+        ),
+        types.Tool(
+            name="query_design_kb",
+            description="Query the network design knowledge base for CVD guidance, topology patterns, VXLAN/BGP EVPN design, campus/DC architecture, and Cisco Validated Designs. Use this when answering design questions rather than security hardening questions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The design question or topic to look up"},
                     "num_results": {"type": "integer", "description": "Number of results to return (default 5)", "default": 5}
                 },
                 "required": ["query"]
@@ -402,7 +415,40 @@ async def list_tools() -> list[types.Tool]:
                 },
                 "required": []
             }
-        )
+        ),
+        types.Tool(
+            name="snmp_get_devices",
+            description=(
+                "Get the list of all SNMP-monitored devices from the Gladius SNMP monitor, "
+                "including their current health status, sysName, sysDescr, uptime, interface count, "
+                "and response time. Use this at the start of an audit to discover what devices are "
+                "being monitored and their current state."
+            ),
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        types.Tool(
+            name="snmp_poll",
+            description=(
+                "Query a network device via SNMP to retrieve system information, interface status, "
+                "IP addresses, ARP table, BGP neighbors, or Cisco CPU/memory data. "
+                "Available profiles: system (sysName/sysDescr/uptime/location), interfaces (ifTable with "
+                "admin/oper status and counters), ip_addresses (IP address table), arp (ARP/neighbor table), "
+                "bgp (BGP peer states), cisco_cpu (1min/5min CPU %), cisco_memory (pool used/free). "
+                "Use during an audit to correlate SNMP data with SSH findings — e.g. check interface "
+                "counters, verify IP addresses, or get CPU/memory baselines."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "host":      {"type": "string", "description": "IP address or hostname of the device"},
+                    "profile":   {"type": "string", "description": "Data profile: system | interfaces | ip_addresses | arp | bgp | cisco_cpu | cisco_memory", "default": "system"},
+                    "community": {"type": "string", "description": "SNMP community string (default: public)", "default": "public"},
+                    "version":   {"type": "string", "description": "SNMP version: 1 | 2c | 3 (default: 2c)", "default": "2c"},
+                    "port":      {"type": "integer", "description": "SNMP port (default: 161)", "default": 161},
+                },
+                "required": ["host"]
+            }
+        ),
     ]
 
 
@@ -410,6 +456,8 @@ async def list_tools() -> list[types.Tool]:
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if name == "query_knowledge_base":
         return await _query_knowledge_base(**arguments)
+    elif name == "query_design_kb":
+        return await _query_design_kb(**arguments)
     elif name == "connect_to_device":
         return await _connect_to_device(**arguments)
     elif name == "run_show_command":
@@ -436,6 +484,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _query_psirt(**arguments)
     elif name == "query_eox":
         return await _query_eox(**arguments)
+    elif name == "snmp_get_devices":
+        return await _snmp_get_devices()
+    elif name == "snmp_poll":
+        return await _snmp_poll(**arguments)
     else:
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -463,6 +515,34 @@ async def _query_knowledge_base(query: str, num_results: int = 5) -> list[types.
     except Exception as e:
         log.error(f"Knowledge base query failed: {e}")
         return [types.TextContent(type="text", text=f"ERROR: Knowledge base query failed: {e}")]
+
+
+async def _query_design_kb(query: str, num_results: int = 5) -> list[types.TextContent]:
+    log.info(f"Design KB query: '{query}'")
+    try:
+        design_collection = chroma_client.get_or_create_collection("design-guidelines")
+        if design_collection.count() == 0:
+            return [types.TextContent(type="text", text="Design knowledge base is empty. No documents have been ingested yet.")]
+        query_embedding = embed_model.encode(query).tolist()
+        results = design_collection.query(
+            query_embeddings=[query_embedding],
+            n_results=num_results,
+            include=["documents", "metadatas", "distances"]
+        )
+        if not results["documents"][0]:
+            return [types.TextContent(type="text", text="No relevant design guidelines found.")]
+        output = f"Design knowledge base results for: '{query}'\n{'=' * 60}\n\n"
+        for i, (doc, meta, dist) in enumerate(zip(
+            results["documents"][0], results["metadatas"][0], results["distances"][0]
+        ), 1):
+            relevance = round((1 - dist) * 100, 1)
+            output += f"Result {i} - Source: {meta.get('source', 'unknown')} (Relevance: {relevance}%)\n"
+            output += "-" * 40 + "\n"
+            output += doc + "\n\n"
+        return [types.TextContent(type="text", text=output)]
+    except Exception as e:
+        log.error(f"Design KB query failed: {e}")
+        return [types.TextContent(type="text", text=f"ERROR: Design knowledge base query failed: {e}")]
 
 
 async def _connect_to_device(host: str, username: str = None, password: str = None) -> list[types.TextContent]:
@@ -1744,6 +1824,73 @@ def _clear_buffer(timeout: int = 5) -> str:
         else:
             time.sleep(0.1)
     return output
+
+
+async def _snmp_get_devices() -> list[types.TextContent]:
+    """Return all SNMP-monitored devices and their current status."""
+    try:
+        resp = requests.get(f"{SNMP_SERVICE_URL}/devices", timeout=5)
+        resp.raise_for_status()
+        devices = resp.json().get("devices", [])
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: SNMP service unreachable — {e}")]
+
+    if not devices:
+        return [types.TextContent(type="text", text="No devices registered in the SNMP monitor.")]
+
+    status_icon = {"ok": "✓", "warn": "⚠", "error": "✗", "unknown": "?"}
+    lines = [f"SNMP Monitored Devices ({len(devices)} total)", "=" * 60]
+    for d in devices:
+        icon    = status_icon.get(d.get("status", "unknown"), "?")
+        name    = d.get("name", d.get("host", "—"))
+        host    = d.get("host", "—")
+        sysname = d.get("sysName") or "—"
+        descr   = (d.get("sysDescr") or "—")[:80]
+        uptime  = d.get("sysUpTime") or "—"
+        ifaces  = d.get("ifNumber") or "—"
+        rtt     = f"{d['response_ms']}ms" if d.get("response_ms") is not None else "—"
+        err     = f" [{d['error']}]" if d.get("error") else ""
+        lines.append(
+            f"\n{icon} {name} ({host})\n"
+            f"  Hostname : {sysname}\n"
+            f"  Descr    : {descr}\n"
+            f"  Uptime   : {uptime}  Interfaces: {ifaces}  RTT: {rtt}{err}"
+        )
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
+
+
+async def _snmp_poll(
+    host: str,
+    profile: str = "system",
+    community: str = "public",
+    version: str = "2c",
+    port: int = 161,
+) -> list[types.TextContent]:
+    """Ad-hoc SNMP poll of any device using a named profile."""
+    log.info(f"SNMP poll: {host} profile={profile}")
+    try:
+        resp = requests.post(
+            f"{SNMP_SERVICE_URL}/poll",
+            json={"host": host, "port": port, "version": version,
+                  "community": community, "profile": profile},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: SNMP poll failed — {e}")]
+
+    results = data.get("results", [])
+    if not results:
+        return [types.TextContent(type="text", text=f"No SNMP data returned from {host} (profile: {profile})")]
+
+    lines = [f"SNMP {profile.upper()} — {host}  ({data.get('elapsed_ms', '?')}ms  {len(results)} rows)", "=" * 60]
+    for r in results:
+        label = r.get("label") or r.get("oid", "")
+        lines.append(f"  {label:<30} {r.get('value', '')}")
+
+    return [types.TextContent(type="text", text="\n".join(lines))]
 
 
 async def main():

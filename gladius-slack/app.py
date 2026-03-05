@@ -3,6 +3,7 @@ import json
 import logging
 import threading
 import httpx
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from collections import defaultdict
 from slack_bolt import App
@@ -393,11 +394,28 @@ def on_mention(body: dict, client) -> None:
     handle_message(body, client)
 
 
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps({"status": "ok", "service": "gladius-slack"}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", len(body))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args): pass
+
+
 if __name__ == "__main__":
     if not BOT_TOKEN:
         raise RuntimeError("SLACK_BOT_TOKEN is not set")
     if not APP_TOKEN:
         raise RuntimeError("SLACK_APP_TOKEN is not set")
+
+    threading.Thread(
+        target=lambda: HTTPServer(("0.0.0.0", 9090), _HealthHandler).serve_forever(),
+        daemon=True
+    ).start()
+    log.info("Health endpoint listening on :9090")
 
     log.info("Starting Gladius Slack bot (Socket Mode)...")
     handler = SocketModeHandler(app, APP_TOKEN)
