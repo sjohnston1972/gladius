@@ -2068,19 +2068,6 @@
     </div>
   </div>
 
-  <!-- Agents Nav -->
-  <div class="sidebar-section">
-    <div class="sidebar-label">Agents</div>
-    <div class="nav-item" onclick="showPage('chat', this)" title="Audit Agent — Network security auditor">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span>Audit</span>
-    </div>
-    <div class="nav-item" onclick="showPage('design', this)" title="Design Agent — Network design advisor">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-      <span>Design</span>
-    </div>
-  </div>
-
   <!-- NMAP Nav -->
   <div class="sidebar-section">
     <div class="sidebar-label">Network</div>
@@ -3079,7 +3066,7 @@
   }
 
   function sendQuick(text) {
-    const chatNavItem = document.querySelectorAll('.nav-item')[1];
+    const chatNavItem = document.querySelector(".nav-item[onclick*=\'chat\']");
     showPage('chat', chatNavItem);
     chatInput.value = text;
     setTimeout(sendMessage, 100);
@@ -4856,7 +4843,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (severity) prompt += `, severity filter: ${severity}`;
     prompt += `, last ${days} days`;
     prompt += '. Sort newest first and show the most relevant results.';
-    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    showPage('chat', document.querySelector(".nav-item[onclick*=\'chat\']"));
     sendQuick(prompt);
   }
 
@@ -4868,7 +4855,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (severity) prompt += `, severity filter: ${severity}`;
     if (!q && !severity) prompt += ' for latest advisories';
     prompt += '. Show the most recent results first.';
-    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    showPage('chat', document.querySelector(".nav-item[onclick*=\'chat\']"));
     sendQuick(prompt);
   }
 
@@ -5122,24 +5109,24 @@ ${cves.length ? `<!-- CVE TAB -->
     if (start && end)  prompt += ` with EoS date range ${start} to ${end}`;
     if (!pids && !start) prompt += ' — show latest EoL announcements';
     prompt += '. List all EoL dates and recommended migration paths.';
-    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    showPage('chat', document.querySelector(".nav-item[onclick*=\'chat\']"));
     sendQuick(prompt);
   }
 
   // ── Per-row agent helpers ─────────────────────────────────────────────────
 
   function agentCVE(id) {
-    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    showPage('chat', document.querySelector(".nav-item[onclick*=\'chat\']"));
     sendQuick(`Get full details on ${id} — affected products, CVSS vector, exploitability, and remediation steps.`);
   }
 
   function agentPSIRT(id) {
-    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    showPage('chat', document.querySelector(".nav-item[onclick*=\'chat\']"));
     sendQuick(`Get full details on Cisco PSIRT advisory ${id} — affected products, software versions, workarounds, and available patches.`);
   }
 
   function agentEOX(pid) {
-    showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
+    showPage('chat', document.querySelector(".nav-item[onclick*=\'chat\']"));
     sendQuick(`Query Cisco EOX for product ID "${pid}" — show all lifecycle dates, EoS, last date of support, and the recommended migration path.`);
   }
 
