@@ -79,11 +79,10 @@ _history: dict[tuple[str, str], list[dict]] = _load_history()
 
 
 def _thread_key(channel: str, event: dict) -> tuple[str, str]:
-    thread_ts    = event.get("thread_ts")
-    channel_type = event.get("channel_type", "")
-    if thread_ts:
-        return (channel, thread_ts)
-    if channel_type == "im":
+    # For DMs use a single "dm" bucket per channel.
+    # For channel messages always use "main" regardless of thread_ts —
+    # threading would otherwise create a fresh empty history per reply thread.
+    if event.get("channel_type") == "im":
         return (channel, "dm")
     return (channel, "main")
 
