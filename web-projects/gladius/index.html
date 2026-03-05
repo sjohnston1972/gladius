@@ -1693,6 +1693,214 @@
   }
 
   .skin-btn.active .skin-btn-name { color: var(--accent); }
+
+  /* ── INGEST PAGE ── */
+  #page-ingest {
+    display: none;
+    padding: 20px;
+    gap: 16px;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  #page-ingest.active { display: flex; }
+
+  .ingest-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  .ingest-drop-zone {
+    border: 2px dashed var(--border-bright);
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--bg-deep);
+    position: relative;
+  }
+
+  .ingest-drop-zone:hover,
+  .ingest-drop-zone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .ingest-drop-zone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    width: 100%;
+    height: 100%;
+  }
+
+  .ingest-drop-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto 12px;
+    color: var(--text-dim);
+  }
+
+  .ingest-drop-icon.ready { color: var(--accent); }
+
+  .ingest-drop-title {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  .ingest-drop-sub {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .ingest-file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 4px 10px;
+    margin-top: 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .ingest-log {
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-height: 200px;
+    max-height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .ingest-log-line {
+    display: flex;
+    gap: 8px;
+    animation: msgIn 0.2s ease;
+  }
+
+  .ingest-log-time { color: var(--text-dim); flex-shrink: 0; }
+
+  .ingest-log-line.ok   .ingest-log-msg { color: var(--success); }
+  .ingest-log-line.err  .ingest-log-msg { color: var(--danger); }
+  .ingest-log-line.info .ingest-log-msg { color: var(--text-secondary); }
+  .ingest-log-line.warn .ingest-log-msg { color: var(--warn); }
+
+  .collection-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .collection-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .collection-card:hover { border-color: var(--border-bright); }
+
+  .collection-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    box-shadow: 0 0 10px var(--accent-glow);
+  }
+
+  .collection-card-name {
+    font-family: var(--font-ui);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .collection-card.selected .collection-card-name { color: var(--accent); }
+
+  .collection-card-desc {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .collection-card-count {
+    position: absolute;
+    top: 10px; right: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .collection-card.selected .collection-card-count { color: var(--accent); }
+
+  .ingest-type-pills {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .type-pill {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .type-pill:hover { border-color: var(--border-bright); color: var(--text-secondary); }
+
+  .type-pill.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-dim);
+  }
+
+  .ingest-progress {
+    height: 6px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 8px;
+    display: none;
+  }
+
+  .ingest-progress.visible { display: block; }
+
+  .ingest-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.4s ease;
+    box-shadow: 0 0 8px var(--accent-glow);
+  }
+
 </style>
 </head>
 <body>
@@ -1774,6 +1982,15 @@
     <div class="nav-item" onclick="showPage('eox', this)" title="Cisco EOX — End of Life">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
       <span>EOX</span>
+    </div>
+  </div>
+
+  <!-- Knowledge Nav -->
+  <div class="sidebar-section">
+    <div class="sidebar-label">KB</div>
+    <div class="nav-item" onclick="showPage('ingest', this)" title="Document Ingestion">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span>Ingest</span>
     </div>
   </div>
 
@@ -2363,6 +2580,170 @@
 
     </div>
 
+
+    <!-- INGEST PAGE -->
+    <div id="page-ingest" class="page">
+
+      <!-- Row 1: Collection Selector + Upload -->
+      <div class="ingest-grid">
+
+        <!-- Left: Collection + Document Type -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+
+          <!-- Collection selector -->
+          <div class="panel">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+              <div class="panel-title">Target Collection</div>
+            </div>
+            <div class="panel-body" style="display:flex;flex-direction:column;gap:12px;">
+              <p style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);line-height:1.6;">
+                Select the Chroma collection to ingest documents into. Each collection is a separate knowledge domain — agents query only their assigned collection.
+              </p>
+              <div class="collection-cards" id="collection-cards">
+                <div class="collection-card selected" data-collection="nvd-advisories" onclick="selectCollection(this)">
+                  <div class="collection-card-count" id="count-nvd-advisories">— docs</div>
+                  <div class="collection-card-name">NVD Advisories</div>
+                  <div class="collection-card-desc">CVE / NIST security data</div>
+                </div>
+                <div class="collection-card" data-collection="design-guidelines" onclick="selectCollection(this)">
+                  <div class="collection-card-count" id="count-design-guidelines">— docs</div>
+                  <div class="collection-card-name">Design Guidelines</div>
+                  <div class="collection-card-desc">UI/UX · Network design</div>
+                </div>
+                <div class="collection-card" data-collection="network-topologies" onclick="selectCollection(this)">
+                  <div class="collection-card-count" id="count-network-topologies">— docs</div>
+                  <div class="collection-card-name">Network Topologies</div>
+                  <div class="collection-card-desc">Architecture patterns</div>
+                </div>
+                <div class="collection-card" data-collection="compliance-frameworks" onclick="selectCollection(this)">
+                  <div class="collection-card-count" id="count-compliance-frameworks">— docs</div>
+                  <div class="collection-card-name">Compliance</div>
+                  <div class="collection-card-desc">CIS · NIST · ISO 27001</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Document type pills -->
+          <div class="panel">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              <div class="panel-title">Document Type</div>
+            </div>
+            <div class="panel-body" style="display:flex;flex-direction:column;gap:10px;">
+              <div class="ingest-type-pills" id="type-pills">
+                <button class="type-pill active" data-type="auto" onclick="selectDocType(this)">Auto-detect</button>
+                <button class="type-pill" data-type="pdf" onclick="selectDocType(this)">PDF</button>
+                <button class="type-pill" data-type="markdown" onclick="selectDocType(this)">Markdown</button>
+                <button class="type-pill" data-type="text" onclick="selectDocType(this)">Plain Text</button>
+                <button class="type-pill" data-type="json" onclick="selectDocType(this)">JSON</button>
+                <button class="type-pill" data-type="html" onclick="selectDocType(this)">HTML</button>
+                <button class="type-pill" data-type="csv" onclick="selectDocType(this)">CSV</button>
+              </div>
+              <p style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);line-height:1.5;">
+                Auto-detect reads the file extension. Use a specific type to override chunking and parsing strategy.
+              </p>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Right: Drop zone + Controls -->
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="panel">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div class="panel-title">Upload Document</div>
+            </div>
+            <div class="panel-body" style="display:flex;flex-direction:column;gap:16px;">
+
+              <div class="ingest-drop-zone" id="ingest-drop-zone">
+                <input type="file" id="ingest-file-input" accept=".pdf,.md,.txt,.json,.html,.csv" onchange="onFileSelected(event)">
+                <svg class="ingest-drop-icon" id="ingest-drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <div class="ingest-drop-title" id="ingest-drop-title">Drop file here or click to browse</div>
+                <div class="ingest-drop-sub" id="ingest-drop-sub">PDF · Markdown · Text · JSON · HTML · CSV</div>
+                <div id="ingest-file-chip" style="display:none;" class="ingest-file-chip">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span id="ingest-filename">—</span>
+                </div>
+              </div>
+
+              <div class="ingest-progress" id="ingest-progress">
+                <div class="ingest-progress-fill" id="ingest-progress-fill"></div>
+              </div>
+
+              <div style="display:flex;gap:10px;align-items:center;">
+                <button class="btn btn-primary" id="ingest-btn" onclick="runIngest()" style="flex:1;" disabled>
+                  INGEST DOCUMENT
+                </button>
+                <button class="btn btn-ghost" onclick="clearIngest()">Clear</button>
+              </div>
+
+              <div style="display:flex;gap:16px;padding-top:4px;border-top:1px solid var(--border);">
+                <div style="flex:1;text-align:center;">
+                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-bottom:4px;">COLLECTION</div>
+                  <div style="font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--accent)" id="ingest-summary-collection">—</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-bottom:4px;">DOC TYPE</div>
+                  <div style="font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--accent)" id="ingest-summary-type">Auto</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-bottom:4px;">FILE SIZE</div>
+                  <div style="font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--text-secondary)" id="ingest-summary-size">—</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Row 2: Ingestion Log + Collection Stats -->
+      <div class="ingest-grid">
+
+        <!-- Ingestion Log -->
+        <div class="panel">
+          <div class="panel-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <div class="panel-title">Ingestion Log</div>
+            <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px;" onclick="clearLog()">Clear</button>
+          </div>
+          <div class="panel-body" style="padding:0;">
+            <div class="ingest-log" id="ingest-log">
+              <div class="ingest-log-line info">
+                <span class="ingest-log-time">--:--:--</span>
+                <span class="ingest-log-msg">// Gladius Document Ingestion Engine ready</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collection Browser -->
+        <div class="panel">
+          <div class="panel-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            <div class="panel-title">Collection Overview</div>
+            <button class="btn btn-ghost" style="padding:3px 10px;font-size:11px;" onclick="loadCollectionStats()">Refresh</button>
+          </div>
+          <div class="panel-body" style="display:flex;flex-direction:column;gap:12px;" id="collection-overview">
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);text-align:center;padding:20px 0;">
+              // Loading collection stats...
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+    <!-- /INGEST PAGE -->
+
   </div><!-- /content -->
 </div><!-- /main -->
 
@@ -2382,11 +2763,13 @@
       eox: 'CISCO EOX',
       reports: 'REPORTS',
       cve: 'CVE LOOKUP',
-      settings: 'CONFIGURATION'
+      settings: 'CONFIGURATION',
+      ingest: 'DOCUMENT INGESTION'
     };
     document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
     if (name === 'cve'   && !_cvesLoaded)   loadLatestCVEs();
     if (name === 'psirt' && !_psirtLoaded)  loadLatestPSIRT();
+    if (name === 'ingest') loadCollectionStats();
   }
 
   // ── CHAT ──
@@ -4581,6 +4964,177 @@ ${cves.length ? `<!-- CVE TAB -->
     showPage('chat', document.querySelector('.nav-item:nth-child(2)'));
     sendQuick(`Query Cisco EOX for product ID "${pid}" — show all lifecycle dates, EoS, last date of support, and the recommended migration path.`);
   }
+
+  // ── DOCUMENT INGESTION ──────────────────────────────────────────────────────
+  let _selectedCollection = 'nvd-advisories';
+  let _selectedDocType    = 'auto';
+  let _selectedFile       = null;
+
+  function selectCollection(card) {
+    document.querySelectorAll('.collection-card').forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+    _selectedCollection = card.dataset.collection;
+    document.getElementById('ingest-summary-collection').textContent =
+      card.querySelector('.collection-card-name').textContent;
+  }
+
+  function selectDocType(pill) {
+    document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    _selectedDocType = pill.dataset.type;
+    document.getElementById('ingest-summary-type').textContent =
+      pill.textContent;
+  }
+
+  function onFileSelected(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    _selectedFile = file;
+    const chip = document.getElementById('ingest-file-chip');
+    document.getElementById('ingest-filename').textContent = file.name;
+    chip.style.display = 'inline-flex';
+    document.getElementById('ingest-drop-title').textContent = 'File selected';
+    document.getElementById('ingest-drop-sub').textContent   = file.name;
+    document.getElementById('ingest-drop-icon').classList.add('ready');
+    document.getElementById('ingest-btn').disabled = false;
+    const kb = (file.size / 1024).toFixed(1);
+    document.getElementById('ingest-summary-size').textContent = kb + ' KB';
+    ingestLog('info', `File selected: ${file.name} (${kb} KB)`);
+
+    // Auto-detect type from extension if pill is on "auto"
+    if (_selectedDocType === 'auto') {
+      const ext = file.name.split('.').pop().toLowerCase();
+      const extMap = { pdf:'PDF', md:'Markdown', txt:'Plain Text', json:'JSON', html:'HTML', csv:'CSV' };
+      if (extMap[ext]) ingestLog('info', `Auto-detected type: ${extMap[ext]}`);
+    }
+  }
+
+  function clearIngest() {
+    _selectedFile = null;
+    document.getElementById('ingest-file-input').value = '';
+    document.getElementById('ingest-file-chip').style.display = 'none';
+    document.getElementById('ingest-drop-title').textContent  = 'Drop file here or click to browse';
+    document.getElementById('ingest-drop-sub').textContent    = 'PDF · Markdown · Text · JSON · HTML · CSV';
+    document.getElementById('ingest-drop-icon').classList.remove('ready');
+    document.getElementById('ingest-btn').disabled = true;
+    document.getElementById('ingest-summary-size').textContent = '—';
+    const prog = document.getElementById('ingest-progress');
+    prog.classList.remove('visible');
+    document.getElementById('ingest-progress-fill').style.width = '0%';
+  }
+
+  function clearLog() {
+    document.getElementById('ingest-log').innerHTML =
+      '<div class="ingest-log-line info"><span class="ingest-log-time">--:--:--</span>' +
+      '<span class="ingest-log-msg">// Log cleared</span></div>';
+  }
+
+  function ingestLog(level, msg) {
+    const log  = document.getElementById('ingest-log');
+    const now  = new Date().toTimeString().slice(0, 8);
+    const line = document.createElement('div');
+    line.className = 'ingest-log-line ' + level;
+    line.innerHTML = `<span class="ingest-log-time">${now}</span><span class="ingest-log-msg">${msg}</span>`;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  async function runIngest() {
+    if (!_selectedFile) return;
+    const btn  = document.getElementById('ingest-btn');
+    const prog = document.getElementById('ingest-progress');
+    const fill = document.getElementById('ingest-progress-fill');
+
+    btn.disabled = true;
+    btn.textContent = 'INGESTING…';
+    prog.classList.add('visible');
+    fill.style.width = '10%';
+
+    ingestLog('info', `Starting ingestion → collection: ${_selectedCollection}`);
+    ingestLog('info', `Doc type: ${_selectedDocType} | File: ${_selectedFile.name}`);
+
+    const formData = new FormData();
+    formData.append('file', _selectedFile);
+    formData.append('collection', _selectedCollection);
+    formData.append('doc_type', _selectedDocType);
+
+    fill.style.width = '30%';
+
+    try {
+      const resp = await fetch('/api/ingest', { method: 'POST', body: formData });
+      fill.style.width = '80%';
+      const data = await resp.json();
+
+      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+
+      fill.style.width = '100%';
+      ingestLog('ok',   `✓ Ingested ${data.chunks} chunks into '${data.collection}'`);
+      ingestLog('ok',   `✓ Embeddings stored — ${data.total_docs} total documents in collection`);
+      ingestLog('info', `Processing time: ${data.elapsed_ms}ms`);
+      setTimeout(() => { prog.classList.remove('visible'); fill.style.width = '0%'; }, 1500);
+      clearIngest();
+      loadCollectionStats();
+    } catch (err) {
+      fill.style.width = '0%';
+      prog.classList.remove('visible');
+      ingestLog('err', `✗ Ingestion failed: ${err.message}`);
+      btn.disabled = false;
+      btn.textContent = 'INGEST DOCUMENT';
+    }
+  }
+
+  async function loadCollectionStats() {
+    const overview = document.getElementById('collection-overview');
+    const collections = [
+      { id: 'nvd-advisories',       label: 'NVD Advisories',      desc: 'CVE / NIST security data' },
+      { id: 'design-guidelines',    label: 'Design Guidelines',   desc: 'UI/UX · Network design' },
+      { id: 'network-topologies',   label: 'Network Topologies',  desc: 'Architecture patterns' },
+      { id: 'compliance-frameworks', label: 'Compliance',         desc: 'CIS · NIST · ISO 27001' },
+    ];
+    try {
+      const resp = await fetch('/api/ingest/collections');
+      const data = resp.ok ? await resp.json() : { collections: {} };
+      const counts = data.collections || {};
+
+      overview.innerHTML = collections.map(col => {
+        const count = counts[col.id] ?? '—';
+        const countEl = document.getElementById('count-' + col.id);
+        if (countEl) countEl.textContent = (typeof count === 'number' ? count : '—') + ' docs';
+        return `
+          <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;">
+              <div style="font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--text-primary);letter-spacing:1px;">${col.label}</div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-top:2px;">${col.desc}</div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-family:var(--font-ui);font-size:18px;font-weight:700;color:var(--accent);">${typeof count === 'number' ? count : '—'}</div>
+              <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);">CHUNKS</div>
+            </div>
+          </div>`;
+      }).join('');
+    } catch(e) {
+      overview.innerHTML = '<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:10px;">// Could not load collection stats</div>';
+    }
+  }
+
+  // Drag-and-drop for drop zone
+  (function() {
+    const zone = document.getElementById('ingest-drop-zone');
+    if (!zone) return;
+    zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+    zone.addEventListener('dragleave', ()  => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const input = document.getElementById('ingest-file-input');
+        // Simulate file selection
+        onFileSelected({ target: { files: [file] } });
+      }
+    });
+  })();
+
 </script>
   <!-- FINDING DETAIL PANEL -->
   <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>

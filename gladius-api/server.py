@@ -19,11 +19,13 @@ import requests as http_requests
 import anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import io
+import hashlib
 
 load_dotenv()
 
@@ -824,6 +826,184 @@ async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+
+
+
+# ── DOCUMENT INGESTION ────────────────────────────────────────────────────────
+
+SUPPORTED_TYPES = {"pdf", "md", "markdown", "txt", "text", "json", "html", "csv"}
+
+COLLECTIONS = [
+    "nvd-advisories",
+    "design-guidelines",
+    "network-topologies",
+    "compliance-frameworks",
+]
+
+def _get_chroma_collection(name: str):
+    """Return (or create) a named Chroma collection via the HTTP API."""
+    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+    # Get or create collection
+    r = http_requests.post(f"{base}/collections", json={"name": name, "get_or_create": True}, timeout=10)
+    r.raise_for_status()
+    return r.json()["id"]
+
+
+def _chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
+    """Split text into overlapping chunks."""
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end].strip())
+        start += chunk_size - overlap
+    return [c for c in chunks if len(c) > 30]
+
+
+def _extract_text(file_bytes: bytes, filename: str, doc_type: str) -> str:
+    """Extract plain text from uploaded file."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    effective_type = doc_type if doc_type != "auto" else ext
+
+    if effective_type in ("pdf",):
+        try:
+            import pdfminer.high_level as pdfminer
+            return pdfminer.extract_text(io.BytesIO(file_bytes))
+        except ImportError:
+            # Fallback: raw text extraction
+            text = file_bytes.decode("latin-1", errors="replace")
+            # Strip binary cruft
+            import re
+            text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\xff]{3,}', ' ', text)
+            return text
+    elif effective_type in ("json",):
+        import json as _json
+        try:
+            obj = _json.loads(file_bytes.decode("utf-8", errors="replace"))
+            return _json.dumps(obj, indent=2)
+        except Exception:
+            return file_bytes.decode("utf-8", errors="replace")
+    else:
+        # Plain text, markdown, html, csv
+        return file_bytes.decode("utf-8", errors="replace")
+
+
+@app.post("/api/ingest")
+async def ingest_document(
+    file: UploadFile = File(...),
+    collection: str  = Form("nvd-advisories"),
+    doc_type: str    = Form("auto"),
+):
+    """Ingest a document into a named Chroma collection."""
+    t0 = time.monotonic()
+
+    if collection not in COLLECTIONS:
+        raise HTTPException(status_code=400, detail=f"Unknown collection: {collection}. Must be one of {COLLECTIONS}")
+
+    file_bytes = await file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(file_bytes) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large (max 20MB)")
+
+    # Extract text
+    try:
+        text = _extract_text(file_bytes, file.filename or "doc", doc_type)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Text extraction failed: {e}")
+
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="No text could be extracted from the document")
+
+    # Chunk
+    chunks = _chunk_text(text)
+    if not chunks:
+        raise HTTPException(status_code=422, detail="Document produced no usable text chunks")
+
+    # Get/create collection in Chroma
+    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+    try:
+        col_r = http_requests.post(
+            f"{base}/collections",
+            json={"name": collection, "get_or_create": True},
+            timeout=10
+        )
+        col_r.raise_for_status()
+        col_id = col_r.json()["id"]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Chroma unavailable: {e}")
+
+    # Generate IDs and embeddings (use Chroma's default embedding)
+    file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
+    ids       = [f"{file_hash}_{i}" for i in range(len(chunks))]
+    metadatas = [
+        {
+            "source":     file.filename or "upload",
+            "doc_type":   doc_type,
+            "collection": collection,
+            "chunk":      i,
+        }
+        for i in range(len(chunks))
+    ]
+
+    # Upsert into Chroma (no embedding model — Chroma will use its default)
+    try:
+        upsert_r = http_requests.post(
+            f"{base}/collections/{col_id}/upsert",
+            json={
+                "ids":       ids,
+                "documents": chunks,
+                "metadatas": metadatas,
+            },
+            timeout=60,
+        )
+        upsert_r.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Chroma upsert failed: {e}")
+
+    # Get total doc count for this collection
+    try:
+        count_r = http_requests.get(
+            f"{base}/collections/{col_id}/count",
+            timeout=5
+        )
+        total_docs = count_r.json() if count_r.status_code == 200 else len(chunks)
+    except Exception:
+        total_docs = len(chunks)
+
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    log.info(f"Ingest: {file.filename} → {collection} | {len(chunks)} chunks | {elapsed_ms}ms")
+
+    return {
+        "ok":         True,
+        "collection": collection,
+        "file":       file.filename,
+        "chunks":     len(chunks),
+        "total_docs": total_docs,
+        "elapsed_ms": elapsed_ms,
+    }
+
+
+@app.get("/api/ingest/collections")
+async def ingest_collections():
+    """Return document counts for all known collections."""
+    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+    counts = {}
+    try:
+        list_r = http_requests.get(f"{base}/collections", timeout=5)
+        list_r.raise_for_status()
+        existing = {c["name"]: c["id"] for c in (list_r.json() if isinstance(list_r.json(), list) else [])}
+        for col_name in COLLECTIONS:
+            if col_name in existing:
+                col_id = existing[col_name]
+                cr = http_requests.get(f"{base}/collections/{col_id}/count", timeout=5)
+                counts[col_name] = cr.json() if cr.status_code == 200 else 0
+            else:
+                counts[col_name] = 0
+    except Exception as e:
+        log.warning(f"Collection stats failed: {e}")
+    return {"collections": counts}
 
 
 if __name__ == "__main__":
