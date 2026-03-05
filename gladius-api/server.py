@@ -1006,6 +1006,128 @@ async def ingest_collections():
     return {"collections": counts}
 
 
+
+# ── DESIGN AGENT ──────────────────────────────────────────────────────────────
+
+DESIGN_SYSTEM_PROMPT = """You are the Gladius Design Agent — an expert in network visualisation design, UI/UX for security dashboards, and design systems.
+
+Your knowledge base contains curated design guidelines, colour palettes, typography standards, and visual conventions for network security platforms.
+
+Your role is to help Gladius users make informed, consistent design decisions when building or customising network dashboards, topology maps, and security visualisations.
+
+You have access to a RAG knowledge base (design-guidelines collection) containing the team's uploaded design documents. Always query it when answering design questions — your answers should be grounded in those documents.
+
+## Personality
+- Precise and opinionated — give clear recommendations, not wishy-washy "it depends"
+- Reference specific colours, fonts, and values from the design system where possible
+- Explain the *why* behind design decisions
+- Keep responses concise but complete
+
+## Response format
+- Use markdown formatting
+- For colour recommendations, always include the hex code
+- For typography, name the specific font and weight
+- For layout/spacing, give concrete pixel or rem values where relevant
+
+## Scope
+- Colour palettes for network nodes, alerts, status indicators
+- Typography hierarchies for dashboards
+- Visual conventions for network topology maps
+- Status indicator design (healthy, warning, critical, offline)
+- Dark vs light mode considerations
+- Accessibility and contrast ratios
+- Icon and symbol conventions for network elements
+- Card and panel layout patterns
+- Data visualisation best practices for security metrics
+
+If asked something outside your design scope, acknowledge it and redirect to the Audit Agent."""
+
+@app.post("/api/chat/design")
+async def design_chat(request: ChatRequest):
+    """Design Agent — RAG-backed design advisor scoped to design-guidelines collection."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    return StreamingResponse(
+        stream_design_response(messages),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def stream_design_response(messages: list) -> AsyncIterator[str]:
+    """
+    Design agent stream — uses Claude with the design system prompt.
+    Queries the design-guidelines Chroma collection for RAG context
+    before passing to Claude.
+    """
+    try:
+        # ── RAG: pull relevant context from design-guidelines collection ──────
+        rag_context = ""
+        last_user_msg = next(
+            (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
+        )
+        if last_user_msg:
+            try:
+                base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+                # Get collection id
+                list_r = http_requests.get(f"{base}/collections", timeout=5)
+                if list_r.status_code == 200:
+                    cols = list_r.json() if isinstance(list_r.json(), list) else []
+                    design_col = next((c for c in cols if c["name"] == "design-guidelines"), None)
+                    if design_col:
+                        col_id = design_col["id"]
+                        query_r = http_requests.post(
+                            f"{base}/collections/{col_id}/query",
+                            json={
+                                "query_texts": [last_user_msg],
+                                "n_results": 5,
+                                "include": ["documents", "metadatas"],
+                            },
+                            timeout=10,
+                        )
+                        if query_r.status_code == 200:
+                            qdata = query_r.json()
+                            docs  = qdata.get("documents", [[]])[0]
+                            if docs:
+                                rag_context = "\n\n---\nRelevant design guidelines from knowledge base:\n" + "\n---\n".join(docs[:5])
+                                log.info(f"Design RAG: {len(docs)} chunks retrieved for query")
+            except Exception as e:
+                log.warning(f"Design RAG lookup failed (non-fatal): {e}")
+
+        # Inject RAG context into the last user message
+        augmented_messages = list(messages)
+        if rag_context and augmented_messages:
+            last = augmented_messages[-1]
+            if last["role"] == "user":
+                augmented_messages[-1] = {
+                    "role": "user",
+                    "content": last["content"] + rag_context,
+                }
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=4096,
+            system=DESIGN_SYSTEM_PROMPT,
+            messages=augmented_messages,
+        )
+
+        for block in response.content:
+            if block.type == "text":
+                for i, word in enumerate(block.text.split(" ")):
+                    chunk = word + (" " if i < len(block.text.split(" ")) - 1 else "")
+                    yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+                    await asyncio.sleep(0.01)
+
+        global _last_claude_success
+        _last_claude_success = time.monotonic()
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    except Exception as e:
+        log.error(f"Design stream error: {type(e).__name__}: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)

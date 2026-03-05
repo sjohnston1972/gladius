@@ -1901,6 +1901,115 @@
     box-shadow: 0 0 8px var(--accent-glow);
   }
 
+
+  /* ── DESIGN AGENT PAGE ── */
+  #page-design {
+    display: none;
+    flex-direction: column;
+  }
+  #page-design.active { display: flex; }
+
+  .design-agent-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: rgba(77,77,255,0.15);
+    border: 1px solid #4d4dff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 700;
+    color: #4d4dff;
+  }
+
+  .design-msg-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(77,77,255,0.15);
+    border: 1px solid #4d4dff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 700;
+    color: #4d4dff;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .msg.design-agent .msg-bubble {
+    background: rgba(77,77,255,0.06);
+    border: 1px solid rgba(77,77,255,0.35);
+    color: var(--text-primary);
+    border-radius: 2px 8px 8px 8px;
+  }
+
+  .design-orbit-dot {
+    display: none;
+    position: absolute;
+    width: 6px;
+    height: 6px;
+    background: #4d4dff;
+    border-radius: 50%;
+    box-shadow: 0 0 6px #4d4dff, 0 0 12px #4d4dff;
+    top: -4px;
+    left: calc(50% - 3px);
+    transform-origin: 3px 18px;
+    animation: orbit 1.4s linear infinite;
+    z-index: 10;
+  }
+
+  .avatar-orbit.design-active .design-orbit-dot {
+    display: block;
+  }
+
+  .design-quick-cmd {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid rgba(77,77,255,0.4);
+    color: #4d4dff;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: rgba(77,77,255,0.06);
+  }
+
+  .design-quick-cmd:hover {
+    border-color: #4d4dff;
+    background: rgba(77,77,255,0.15);
+  }
+
+  .design-chat-input:focus {
+    border-color: #4d4dff !important;
+  }
+
+  .design-send-btn {
+    width: 40px;
+    height: 40px;
+    background: rgba(77,77,255,0.12);
+    border: 1px solid #4d4dff;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .design-send-btn:hover {
+    background: #4d4dff;
+    box-shadow: 0 0 12px rgba(77,77,255,0.4);
+  }
+
+  .design-send-btn svg { width: 16px; height: 16px; color: #4d4dff; }
+  .design-send-btn:hover svg { color: #fff; }
+
 </style>
 </head>
 <body>
@@ -1944,9 +2053,31 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
       <span>Dash</span>
     </div>
-    <div class="nav-item" onclick="showPage('chat', this)" title="Agent Chat">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <span>Agent</span>
+  </div>
+
+  <!-- Agents Nav -->
+  <div class="sidebar-section">
+    <div class="sidebar-label">Agents</div>
+    <div class="nav-item" onclick="showPage('chat', this)" title="Audit Agent — Network security auditor">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span>Audit</span>
+    </div>
+    <div class="nav-item" onclick="showPage('design', this)" title="Design Agent — Network design advisor">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4"/></svg>
+      <span>Design</span>
+    </div>
+  </div>
+
+  <!-- Agents Nav -->
+  <div class="sidebar-section">
+    <div class="sidebar-label">Agents</div>
+    <div class="nav-item" onclick="showPage('chat', this)" title="Audit Agent — Network security auditor">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span>Audit</span>
+    </div>
+    <div class="nav-item" onclick="showPage('design', this)" title="Design Agent — Network design advisor">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+      <span>Design</span>
     </div>
   </div>
 
@@ -2148,6 +2279,53 @@
         <div class="chat-input-area">
           <textarea class="chat-input" id="chat-input" placeholder="Give Gladius a command..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
           <button class="send-btn" onclick="sendMessage()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- DESIGN AGENT PAGE -->
+    <div id="page-design" class="page">
+      <div class="chat-container">
+        <div class="chat-header">
+          <div class="agent-indicator">
+            <div class="design-agent-avatar">D</div>
+            <div class="agent-info">
+              <div class="name" style="color:#4d4dff">DESIGN AGENT</div>
+              <div class="sub">DESIGN GUIDELINES · RAG ENABLED · DESIGN-GUIDELINES COLLECTION</div>
+            </div>
+          </div>
+          <div style="flex:1"></div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);display:flex;align-items:center;gap:6px">
+            <div style="width:6px;height:6px;border-radius:50%;background:#4d4dff;box-shadow:0 0 6px #4d4dff;animation:pulse 2s ease-in-out infinite"></div>
+            DESIGN KB ACTIVE
+          </div>
+        </div>
+
+        <div class="chat-messages" id="design-messages">
+          <div class="msg design-agent">
+            <div class="design-msg-avatar">D</div>
+            <div>
+              <div class="msg-bubble" id="design-welcome-bubble">
+                Design Agent online. I can help you make informed design choices for your network — colour palettes, topology conventions, visual hierarchy, and UI standards. Ask me anything about design.
+              </div>
+              <div class="msg-meta" id="design-welcome-meta">DESIGN · —</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="quick-cmds" id="design-quick-cmds-row">
+          <button class="design-quick-cmd" onclick="sendDesignQuick('What colour should I use for a critical alert node?')">Critical node colour</button>
+          <button class="design-quick-cmd" onclick="sendDesignQuick('Recommend a colour palette for a dark-mode network dashboard')">Dark mode palette</button>
+          <button class="design-quick-cmd" onclick="sendDesignQuick('What typography hierarchy should I use for a network security UI?')">Typography hierarchy</button>
+          <button class="design-quick-cmd" onclick="sendDesignQuick('How should I visually distinguish active, passive and offline nodes on a network map?')">Node state conventions</button>
+        </div>
+
+        <div class="chat-input-area">
+          <textarea class="chat-input design-chat-input" id="design-input" placeholder="Ask the Design Agent about colours, layouts, typography, node conventions…" rows="1" onkeydown="handleDesignKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="design-send-btn" onclick="sendDesignMessage()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
         </div>
@@ -5134,6 +5312,141 @@ ${cves.length ? `<!-- CVE TAB -->
       }
     });
   })();
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DESIGN AGENT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  let designMessages = [];      // conversation history for design agent
+  let designStreaming = false;   // lock while streaming
+
+  function handleDesignKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendDesignMessage();
+    }
+  }
+
+  function sendDesignQuick(prompt) {
+    document.getElementById('design-input').value = prompt;
+    sendDesignMessage();
+  }
+
+  function appendDesignMsg(role, html_content, streaming = false) {
+    const container = document.getElementById('design-messages');
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const isDesign = role === 'design';
+
+    const wrapper = document.createElement('div');
+    wrapper.className = `msg ${isDesign ? 'design-agent' : 'user'}`;
+
+    if (isDesign) {
+      const orbitWrap = document.createElement('div');
+      orbitWrap.className = 'avatar-orbit';
+      if (streaming) orbitWrap.classList.add('design-active');
+      orbitWrap.innerHTML = `<div class="design-msg-avatar">D</div><div class="design-orbit-dot"></div>`;
+      wrapper.appendChild(orbitWrap);
+    } else {
+      wrapper.innerHTML += `<div class="msg-avatar user">U</div>`;
+    }
+
+    const msgBody = document.createElement('div');
+    const bubble  = document.createElement('div');
+    bubble.className = 'msg-bubble';
+    bubble.innerHTML = html_content;
+
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    meta.textContent = isDesign ? `DESIGN · ${now}` : `USER · ${now}`;
+
+    msgBody.appendChild(bubble);
+    msgBody.appendChild(meta);
+    wrapper.appendChild(msgBody);
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+
+    return { wrapper, bubble, orbitWrap: wrapper.querySelector('.avatar-orbit') };
+  }
+
+  async function sendDesignMessage() {
+    const input = document.getElementById('design-input');
+    const text  = input.value.trim();
+    if (!text || designStreaming) return;
+
+    input.value = '';
+    input.style.height = 'auto';
+
+    designMessages.push({ role: 'user', content: text });
+    appendDesignMsg('user', escapeHtml(text));
+
+    designStreaming = true;
+
+    const { bubble, orbitWrap } = appendDesignMsg('design', '<em style="color:var(--text-dim)">Thinking…</em>', true);
+    let fullText = '';
+    let firstChunk = true;
+
+    try {
+      const resp = await fetch('/api/chat/design', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: designMessages }),
+      });
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('
+');
+        buf = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const ev = JSON.parse(line.slice(6));
+            if (ev.type === 'text') {
+              if (firstChunk) { bubble.innerHTML = ''; firstChunk = false; }
+              fullText += ev.content;
+              bubble.innerHTML = renderDesignMarkdown(fullText);
+            } else if (ev.type === 'done') {
+              if (orbitWrap) orbitWrap.classList.remove('design-active');
+              designMessages.push({ role: 'assistant', content: fullText });
+            } else if (ev.type === 'error') {
+              bubble.innerHTML = `<span style="color:var(--danger)">Error: ${escapeHtml(ev.content)}</span>`;
+              if (orbitWrap) orbitWrap.classList.remove('design-active');
+            }
+          } catch(e) {}
+        }
+      }
+    } catch(err) {
+      bubble.innerHTML = `<span style="color:var(--danger)">Connection error: ${escapeHtml(err.message)}</span>`;
+      if (orbitWrap) orbitWrap.classList.remove('design-active');
+    }
+
+    designStreaming = false;
+    document.getElementById('design-messages').scrollTop = 99999;
+  }
+
+  function renderDesignMarkdown(text) {
+    // Reuse the same markdown renderer as the main chat
+    return renderMarkdown(text);
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Init design welcome timestamp
+  (function() {
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const meta = document.getElementById('design-welcome-meta');
+    if (meta) meta.textContent = `DESIGN · ${now}`;
+  })();
+
 
 </script>
   <!-- FINDING DETAIL PANEL -->
