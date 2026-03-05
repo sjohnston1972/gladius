@@ -2140,7 +2140,10 @@
   <div class="sidebar-spacer"></div>
 
   <!-- Status -->
-  <div class="status-dot" id="mcp-status-dot" title="MCP Connected"></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:5px;padding-bottom:4px;">
+    <span id="health-label" style="font-size:0.6rem;font-weight:700;letter-spacing:0.12em;color:var(--accent);opacity:0.85;text-transform:uppercase;">HEALTHY</span>
+    <div class="status-dot" id="mcp-status-dot" title="System Status"></div>
+  </div>
 
   <!-- Settings -->
   <div class="sidebar-section">
@@ -2158,17 +2161,6 @@
   <div class="topbar">
     <div class="topbar-title">GLADIUS <span>//</span></div>
     <div class="topbar-breadcrumb" id="breadcrumb">DASHBOARD</div>
-    <div class="topbar-spacer"></div>
-    <div class="topbar-status">
-      <div class="status-chip online" id="mcp-chip">
-        <div class="dot"></div>
-        MCP CONNECTED
-      </div>
-      <div class="status-chip online" id="chroma-chip">
-        <div class="dot"></div>
-        KB READY
-      </div>
-    </div>
   </div>
 
   <!-- CONTENT -->
@@ -4527,73 +4519,20 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   // ── HEALTH MONITORING ──
-  function ensureExtraChips() {
-    const bar = document.querySelector('.topbar-status');
-    if (!bar) return;
-    [
-      { id: 'nist-chip',   label: 'NIST NVD' },
-      { id: 'claude-chip', label: 'CLAUDE'   },
-      { id: 'psirt-chip',  label: 'PSIRT'    },
-      { id: 'eox-chip',    label: 'EOX'      },
-      { id: 'slack-chip',  label: 'SLACK'    },
-    ].forEach(({ id, label }) => {
-      if (!document.getElementById(id)) {
-        const chip = document.createElement('div');
-        chip.id = id;
-        chip.className = 'status-chip offline';
-        chip.innerHTML = '<div class="dot"></div>' + label;
-        bar.appendChild(chip);
-      }
-    });
-  }
-
-  function renderChip(id, label, status, detail) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.className = 'status-chip ' + (status === 'ok' ? 'online' : 'offline');
-    if (status === 'warn') {
-      el.style.cssText = 'background:var(--warn-dim);border-color:var(--warn);color:var(--warn)';
-    } else {
-      el.style.cssText = '';
-    }
-    const detailText = detail || '';
-    el.innerHTML = '<div class="dot"></div>' + label +
-      (detailText ? `<div class="chip-tooltip">${detailText}</div>` : '');
-    el.title = '';
-  }
-
   async function checkStatus() {
-    ensureExtraChips();
-    const dot = document.getElementById('mcp-status-dot');
+    const dot   = document.getElementById('mcp-status-dot');
+    const label = document.getElementById('health-label');
     try {
       const res = await fetch('/api/health/full');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       const c = data.components || {};
-
-      renderChip('mcp-chip',    'MCP',       (c.mcp            || {}).status, (c.mcp            || {}).detail);
-      renderChip('chroma-chip', 'CHROMA-DB', (c.knowledge_base || {}).status, (c.knowledge_base || {}).detail);
-      renderChip('nist-chip',   'NIST',      (c.nist_nvd       || {}).status, (c.nist_nvd       || {}).detail);
-      renderChip('claude-chip', 'ANTHROPIC', (c.claude_api     || {}).status, (c.claude_api     || {}).detail);
-      renderChip('psirt-chip',  'PSIRT',     (c.psirt          || {}).status, (c.psirt          || {}).detail);
-      renderChip('eox-chip',    'EOX',       (c.eox            || {}).status, (c.eox            || {}).detail);
-      renderChip('slack-chip',  'SLACK',     (c.gladius_slack  || {}).status, (c.gladius_slack  || {}).detail);
-
       const anyError = Object.values(c).some(v => v.status === 'error');
-      if (dot) {
-        dot.className = anyError ? 'status-dot offline' : 'status-dot';
-        dot.title     = anyError ? 'One or more components degraded' : 'All systems operational';
-      }
+      if (dot)   dot.className = anyError ? 'status-dot offline' : 'status-dot';
+      if (label) { label.textContent = anyError ? 'DEGRADED' : 'HEALTHY'; label.style.color = anyError ? 'var(--danger)' : 'var(--accent)'; }
     } catch (err) {
-      ['mcp-chip','chroma-chip','nist-chip','claude-chip','psirt-chip','eox-chip','slack-chip'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-          el.className = 'status-chip offline';
-          el.style.cssText = '';
-          el.innerHTML = '<div class="dot"></div>OFFLINE';
-        }
-      });
-      if (dot) { dot.className = 'status-dot offline'; dot.title = 'API unreachable'; }
+      if (dot)   { dot.className = 'status-dot offline'; }
+      if (label) { label.textContent = 'OFFLINE'; label.style.color = 'var(--danger)'; }
     }
   }
 
