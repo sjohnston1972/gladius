@@ -1431,6 +1431,65 @@
   }
   .detail-overlay.active { display: block; }
 
+  /* ── SNMP DEVICE DETAIL PANEL ── */
+  #snmp-detail-panel {
+    position: fixed;
+    top: 0; right: -640px;
+    width: 640px;
+    height: 100vh;
+    background: var(--bg-panel);
+    border-left: 1px solid var(--border-bright);
+    z-index: 502;
+    display: flex;
+    flex-direction: column;
+    transition: right 0.3s ease;
+    box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+  }
+  #snmp-detail-panel.active { right: 0; }
+  #snmp-detail-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.5); z-index: 501;
+    backdrop-filter: blur(2px);
+  }
+  #snmp-detail-overlay.active { display: block; }
+  .snmp-ds-title {
+    font-family: var(--font-ui);
+    font-size: 10px; letter-spacing: 2px;
+    color: var(--accent); text-transform: uppercase;
+    margin-bottom: 10px; padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .snmp-stat-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+  }
+  .snmp-stat-box {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px;
+  }
+  .snmp-stat-label {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--text-dim); letter-spacing: 1px; margin-bottom: 4px;
+  }
+  .snmp-stat-val {
+    font-family: var(--font-mono); font-size: 15px;
+    font-weight: 600; color: var(--text-primary);
+  }
+  .snmp-if-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+  .snmp-if-table th {
+    padding: 6px 10px; text-align: left; color: var(--text-dim);
+    font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border);
+  }
+  .snmp-if-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); color: var(--text-secondary); }
+  .snmp-if-table tbody tr:hover { background: var(--bg-card); }
+  .snmp-mon-btn {
+    background: none; border: 1px solid var(--border); border-radius: 3px;
+    cursor: pointer; font-family: var(--font-mono); font-size: 10px;
+    padding: 2px 8px; color: var(--text-dim); letter-spacing: 1px;
+    transition: all 0.15s;
+  }
+  .snmp-mon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .snmp-mon-btn.on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
   .report-panel-findings { display: flex; flex-direction: column; gap: 0; }
   .report-panel-finding {
     display: flex; align-items: flex-start; gap: 12px;
@@ -2141,7 +2200,7 @@
 
   <!-- Status -->
   <div style="display:flex;flex-direction:column;align-items:center;gap:5px;padding-bottom:4px;">
-    <span id="health-label" style="font-size:0.6rem;font-weight:700;letter-spacing:0.12em;color:var(--accent);opacity:0.85;text-transform:uppercase;">HEALTHY</span>
+    <span id="health-label" style="font-size:0.6rem;font-weight:400;letter-spacing:0.12em;color:#22c55e;text-shadow:0 0 8px #22c55e;text-transform:uppercase;">HEALTHY</span>
     <div class="status-dot" id="mcp-status-dot" title="System Status"></div>
   </div>
 
@@ -4529,10 +4588,10 @@ ${cves.length ? `<!-- CVE TAB -->
       const c = data.components || {};
       const anyError = Object.values(c).some(v => v.status === 'error');
       if (dot)   dot.className = anyError ? 'status-dot offline' : 'status-dot';
-      if (label) { label.textContent = anyError ? 'DEGRADED' : 'HEALTHY'; label.style.color = anyError ? 'var(--danger)' : 'var(--accent)'; }
+      if (label) { label.textContent = anyError ? 'DEGRADED' : 'HEALTHY'; label.style.color = anyError ? 'var(--danger)' : '#22c55e'; label.style.textShadow = anyError ? '0 0 8px var(--danger)' : '0 0 8px #22c55e'; }
     } catch (err) {
       if (dot)   { dot.className = 'status-dot offline'; }
-      if (label) { label.textContent = 'OFFLINE'; label.style.color = 'var(--danger)'; }
+      if (label) { label.textContent = 'OFFLINE'; label.style.color = 'var(--danger)'; label.style.textShadow = '0 0 8px var(--danger)'; }
     }
   }
 
@@ -4672,11 +4731,365 @@ ${cves.length ? `<!-- CVE TAB -->
       if (!tbody) tbody = document.getElementById('snmp-device-tbody');
       row = document.createElement('tr');
       row.id = `snmp-row-${d.id}`;
-      row.style.cssText = 'border-bottom:1px solid var(--border);transition:background 0.15s';
+      row.style.cssText = 'border-bottom:1px solid var(--border);transition:background 0.15s;cursor:pointer';
       row.onmouseover = () => row.style.background = 'var(--bg-card)';
       row.onmouseout  = () => row.style.background = '';
+      row.onclick = (e) => { if (!e.target.closest('button')) snmpOpenDetail(d.id); };
       row.innerHTML = html;
       tbody.appendChild(row);
+    }
+  }
+
+  // ── SNMP DEVICE DETAIL PANEL ──────────────────────────────────────────────
+
+  let _snmpDpDevId    = null;
+  let _snmpDpDev      = null;
+  let _snmpDpIfData   = null;
+  let _snmpDpEdit     = false;
+  let _snmpDpCreds    = null;
+  let _snmpDpTimer    = null;
+
+  function snmpOpenDetail(id) {
+    _snmpDpDevId = id;
+    _snmpDpDev   = null;
+    _snmpDpIfData = null;
+    _snmpDpEdit  = false;
+    _snmpDpCreds = null;
+    _snmpStopIfTimer();
+    const editBtn = document.getElementById('snmp-dp-edit-btn');
+    if (editBtn) { editBtn.textContent = 'EDIT'; editBtn.style.borderColor = 'var(--border)'; editBtn.style.color = 'var(--text-dim)'; editBtn.style.background = 'none'; }
+    document.getElementById('snmp-detail-overlay').classList.add('active');
+    document.getElementById('snmp-detail-panel').classList.add('active');
+    snmpLoadDetail(id);
+  }
+
+  function snmpCloseDetail() {
+    _snmpStopIfTimer();
+    document.getElementById('snmp-detail-overlay').classList.remove('active');
+    document.getElementById('snmp-detail-panel').classList.remove('active');
+    _snmpDpDevId = null; _snmpDpDev = null; _snmpDpIfData = null; _snmpDpEdit = false; _snmpDpCreds = null;
+  }
+
+  function _snmpStopIfTimer() {
+    if (_snmpDpTimer) { clearInterval(_snmpDpTimer); _snmpDpTimer = null; }
+  }
+
+  function _snmpStartIfTimer() {
+    _snmpStopIfTimer();
+    _snmpDpTimer = setInterval(async () => {
+      if (!_snmpDpDevId || !_snmpDpCreds) return;
+      try {
+        const r = await fetch('/api/snmp/poll', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({..._snmpDpCreds, profile: 'interfaces'}),
+        });
+        if (!r.ok) return;
+        const ifData = await r.json();
+        _snmpDpIfData = ifData;
+        _snmpStoreCounters(_snmpDpDevId, ifData);
+        _snmpUpdateSparklines(_snmpDpDevId, ifData);
+      } catch {}
+    }, 15000);
+  }
+
+  function snmpDetailToggleEdit() {
+    _snmpDpEdit = !_snmpDpEdit;
+    const btn = document.getElementById('snmp-dp-edit-btn');
+    if (_snmpDpEdit) {
+      btn.textContent = 'DONE'; btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)'; btn.style.background = 'var(--accent-dim)';
+    } else {
+      btn.textContent = 'EDIT'; btn.style.borderColor = 'var(--border)';
+      btn.style.color = 'var(--text-dim)'; btn.style.background = 'none';
+    }
+    // Re-render just the interface table
+    const el = document.getElementById('snmp-dp-ifaces');
+    if (el) el.innerHTML = _snmpBuildIfTable(_snmpDpDevId, _snmpDpIfData);
+  }
+
+  async function snmpLoadDetail(id) {
+    const body = document.getElementById('snmp-dp-body');
+    if (!body) return;
+    body.innerHTML = '<div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// Polling device…</div>';
+    try {
+      const resp = await fetch('/api/snmp/devices');
+      const data = await resp.json();
+      const dev = (data.devices || []).find(d => d.id === id);
+      if (!dev) { body.innerHTML = '<div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--danger)">// Device not found</div>'; return; }
+      _snmpDpDev = dev;
+
+      // Update header dot
+      const sc = dev.status === 'ok' ? 'var(--success)' : dev.status === 'error' ? 'var(--danger)' : 'var(--warn,#f59e0b)';
+      const dot = document.getElementById('snmp-dp-dot');
+      if (dot) { dot.style.background = sc; dot.style.boxShadow = `0 0 6px ${sc}`; }
+      const titleEl = document.getElementById('snmp-dp-title');
+      if (titleEl) titleEl.textContent = dev.name;
+
+      // Render basic info + placeholders immediately
+      _snmpRenderDpBasic(body, dev);
+
+      // Fetch advanced OID profiles in parallel
+      const creds = {
+        host: dev.host, port: dev.port || 161, version: dev.version || '2c',
+        community: dev.community || 'public', username: dev.username || '',
+        auth_key: dev.auth_key || '', priv_key: dev.priv_key || '',
+        auth_protocol: dev.auth_protocol || 'SHA', priv_protocol: dev.priv_protocol || 'AES',
+      };
+      _snmpDpCreds = creds;
+      const post = (profile) => fetch('/api/snmp/poll', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({...creds, profile}),
+      }).then(r => r.ok ? r.json() : null).catch(() => null);
+
+      const [cpuRes, memRes, ifRes] = await Promise.all([post('cisco_cpu'), post('cisco_memory'), post('interfaces')]);
+      _snmpDpIfData = ifRes;
+
+      // Store initial counter sample and start live polling
+      if (ifRes) _snmpStoreCounters(id, ifRes);
+      _snmpStartIfTimer();
+
+      // Patch in CPU/mem
+      const cpuMemEl = document.getElementById('snmp-dp-cpumem');
+      if (cpuMemEl) cpuMemEl.outerHTML = _snmpBuildCpuMem(cpuRes, memRes);
+
+      // Patch in interfaces
+      const ifWrap = document.getElementById('snmp-dp-ifwrap');
+      if (ifWrap) ifWrap.innerHTML = `
+        <div class="snmp-ds-title" style="margin-bottom:10px">INTERFACES <span style="font-size:9px;color:var(--text-dim)">(${ifRes?.count || 0} entries)</span></div>
+        <div id="snmp-dp-ifaces">${_snmpBuildIfTable(id, ifRes)}</div>`;
+    } catch(e) {
+      body.innerHTML = `<div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--danger)">// Error: ${e.message}</div>`;
+    }
+  }
+
+  function _snmpRenderDpBasic(body, dev) {
+    const sc = dev.status === 'ok' ? 'var(--success)' : dev.status === 'error' ? 'var(--danger)' : 'var(--warn,#f59e0b)';
+    const sl = dev.status === 'ok' ? 'REACHABLE' : dev.status === 'error' ? 'UNREACHABLE' : (dev.status || 'UNKNOWN').toUpperCase();
+    const monIfs = _snmpGetMonIfs(dev.id);
+    const monBadge = monIfs.size > 0 ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:1px">● ${monIfs.size} MONITORED</span>` : '';
+    body.innerHTML = `
+      <div style="margin-bottom:18px">
+        <div class="snmp-ds-title">SYSTEM INFO ${monBadge}</div>
+        <div class="snmp-stat-grid">
+          <div class="snmp-stat-box">
+            <div class="snmp-stat-label">HOST</div>
+            <div class="snmp-stat-val" style="font-size:13px">${dev.host}</div>
+          </div>
+          <div class="snmp-stat-box">
+            <div class="snmp-stat-label">STATUS</div>
+            <div class="snmp-stat-val" style="font-size:13px;color:${sc}">${sl}</div>
+          </div>
+          <div class="snmp-stat-box">
+            <div class="snmp-stat-label">UPTIME</div>
+            <div class="snmp-stat-val" style="font-size:12px">${dev.sysUpTime || '—'}</div>
+          </div>
+          <div class="snmp-stat-box">
+            <div class="snmp-stat-label">RESPONSE</div>
+            <div class="snmp-stat-val" style="font-size:13px;color:${(dev.response_ms||0)>500?'var(--warn,#f59e0b)':'var(--text-primary)'}">${dev.response_ms != null ? dev.response_ms+'ms' : '—'}</div>
+          </div>
+          ${dev.sysDescr ? `<div class="snmp-stat-box" style="grid-column:1/-1"><div class="snmp-stat-label">DESCRIPTION</div><div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);word-break:break-word;line-height:1.5">${dev.sysDescr}</div></div>` : ''}
+          ${dev.sysContact ? `<div class="snmp-stat-box"><div class="snmp-stat-label">CONTACT</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${dev.sysContact}</div></div>` : ''}
+          ${dev.sysLocation ? `<div class="snmp-stat-box"><div class="snmp-stat-label">LOCATION</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${dev.sysLocation}</div></div>` : ''}
+          ${dev.sysName ? `<div class="snmp-stat-box"><div class="snmp-stat-label">SYSNAME</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${dev.sysName}</div></div>` : ''}
+        </div>
+      </div>
+      <div id="snmp-dp-cpumem" style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// Fetching CPU / memory…</div>
+      <div id="snmp-dp-ifwrap" style="margin-top:18px;font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// Fetching interfaces…</div>
+    `;
+  }
+
+  function _snmpBuildCpuMem(cpuData, memData) {
+    let cpu1 = null, cpu5 = null;
+    if (cpuData?.results) {
+      for (const r of cpuData.results) {
+        if (r.label.startsWith('ciscoCpu1min')) cpu1 = r.value;
+        if (r.label.startsWith('ciscoCpu5min')) cpu5 = r.value;
+      }
+    }
+    const pools = {};
+    if (memData?.results) {
+      for (const r of memData.results) {
+        const m = r.label.match(/^(ciscoMem\w+)\.(\d+)$/);
+        if (!m) continue;
+        if (!pools[m[2]]) pools[m[2]] = {};
+        pools[m[2]][m[1]] = r.value;
+      }
+    }
+    const cpuColor = (v) => parseInt(v) > 80 ? 'var(--danger)' : parseInt(v) > 60 ? 'var(--warn,#f59e0b)' : 'var(--success)';
+    const cpuHtml = (cpu1 != null || cpu5 != null) ? `
+      <div style="margin-bottom:18px">
+        <div class="snmp-ds-title">CPU UTILIZATION</div>
+        <div class="snmp-stat-grid">
+          ${cpu1 != null ? `<div class="snmp-stat-box"><div class="snmp-stat-label">1-MIN AVG</div><div class="snmp-stat-val" style="color:${cpuColor(cpu1)}">${cpu1}%</div></div>` : ''}
+          ${cpu5 != null ? `<div class="snmp-stat-box"><div class="snmp-stat-label">5-MIN AVG</div><div class="snmp-stat-val" style="color:${cpuColor(cpu5)}">${cpu5}%</div></div>` : ''}
+        </div>
+      </div>` : '';
+    const poolKeys = Object.keys(pools);
+    const memHtml = poolKeys.length ? `
+      <div style="margin-bottom:18px">
+        <div class="snmp-ds-title">MEMORY POOLS</div>
+        <div class="snmp-stat-grid">
+          ${poolKeys.map(idx => {
+            const p = pools[idx];
+            const used = parseInt(p.ciscoMemUsed || 0), free = parseInt(p.ciscoMemFree || 0);
+            const total = used + free;
+            const pct = total > 0 ? Math.round(used / total * 100) : 0;
+            const mc = pct > 85 ? 'var(--danger)' : pct > 70 ? 'var(--warn,#f59e0b)' : 'var(--success)';
+            const fmt = n => n > 1073741824 ? (n/1073741824).toFixed(1)+'GB' : n > 1048576 ? (n/1048576).toFixed(1)+'MB' : n > 1024 ? Math.round(n/1024)+'KB' : n+'B';
+            return `<div class="snmp-stat-box">
+              <div class="snmp-stat-label">${p.ciscoMemName || 'POOL '+idx}</div>
+              <div class="snmp-stat-val" style="color:${mc}">${pct}%</div>
+              <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:3px">${fmt(used)} / ${fmt(total)}</div>
+              <div style="height:3px;background:var(--border);border-radius:2px;margin-top:6px"><div style="height:3px;border-radius:2px;width:${pct}%;background:${mc}"></div></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>` : '';
+    return (cpuHtml || memHtml) ? cpuHtml + memHtml : '<div id="snmp-dp-cpumem"></div>';
+  }
+
+  function _snmpGetMonIfs(devId) {
+    try { return new Set(JSON.parse(localStorage.getItem(`gladius-snmp-mon-${devId}`) || '[]')); }
+    catch { return new Set(); }
+  }
+  function _snmpSaveMonIfs(devId, set) {
+    localStorage.setItem(`gladius-snmp-mon-${devId}`, JSON.stringify([...set]));
+  }
+  function snmpToggleIfMon(devId, idx) {
+    const mon = _snmpGetMonIfs(devId);
+    if (mon.has(idx)) mon.delete(idx); else mon.add(idx);
+    _snmpSaveMonIfs(devId, mon);
+    const btn = document.getElementById(`snmp-if-btn-${idx}`);
+    if (btn) { btn.className = 'snmp-mon-btn' + (mon.has(idx) ? ' on' : ''); btn.textContent = mon.has(idx) ? 'MONITORED' : 'MONITOR'; }
+  }
+
+  function _snmpBuildIfTable(devId, ifData) {
+    if (!ifData?.results?.length) return '<div style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// No interface data (device may not support IF-MIB)</div>';
+    const ifaces = {};
+    for (const r of ifData.results) {
+      const m = r.label.match(/^(\w+)\.(\d+)$/);
+      if (!m) continue;
+      if (!ifaces[m[2]]) ifaces[m[2]] = {};
+      ifaces[m[2]][m[1]] = r.value;
+    }
+    const mon = _snmpGetMonIfs(devId);
+    const adm = v => v==='1'?'UP':v==='2'?'DOWN':v==='3'?'TEST':v||'—';
+    const oper = v => v==='1'?'UP':v==='2'?'DOWN':v==='3'?'TEST':v==='5'?'DORMANT':v||'—';
+    const operC = v => v==='1'?'var(--success)':v==='2'?'var(--danger)':'var(--warn,#f59e0b)';
+    const spd = v => { const n=parseInt(v); if(!n)return'—'; if(n>=1000000000)return(n/1000000000)+'G'; if(n>=1000000)return(n/1000000)+'M'; return n+''; };
+    const idxs = Object.keys(ifaces).sort((a,b)=>parseInt(a)-parseInt(b));
+    const rows = idxs.map(idx => {
+      const f = ifaces[idx];
+      const isOn = mon.has(idx);
+      const action = _snmpDpEdit
+        ? `<button id="snmp-if-btn-${idx}" class="snmp-mon-btn${isOn?' on':''}" onclick="snmpToggleIfMon('${devId}','${idx}')">${isOn?'MONITORED':'MONITOR'}</button>`
+        : isOn ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:1px">● MON</span>` : '';
+      const utils = _snmpCalcUtil(devId, idx, parseInt(f.ifSpeed) || 0);
+      return `<tr>
+        <td style="color:var(--text-primary);font-weight:500">${f.ifDescr||'If'+idx}</td>
+        <td style="color:${operC(f.ifOperStatus)};font-weight:600">${oper(f.ifOperStatus)}</td>
+        <td style="color:var(--text-dim)">${adm(f.ifAdminStatus)}</td>
+        <td style="color:var(--text-secondary)">${spd(f.ifSpeed)}</td>
+        <td id="snmp-util-${idx}" style="min-width:68px">${_snmpSparkline(utils, idx)}</td>
+        <td style="text-align:right">${action}</td>
+      </tr>`;
+    }).join('');
+    return `<table class="snmp-if-table">
+      <thead><tr>
+        <th>INTERFACE</th><th>OPER</th><th>ADMIN</th><th>SPEED</th>
+        <th style="min-width:68px">UTIL</th>
+        <th style="text-align:right">${_snmpDpEdit?'MONITORING':''}</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  // ── Counter store (localStorage) ──
+  function _snmpStoreCounters(devId, ifData) {
+    const key = `gladius-snmp-ctrs-${devId}`;
+    let store;
+    try { store = JSON.parse(localStorage.getItem(key) || '{}'); } catch { store = {}; }
+    const ts = Date.now();
+    // Collect both counter fields per interface index first
+    const snap = {};
+    for (const r of (ifData?.results || [])) {
+      const m = r.label.match(/^(ifInOctets|ifOutOctets)\.(\d+)$/);
+      if (!m) continue;
+      if (!snap[m[2]]) snap[m[2]] = {};
+      snap[m[2]][m[1]] = parseInt(r.value) || 0;
+    }
+    // Push snapshot into per-interface history
+    for (const [idx, ctr] of Object.entries(snap)) {
+      if (!('ifInOctets' in ctr) || !('ifOutOctets' in ctr)) continue; // need both
+      if (!store[idx]) store[idx] = [];
+      store[idx].push({ ts, ...ctr });
+      if (store[idx].length > 20) store[idx] = store[idx].slice(-20);
+    }
+    try { localStorage.setItem(key, JSON.stringify(store)); } catch {}
+  }
+
+  function _snmpCalcUtil(devId, ifIdx, ifSpeed) {
+    if (!ifSpeed) return [];
+    let store;
+    try { store = JSON.parse(localStorage.getItem(`gladius-snmp-ctrs-${devId}`) || '{}'); } catch { return []; }
+    const samples = store[ifIdx] || [];
+    if (samples.length < 2) return [];
+    const utils = [];
+    for (let i = 1; i < samples.length; i++) {
+      const prev = samples[i - 1], curr = samples[i];
+      const dt = (curr.ts - prev.ts) / 1000;
+      if (dt <= 0) continue;
+      const dIn  = Math.max(0, (curr.ifInOctets  || 0) - (prev.ifInOctets  || 0));
+      const dOut = Math.max(0, (curr.ifOutOctets || 0) - (prev.ifOutOctets || 0));
+      const bps  = Math.max(dIn, dOut) * 8 / dt;
+      utils.push(Math.min(100, Math.round(bps / ifSpeed * 100)));
+    }
+    return utils;
+  }
+
+  function _snmpSparkline(utils, ifIdx) {
+    const last = utils.length ? utils[utils.length - 1] : null;
+    const color = last === null ? 'var(--border)'
+                : last > 70   ? 'var(--danger)'
+                : last > 30   ? 'var(--warn,#f59e0b)'
+                :               'var(--success)';
+    // Always render a trough line so the cell has consistent height
+    const W = 64, H = 20, pad = 2;
+    if (!utils.length) {
+      return `<svg width="${W}" height="${H}" style="display:block;opacity:0.3"><line x1="0" y1="${H-pad}" x2="${W}" y2="${H-pad}" stroke="var(--border)" stroke-width="1"/></svg>`;
+    }
+    const hi = Math.max(...utils, 1);
+    const pts = utils.map((v, i) => {
+      const x = utils.length === 1 ? W / 2 : Math.round(i / (utils.length - 1) * (W - pad*2)) + pad;
+      const y = H - pad - Math.round(v / hi * (H - pad*2 - 2));
+      return `${x},${y}`;
+    }).join(' ');
+    const lx = pts.split(' ').pop().split(',')[0];
+    const ly = pts.split(' ').pop().split(',')[1];
+    const pctLabel = last != null ? `${last}%` : '';
+    return `<div style="display:flex;align-items:center;gap:5px">
+      <svg width="${W}" height="${H}" style="display:block;flex-shrink:0">
+        <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${lx}" cy="${ly}" r="2.5" fill="${color}"/>
+      </svg>
+      <span style="font-family:var(--font-mono);font-size:10px;color:${color};min-width:28px">${pctLabel}</span>
+    </div>`;
+  }
+
+  function _snmpUpdateSparklines(devId, ifData) {
+    // Build speed lookup from latest ifData
+    const speeds = {};
+    for (const r of (ifData?.results || [])) {
+      const m = r.label.match(/^ifSpeed\.(\d+)$/);
+      if (m) speeds[m[1]] = parseInt(r.value) || 0;
+    }
+    // Update each sparkline cell in-place
+    const stored = (() => { try { return JSON.parse(localStorage.getItem(`gladius-snmp-ctrs-${devId}`) || '{}'); } catch { return {}; } })();
+    for (const idx of Object.keys(stored)) {
+      const el = document.getElementById(`snmp-util-${idx}`);
+      if (!el) continue;
+      const utils = _snmpCalcUtil(devId, idx, speeds[idx] || 0);
+      el.innerHTML = _snmpSparkline(utils, idx);
     }
   }
 
@@ -5583,7 +5996,7 @@ ${cves.length ? `<!-- CVE TAB -->
     btn.disabled = true;
     btn.textContent = 'INGESTING…';
     prog.classList.add('visible');
-    fill.style.width = '10%';
+    fill.style.width = '5%';
 
     ingestLog('info', `Starting ingestion → collection: ${_selectedCollection}`);
     ingestLog('info', `Doc type: ${_selectedDocType} | File: ${_selectedFile.name}`);
@@ -5593,22 +6006,46 @@ ${cves.length ? `<!-- CVE TAB -->
     formData.append('collection', _selectedCollection);
     formData.append('doc_type', _selectedDocType);
 
-    fill.style.width = '30%';
-
     try {
       const resp = await fetch('/api/ingest', { method: 'POST', body: formData });
-      fill.style.width = '80%';
-      const data = await resp.json();
+      if (!resp.ok) {
+        // Non-2xx before stream started
+        let detail = `HTTP ${resp.status}`;
+        try { const j = await resp.json(); detail = j.detail || detail; } catch(_) {}
+        throw new Error(detail);
+      }
 
-      if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let   buf     = '';
 
-      fill.style.width = '100%';
-      ingestLog('ok',   `✓ Ingested ${data.chunks} chunks into '${data.collection}'`);
-      ingestLog('ok',   `✓ Embeddings stored — ${data.total_docs} total documents in collection`);
-      ingestLog('info', `Processing time: ${data.elapsed_ms}ms`);
-      setTimeout(() => { prog.classList.remove('visible'); fill.style.width = '0%'; }, 1500);
-      clearIngest();
-      loadCollectionStats();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          let ev;
+          try { ev = JSON.parse(line.slice(6)); } catch(_) { continue; }
+
+          if (ev.type === 'progress') {
+            fill.style.width = `${ev.progress}%`;
+            ingestLog('info', ev.message);
+          } else if (ev.type === 'done') {
+            fill.style.width = '100%';
+            ingestLog('ok', `✓ Ingested ${ev.chunks} chunks into '${ev.collection}'`);
+            ingestLog('ok', `✓ Embeddings stored — ${ev.total_docs} total documents in collection`);
+            ingestLog('info', `Processing time: ${ev.elapsed_ms}ms`);
+            setTimeout(() => { prog.classList.remove('visible'); fill.style.width = '0%'; }, 1500);
+            clearIngest();
+            loadCollectionStats();
+          } else if (ev.type === 'error') {
+            throw new Error(ev.message);
+          }
+        }
+      }
     } catch (err) {
       fill.style.width = '0%';
       prog.classList.remove('visible');
@@ -6057,6 +6494,20 @@ ${cves.length ? `<!-- CVE TAB -->
       <button class="btn btn-primary" style="flex:1" onclick="investigateInChat()">Investigate in Agent →</button>
       <button class="btn btn-ghost" onclick="closeDetail()">Close</button>
     </div>
+  </div>
+
+  <!-- SNMP DEVICE DETAIL PANEL -->
+  <div id="snmp-detail-overlay" onclick="snmpCloseDetail()"></div>
+  <div id="snmp-detail-panel">
+    <div class="detail-header">
+      <div id="snmp-dp-dot" style="width:10px;height:10px;border-radius:50%;background:var(--text-dim);box-shadow:0 0 6px var(--text-dim);flex-shrink:0"></div>
+      <div class="detail-title" id="snmp-dp-title">DEVICE</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+        <button id="snmp-dp-edit-btn" onclick="snmpDetailToggleEdit()" style="background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 10px;border-radius:4px;cursor:pointer">EDIT</button>
+        <button onclick="snmpCloseDetail()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;line-height:1;padding:0 2px" onmouseover="this.style.color='var(--danger)'" onmouseout="this.style.color='var(--text-dim)'">✕</button>
+      </div>
+    </div>
+    <div id="snmp-dp-body" style="overflow-y:auto;flex:1;padding:16px 20px"></div>
   </div>
 
 </body>
