@@ -4748,6 +4748,7 @@ ${cves.length ? `<!-- CVE TAB -->
   let _snmpDpEdit     = false;
   let _snmpDpCreds    = null;
   let _snmpDpTimer    = null;
+  let _snmpDpSpeeds   = {};   // ifIdx → ifSpeed (bps), populated from initial interface fetch
 
   function snmpOpenDetail(id) {
     _snmpDpDevId = id;
@@ -4755,6 +4756,7 @@ ${cves.length ? `<!-- CVE TAB -->
     _snmpDpIfData = null;
     _snmpDpEdit  = false;
     _snmpDpCreds = null;
+    _snmpDpSpeeds = {};
     _snmpStopIfTimer();
     const editBtn = document.getElementById('snmp-dp-edit-btn');
     if (editBtn) { editBtn.textContent = 'EDIT'; editBtn.style.borderColor = 'var(--border)'; editBtn.style.color = 'var(--text-dim)'; editBtn.style.background = 'none'; }
@@ -4767,7 +4769,7 @@ ${cves.length ? `<!-- CVE TAB -->
     _snmpStopIfTimer();
     document.getElementById('snmp-detail-overlay').classList.remove('active');
     document.getElementById('snmp-detail-panel').classList.remove('active');
-    _snmpDpDevId = null; _snmpDpDev = null; _snmpDpIfData = null; _snmpDpEdit = false; _snmpDpCreds = null;
+    _snmpDpDevId = null; _snmpDpDev = null; _snmpDpIfData = null; _snmpDpEdit = false; _snmpDpCreds = null; _snmpDpSpeeds = {};
   }
 
   function _snmpStopIfTimer() {
@@ -4779,15 +4781,15 @@ ${cves.length ? `<!-- CVE TAB -->
     _snmpDpTimer = setInterval(async () => {
       if (!_snmpDpDevId || !_snmpDpCreds) return;
       try {
+        // Only walk the 2 counter OIDs — fast even on large devices, no max_rows issue
         const r = await fetch('/api/snmp/poll', {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({..._snmpDpCreds, profile: 'interfaces'}),
+          body: JSON.stringify({..._snmpDpCreds, profile: 'if_counters'}),
         });
         if (!r.ok) return;
-        const ifData = await r.json();
-        _snmpDpIfData = ifData;
-        _snmpStoreCounters(_snmpDpDevId, ifData);
-        _snmpUpdateSparklines(_snmpDpDevId, ifData);
+        const ctrData = await r.json();
+        _snmpStoreCounters(_snmpDpDevId, ctrData);
+        _snmpUpdateSparklines(_snmpDpDevId);
       } catch {}
     }, 15000);
   }
@@ -4841,11 +4843,18 @@ ${cves.length ? `<!-- CVE TAB -->
         body: JSON.stringify({...creds, profile}),
       }).then(r => r.ok ? r.json() : null).catch(() => null);
 
-      const [cpuRes, memRes, ifRes] = await Promise.all([post('cisco_cpu'), post('cisco_memory'), post('interfaces')]);
+      const [cpuRes, memRes, ifRes, ctr0] = await Promise.all([post('cisco_cpu'), post('cisco_memory'), post('interfaces'), post('if_counters')]);
       _snmpDpIfData = ifRes;
 
-      // Store initial counter sample and start live polling
-      if (ifRes) _snmpStoreCounters(id, ifRes);
+      // Cache ifSpeed per interface index from the full table fetch
+      _snmpDpSpeeds = {};
+      for (const r of (ifRes?.results || [])) {
+        const m = r.label.match(/^ifSpeed\.(\d+)$/);
+        if (m) _snmpDpSpeeds[m[1]] = parseInt(r.value) || 0;
+      }
+
+      // Store first counter sample (from dedicated counter-only walk) and start live polling
+      if (ctr0) _snmpStoreCounters(id, ctr0);
       _snmpStartIfTimer();
 
       // Patch in CPU/mem
@@ -5076,19 +5085,13 @@ ${cves.length ? `<!-- CVE TAB -->
     </div>`;
   }
 
-  function _snmpUpdateSparklines(devId, ifData) {
-    // Build speed lookup from latest ifData
-    const speeds = {};
-    for (const r of (ifData?.results || [])) {
-      const m = r.label.match(/^ifSpeed\.(\d+)$/);
-      if (m) speeds[m[1]] = parseInt(r.value) || 0;
-    }
-    // Update each sparkline cell in-place
+  function _snmpUpdateSparklines(devId) {
+    // Update each sparkline cell in-place using cached speeds
     const stored = (() => { try { return JSON.parse(localStorage.getItem(`gladius-snmp-ctrs-${devId}`) || '{}'); } catch { return {}; } })();
     for (const idx of Object.keys(stored)) {
       const el = document.getElementById(`snmp-util-${idx}`);
       if (!el) continue;
-      const utils = _snmpCalcUtil(devId, idx, speeds[idx] || 0);
+      const utils = _snmpCalcUtil(devId, idx, _snmpDpSpeeds[idx] || 0);
       el.innerHTML = _snmpSparkline(utils, idx);
     }
   }

@@ -311,6 +311,7 @@ async def poll_device(dev_id: str):
 PROFILES = {
     "system":         {"mode": "get",  "oids": list(SYSTEM_OIDS.keys())},
     "interfaces":     {"mode": "walk", "oids": ["1.3.6.1.2.1.2.2"]},
+    "if_counters":    {"mode": "walk", "oids": ["1.3.6.1.2.1.2.2.1.10", "1.3.6.1.2.1.2.2.1.16"]},
     "ip_addresses":   {"mode": "walk", "oids": ["1.3.6.1.2.1.4.20"]},
     "arp":            {"mode": "walk", "oids": ["1.3.6.1.2.1.4.22"]},
     "bgp":            {"mode": "walk", "oids": ["1.3.6.1.2.1.15.3"]},
