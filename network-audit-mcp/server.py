@@ -5,6 +5,12 @@ Network Audit MCP Server
 
 import os
 import sys
+
+# Disable HuggingFace network calls — use local cache only.
+# This saves ~7-10 seconds per cold start by skipping remote validation.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 import time
 import logging
 import requests
@@ -1019,16 +1025,19 @@ async def _run_scapy(
 
     if mode == "ping":
         script = f"""
+import time as _time
 from scapy.all import IP, ICMP, sr1, conf
 conf.verb = 0
 results = []
 for i in range({count}):
+    _t0 = _time.monotonic()
     pkt = sr1(IP(dst="{target}")/ICMP(), timeout={timeout}, verbose=0)
+    _rtt = (_time.monotonic() - _t0) * 1000
     if pkt:
-        results.append(f"Reply from {{pkt.src}}: ttl={{pkt.ttl}} time={{pkt.time:.3f}}s")
+        results.append(f"Reply from {{pkt.src}}: ttl={{pkt.ttl}} time={{_rtt:.1f}} ms")
     else:
         results.append("Request timed out")
-print("\n".join(results))
+print("\\n".join(results))
 """
 
     elif mode == "traceroute":
@@ -1049,7 +1058,7 @@ for ttl in range(1, {count} + 1):
         results.append(f"  {{ttl:2d}}  {{pkt.src}}")
         break
 print(f"Traceroute to {target} (max {count} hops):")
-print("\n".join(results))
+print("\\n".join(results))
 """
 
     elif mode == "tcp_syn":
@@ -1118,7 +1127,7 @@ else:
     print(f"  {{'—'*38}}")
     for snd, rcv in ans:
         print(f"  {{rcv.psrc:<18}} {{rcv.hwsrc:<20}}")
-    print(f"\n{{len(ans)}} host(s) found")
+    print(f"\\n{{len(ans)}} host(s) found")
 """
 
     elif mode == "banner_grab":
@@ -1333,7 +1342,7 @@ if pkt is None:
 elif pkt.haslayer(DNS):
     dns = pkt[DNS]
     print(f"DNS response from {target}:53")
-    print(f"  RCODE: {dns.rcode} (" + ("NOERROR" if dns.rcode==0 else "ERROR") + ")")
+    print(f"  RCODE: {{dns.rcode}} ({{'NOERROR' if dns.rcode==0 else 'ERROR'}})")
     print(f"  Answers: {{dns.ancount}}")
     if dns.ancount > 0:
         an = dns.an
@@ -1449,7 +1458,7 @@ ans, unans = sr(frags, timeout={timeout}, verbose=0)
 if ans:
     for snd, rcv in ans:
         print(f"Reply from {{rcv.src}}: ttl={{rcv.ttl}}")
-    print(f"\nFragmented ICMP reassembled correctly — host processes IP fragments")
+    print(f"\\nFragmented ICMP reassembled correctly — host processes IP fragments")
 else:
     print(f"No reply to fragmented ICMP — host may be filtering fragments or is down")
 """
@@ -1525,7 +1534,7 @@ if icmp:
 else:
     results.append("ICMP — no echo reply")
 
-print("\n".join(results))
+print("\\n".join(results))
 """
 
     elif mode == "vlan_hop":

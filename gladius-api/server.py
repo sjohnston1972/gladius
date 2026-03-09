@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
 Gladius API Server
-- Tool list cached at startup (fast)
-- Fresh MCP connection per request (avoids anyio task scope errors)
+- Persistent MCP session (no subprocess spin-up per request)
+- Tool list cached at startup
 """
 
 import os
 import json
+
+# Disable HuggingFace network calls — use local cache only.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 import asyncio
 import logging
 import sys
@@ -162,18 +167,71 @@ Round to nearest integer (0-100).
 
 Always use your tools — never fabricate data. If a tool call fails, say so explicitly."""
 
-# Tool list cached at startup — avoids discovery overhead on every request
+# ── Persistent MCP Session Manager ──────────────────────────────────────────
+# Keeps a single long-lived MCP subprocess alive for the lifetime of the API.
+# All tool calls are serialised through an asyncio.Lock — MCP ClientSession is
+# not safe for concurrent calls. Auto-reconnects on session failure.
+
 cached_tools: list = []
 
-async def discover_tools() -> list:
-    """Open a temporary MCP session just to get the tool list."""
-    server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
-    try:
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                response = await session.list_tools()
-                tools = [
+class MCPManager:
+    """Persistent MCP session — one subprocess, reused across all requests."""
+
+    def __init__(self):
+        self._lock    = asyncio.Lock()
+        self._session = None
+        self._ctx     = None        # stdio_client context
+        self._sess_ctx = None       # ClientSession context
+        self._connected = False
+
+    async def connect(self) -> bool:
+        """Open the MCP subprocess and initialise the session."""
+        server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
+        try:
+            log.info("MCP: opening persistent session...")
+            self._ctx      = stdio_client(server_params)
+            read, write    = await self._ctx.__aenter__()
+            self._sess_ctx = ClientSession(read, write)
+            self._session  = await self._sess_ctx.__aenter__()
+            await self._session.initialize()
+            self._connected = True
+            log.info("MCP: persistent session ready")
+            return True
+        except Exception as e:
+            log.error(f"MCP connect failed: {e}", exc_info=True)
+            self._connected = False
+            return False
+
+    async def disconnect(self):
+        """Cleanly close session and subprocess."""
+        self._connected = False
+        try:
+            if self._sess_ctx:
+                await self._sess_ctx.__aexit__(None, None, None)
+        except Exception:
+            pass
+        try:
+            if self._ctx:
+                await self._ctx.__aexit__(None, None, None)
+        except Exception:
+            pass
+        self._session = self._ctx = self._sess_ctx = None
+
+    async def _reconnect(self) -> bool:
+        log.warning("MCP: reconnecting...")
+        await self.disconnect()
+        return await self.connect()
+
+    async def list_tools(self) -> list:
+        """Fetch tool list, reconnecting once on failure."""
+        for attempt in range(2):
+            if not self._connected:
+                if not await self._reconnect():
+                    return []
+            try:
+                async with self._lock:
+                    response = await self._session.list_tools()
+                return [
                     {
                         "name": t.name,
                         "description": t.description or "",
@@ -181,19 +239,43 @@ async def discover_tools() -> list:
                     }
                     for t in response.tools
                 ]
-                log.info(f"Tools cached: {[t['name'] for t in tools]}")
-                return tools
-    except Exception as e:
-        log.error(f"Tool discovery failed: {e}", exc_info=True)
+            except Exception as e:
+                log.warning(f"MCP list_tools attempt {attempt+1} failed: {e}")
+                self._connected = False
         return []
+
+    async def call_tool(self, name: str, arguments: dict):
+        """Call a tool, reconnecting once on failure."""
+        for attempt in range(2):
+            if not self._connected:
+                if not await self._reconnect():
+                    raise RuntimeError("MCP session unavailable")
+            try:
+                async with self._lock:
+                    return await self._session.call_tool(name, arguments)
+            except Exception as e:
+                log.warning(f"MCP call_tool {name} attempt {attempt+1} failed: {e}")
+                self._connected = False
+        raise RuntimeError(f"MCP tool {name} failed after reconnect")
+
+
+mcp_manager = MCPManager()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global cached_tools
-    cached_tools = await discover_tools()
-    if not cached_tools:
-        log.warning("No tools cached — Gladius will run without MCP tools")
+    # Connect persistent MCP session
+    if await mcp_manager.connect():
+        cached_tools = await mcp_manager.list_tools()
+        if cached_tools:
+            log.info(f"Tools cached: {[t['name'] for t in cached_tools]}")
+        else:
+            log.warning("No tools cached — Gladius will run without MCP tools")
+    else:
+        log.warning("MCP session failed at startup — running without tools")
     yield
+    await mcp_manager.disconnect()
 
 app = FastAPI(title="Gladius API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -216,37 +298,32 @@ class EmailRequest(BaseModel):
 @app.post("/api/email")
 async def email_report(request: EmailRequest):
     """Send a pre-built HTML audit report as an attachment — no Claude involved."""
-    server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
     try:
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                # Plain text body — report is the attachment
-                plain_body = (
-                    f"Gladius Security Audit Report\n"
-                    f"{'=' * 40}\n\n"
-                    f"{request.subject}\n\n"
-                    f"Please open the attached HTML file in your browser\n"
-                    f"for the full interactive report including remediation\n"
-                    f"commands and the pre-deployment checklist.\n\n"
-                    f"-- Gladius Network Security Platform"
-                )
-                args = {
-                    "subject":             request.subject,
-                    "body":                plain_body,
-                    "is_html":             False,
-                    "attachment_html":     request.html,
-                    "attachment_filename": request.filename or "gladius-audit-report.html",
-                }
-                if request.recipient:
-                    args["recipient"] = request.recipient
-                result = await session.call_tool("send_email", args)
-                text   = " ".join(
-                    c.text for c in (result.content or [])
-                    if hasattr(c, "text")
-                )
-                log.info(f"Email with attachment sent: {request.subject}")
-                return {"ok": True, "message": text}
+        plain_body = (
+            f"Gladius Security Audit Report\n"
+            f"{'=' * 40}\n\n"
+            f"{request.subject}\n\n"
+            f"Please open the attached HTML file in your browser\n"
+            f"for the full interactive report including remediation\n"
+            f"commands and the pre-deployment checklist.\n\n"
+            f"-- Gladius Network Security Platform"
+        )
+        args = {
+            "subject":             request.subject,
+            "body":                plain_body,
+            "is_html":             False,
+            "attachment_html":     request.html,
+            "attachment_filename": request.filename or "gladius-audit-report.html",
+        }
+        if request.recipient:
+            args["recipient"] = request.recipient
+        result = await mcp_manager.call_tool("send_email", args)
+        text   = " ".join(
+            c.text for c in (result.content or [])
+            if hasattr(c, "text")
+        )
+        log.info(f"Email with attachment sent: {request.subject}")
+        return {"ok": True, "message": text}
     except Exception as e:
         log.error(f"/api/email error: {e}", exc_info=True)
         return {"ok": False, "error": str(e)}
@@ -741,8 +818,8 @@ async def chat(request: ChatRequest):
 
 async def stream_response(messages: list) -> AsyncIterator[str]:
     """
-    Opens a fresh MCP connection per request.
-    Avoids anyio cancel-scope errors from sharing sessions across tasks.
+    Uses the persistent MCP session — no subprocess spin-up per request.
+    Tool calls are serialised through the MCPManager lock.
     """
     tools = cached_tools
 
@@ -752,118 +829,107 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
             yield chunk
         return
 
-    server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
-
     try:
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as mcp_session:
-                await mcp_session.initialize()
-                log.info("MCP session opened for request")
+        loop_messages = list(messages)
 
-                loop_messages = list(messages)
+        while True:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=8192,
+                system=SYSTEM_PROMPT,
+                messages=loop_messages,
+                tools=tools,
+            )
 
-                while True:
-                    response = client.messages.create(
-                        model=MODEL,
-                        max_tokens=8192,
-                        system=SYSTEM_PROMPT,
-                        messages=loop_messages,
-                        tools=tools,
-                    )
+            assistant_content = []
 
+            for block in response.content:
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                    for i, word in enumerate(block.text.split(" ")):
+                        chunk = word + (" " if i < len(block.text.split(" ")) - 1 else "")
+                        yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                elif block.type == "tool_use":
+                    tool_name    = block.name
+                    tool_input   = block.input
+                    tool_use_id  = block.id
+
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tool_use_id,
+                        "name": tool_name,
+                        "input": tool_input,
+                    })
+
+                    # Strip bulky fields before sending input to the browser
+                    _STRIP = {'findings', 'attachment_html', 'body', 'commands'}
+                    slim_input = {k: v for k, v in tool_input.items() if k not in _STRIP}
+                    if 'commands' in tool_input:
+                        slim_input['commands_count'] = len(tool_input['commands'])
+                    if 'findings' in tool_input:
+                        slim_input['findings_count'] = len(tool_input['findings'])
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name, 'input': slim_input})}\n\n"
+                    log.info(f"Tool call: {tool_name}({tool_input})")
+
+                    try:
+                        # Cache audit when save_audit_results fires (for templated emails)
+                        if tool_name == "save_audit_results":
+                            global _last_audit
+                            _last_audit = tool_input
+
+                        # Intercept send_email — signal browser to send templated HTML instead
+                        if tool_name == "send_email" and _last_audit:
+                            payload = json.dumps({
+                                "type":      "send_templated_email",
+                                "subject":   tool_input.get("subject", ""),
+                                "recipient": tool_input.get("recipient", ""),
+                            })
+                            yield f"data: {payload}\n\n"
+                            result_text    = "Templated HTML report email dispatched via browser"
+                            result_payload = {"type": "text", "text": result_text}
+                            is_error       = False
+                            log.info("send_email intercepted — signalling browser to send templated report")
+                        else:
+                            result      = await mcp_manager.call_tool(tool_name, tool_input)
+                            result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                            result_payload = {"type": "text", "text": result_text}
+                            is_error    = bool(result.isError)
+                            log.info(f"Tool {tool_name} succeeded, {len(result_text)} chars returned")
+                    except Exception as e:
+                        log.error(f"Tool {tool_name} failed: {type(e).__name__}: {e}", exc_info=True)
+                        result_payload = {"type": "text", "text": f"Tool error: {type(e).__name__}: {e}"}
+                        is_error    = True
+
+                    yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
+
+                    if tool_name == "save_audit_results" and not is_error:
+                        audit_data = dict(tool_input)
+                        if not audit_data.get("timestamp"):
+                            audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+                        audit_payload = json.dumps({"type": "audit_saved", "audit": audit_data})
+                        yield f"data: {audit_payload}\n\n"
+                        log.info("audit_saved event streamed to browser")
+                        _pending_audit = None
+
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    loop_messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": [result_payload],
+                            "is_error": is_error,
+                        }]
+                    })
                     assistant_content = []
 
-                    for block in response.content:
-                        if block.type == "text":
-                            assistant_content.append({"type": "text", "text": block.text})
-                            for i, word in enumerate(block.text.split(" ")):
-                                chunk = word + (" " if i < len(block.text.split(" ")) - 1 else "")
-                                yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
-                                await asyncio.sleep(0.01)
-
-                        elif block.type == "tool_use":
-                            tool_name    = block.name
-                            tool_input   = block.input
-                            tool_use_id  = block.id
-
-                            assistant_content.append({
-                                "type": "tool_use",
-                                "id": tool_use_id,
-                                "name": tool_name,
-                                "input": tool_input,
-                            })
-
-                            # Strip bulky fields before sending input to the browser
-                            _STRIP = {'findings', 'attachment_html', 'body', 'commands'}
-                            slim_input = {k: v for k, v in tool_input.items() if k not in _STRIP}
-                            if 'commands' in tool_input:
-                                slim_input['commands_count'] = len(tool_input['commands'])
-                            if 'findings' in tool_input:
-                                slim_input['findings_count'] = len(tool_input['findings'])
-                            yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name, 'input': slim_input})}\n\n"
-                            log.info(f"Tool call: {tool_name}({tool_input})")
-
-                            try:
-                                # Cache audit when save_audit_results fires (for templated emails)
-                                if tool_name == "save_audit_results":
-                                    global _last_audit
-                                    _last_audit = tool_input
-
-                                # Intercept send_email — signal browser to send templated HTML instead
-                                if tool_name == "send_email" and _last_audit:
-                                    payload = json.dumps({
-                                        "type":      "send_templated_email",
-                                        "subject":   tool_input.get("subject", ""),
-                                        "recipient": tool_input.get("recipient", ""),
-                                    })
-                                    yield f"data: {payload}\n\n"
-                                    result_text    = "Templated HTML report email dispatched via browser"
-                                    result_payload = {"type": "text", "text": result_text}
-                                    is_error       = False
-                                    log.info("send_email intercepted — signalling browser to send templated report")
-                                else:
-                                    result      = await mcp_session.call_tool(tool_name, tool_input)
-                                    result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
-                                    result_payload = {"type": "text", "text": result_text}
-                                    is_error    = bool(result.isError)
-                                    log.info(f"Tool {tool_name} succeeded, {len(result_text)} chars returned")
-                            except Exception as e:
-                                log.error(f"Tool {tool_name} failed: {type(e).__name__}: {e}", exc_info=True)
-                                result_payload = {"type": "text", "text": f"Tool error: {type(e).__name__}: {e}"}
-                                is_error    = True
-
-                            yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
-
-                            # After save_audit_results, emit audit_saved directly from tool_input.
-                            # Using tool_input avoids a race condition where _pending_audit (set via
-                            # the MCP tool's HTTP POST back to /api/audit/save) may not yet be
-                            # processed by the event loop when this check runs.
-                            if tool_name == "save_audit_results" and not is_error:
-                                audit_data = dict(tool_input)
-                                if not audit_data.get("timestamp"):
-                                    audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
-                                audit_payload = json.dumps({"type": "audit_saved", "audit": audit_data})
-                                yield f"data: {audit_payload}\n\n"
-                                log.info("audit_saved event streamed to browser")
-                                _pending_audit = None
-
-                            loop_messages.append({"role": "assistant", "content": assistant_content})
-                            loop_messages.append({
-                                "role": "user",
-                                "content": [{
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_use_id,
-                                    "content": [result_payload],
-                                    "is_error": is_error,
-                                }]
-                            })
-                            assistant_content = []
-
-                    if response.stop_reason != "tool_use":
-                        global _last_claude_success
-                        _last_claude_success = time.monotonic()
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                        break
+            if response.stop_reason != "tool_use":
+                global _last_claude_success
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                break
 
     except Exception as e:
         log.error(f"Stream error: {type(e).__name__}: {e}", exc_info=True)
@@ -956,101 +1022,130 @@ async def ingest_document(
     collection: str  = Form("network_security_guidelines"),
     doc_type: str    = Form("auto"),
 ):
-    """Ingest a document into a named Chroma collection."""
-    t0 = time.monotonic()
+    """Ingest a document — streams SSE progress events to keep connection alive."""
+    file_bytes  = await file.read()
+    filename    = file.filename or "doc"
 
-    if collection not in COLLECTIONS:
-        raise HTTPException(status_code=400, detail=f"Unknown collection: {collection}. Must be one of {COLLECTIONS}")
+    async def _stream():
+        import asyncio, concurrent.futures
+        t0 = time.monotonic()
 
-    file_bytes = await file.read()
-    if len(file_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    if len(file_bytes) > 100 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large (max 100MB)")
+        def _ev(type_, **kw):
+            return f"data: {json.dumps({'type': type_, **kw})}\n\n"
 
-    # Extract text
-    try:
-        text = _extract_text(file_bytes, file.filename or "doc", doc_type)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Text extraction failed: {e}")
+        if collection not in COLLECTIONS:
+            yield _ev("error", message=f"Unknown collection: {collection}")
+            return
+        if len(file_bytes) == 0:
+            yield _ev("error", message="Uploaded file is empty")
+            return
+        if len(file_bytes) > 100 * 1024 * 1024:
+            yield _ev("error", message="File too large (max 100MB)")
+            return
 
-    if not text.strip():
-        raise HTTPException(status_code=422, detail="No text could be extracted from the document")
+        yield _ev("progress", progress=10, message=f"Extracting text from {filename}…")
 
-    # Chunk
-    chunks = _chunk_text(text)
-    if not chunks:
-        raise HTTPException(status_code=422, detail="Document produced no usable text chunks")
+        try:
+            text = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: _extract_text(file_bytes, filename, doc_type)
+            )
+        except Exception as e:
+            yield _ev("error", message=f"Text extraction failed: {e}")
+            return
 
-    # Get/create collection in Chroma
-    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
-    try:
-        col_r = http_requests.post(
-            f"{base}/collections",
-            json={"name": collection, "get_or_create": True},
-            timeout=10
+        if not text.strip():
+            yield _ev("error", message="No text could be extracted from the document")
+            return
+
+        chunks = _chunk_text(text)
+        if not chunks:
+            yield _ev("error", message="Document produced no usable text chunks")
+            return
+
+        yield _ev("progress", progress=25, message=f"Chunked into {len(chunks)} segments — connecting to Chroma…")
+
+        base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+        try:
+            col_r = http_requests.post(
+                f"{base}/collections",
+                json={"name": collection, "get_or_create": True},
+                timeout=10,
+            )
+            col_r.raise_for_status()
+            col_id = col_r.json()["id"]
+        except Exception as e:
+            yield _ev("error", message=f"Chroma unavailable: {e}")
+            return
+
+        yield _ev("progress", progress=35, message=f"Generating embeddings for {len(chunks)} chunks — this may take a while…")
+
+        file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
+        ids       = [f"{file_hash}_{i}" for i in range(len(chunks))]
+        metadatas = [
+            {"source": filename, "doc_type": doc_type, "collection": collection, "chunk": i}
+            for i in range(len(chunks))
+        ]
+
+        try:
+            loop = asyncio.get_event_loop()
+
+            # Emit heartbeat ticks while encoding runs in a thread
+            encode_future = loop.run_in_executor(
+                None,
+                lambda: get_embed_model().encode(chunks, batch_size=64, show_progress_bar=False).tolist(),
+            )
+            progress = 35
+            while not encode_future.done():
+                await asyncio.sleep(5)
+                progress = min(progress + 5, 75)
+                yield _ev("progress", progress=progress, message=f"Embedding… ({progress}%)")
+            embeddings = await encode_future
+        except Exception as e:
+            yield _ev("error", message=f"Embedding generation failed: {e}")
+            return
+
+        yield _ev("progress", progress=80, message="Upserting into ChromaDB…")
+
+        try:
+            upsert_r = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: http_requests.post(
+                    f"{base}/collections/{col_id}/upsert",
+                    json={"ids": ids, "documents": chunks, "embeddings": embeddings, "metadatas": metadatas},
+                    timeout=120,
+                ),
+            )
+            upsert_r.raise_for_status()
+        except Exception as e:
+            yield _ev("error", message=f"Chroma upsert failed: {e}")
+            return
+
+        yield _ev("progress", progress=95, message="Getting collection stats…")
+
+        try:
+            count_r = http_requests.get(f"{base}/collections/{col_id}/count", timeout=5)
+            total_docs = count_r.json() if count_r.status_code == 200 else len(chunks)
+        except Exception:
+            total_docs = len(chunks)
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        log.info(f"Ingest: {filename} → {collection} | {len(chunks)} chunks | {elapsed_ms}ms")
+
+        yield _ev(
+            "done",
+            ok=True,
+            collection=collection,
+            file=filename,
+            chunks=len(chunks),
+            total_docs=total_docs,
+            elapsed_ms=elapsed_ms,
         )
-        col_r.raise_for_status()
-        col_id = col_r.json()["id"]
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Chroma unavailable: {e}")
 
-    # Generate IDs, embeddings, and metadata
-    file_hash = hashlib.md5(file_bytes).hexdigest()[:8]
-    ids       = [f"{file_hash}_{i}" for i in range(len(chunks))]
-    metadatas = [
-        {
-            "source":     file.filename or "upload",
-            "doc_type":   doc_type,
-            "collection": collection,
-            "chunk":      i,
-        }
-        for i in range(len(chunks))
-    ]
-
-    try:
-        model = get_embed_model()
-        embeddings = model.encode(chunks).tolist()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
-
-    # Upsert into Chroma with explicit embeddings
-    try:
-        upsert_r = http_requests.post(
-            f"{base}/collections/{col_id}/upsert",
-            json={
-                "ids":        ids,
-                "documents":  chunks,
-                "embeddings": embeddings,
-                "metadatas":  metadatas,
-            },
-            timeout=60,
-        )
-        upsert_r.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Chroma upsert failed: {e}")
-
-    # Get total doc count for this collection
-    try:
-        count_r = http_requests.get(
-            f"{base}/collections/{col_id}/count",
-            timeout=5
-        )
-        total_docs = count_r.json() if count_r.status_code == 200 else len(chunks)
-    except Exception:
-        total_docs = len(chunks)
-
-    elapsed_ms = int((time.monotonic() - t0) * 1000)
-    log.info(f"Ingest: {file.filename} → {collection} | {len(chunks)} chunks | {elapsed_ms}ms")
-
-    return {
-        "ok":         True,
-        "collection": collection,
-        "file":       file.filename,
-        "chunks":     len(chunks),
-        "total_docs": total_docs,
-        "elapsed_ms": elapsed_ms,
-    }
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/ingest/collections/{collection_id}/docs")
@@ -1153,66 +1248,62 @@ async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
     if not tools:
         return "No tools available — cannot investigate.", None
 
-    server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
     text_parts: list[str] = []
     audit: dict | None = None
 
     try:
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as mcp_session:
-                await mcp_session.initialize()
-                loop_messages = list(messages)
+        loop_messages = list(messages)
 
-                while True:
-                    response = client.messages.create(
-                        model=MODEL,
-                        max_tokens=8192,
-                        system=SYSTEM_PROMPT,
-                        messages=loop_messages,
-                        tools=tools,
-                    )
+        while True:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=8192,
+                system=SYSTEM_PROMPT,
+                messages=loop_messages,
+                tools=tools,
+            )
 
+            assistant_content = []
+
+            for block in response.content:
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                    text_parts.append(block.text)
+
+                elif block.type == "tool_use":
+                    tool_name   = block.name
+                    tool_input  = block.input
+                    tool_use_id = block.id
+                    assistant_content.append({
+                        "type": "tool_use", "id": tool_use_id,
+                        "name": tool_name, "input": tool_input,
+                    })
+                    log.info("Alert investigation tool: %s", tool_name)
+
+                    try:
+                        result      = await mcp_manager.call_tool(tool_name, tool_input)
+                        result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                        is_error    = bool(result.isError)
+                        if tool_name == "save_audit_results" and not is_error:
+                            audit = dict(tool_input)
+                    except Exception as e:
+                        result_text = f"Tool error: {e}"
+                        is_error = True
+
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    loop_messages.append({
+                        "role": "user",
+                        "content": [{
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": [{"type": "text", "text": result_text}],
+                            "is_error": is_error,
+                        }]
+                    })
                     assistant_content = []
 
-                    for block in response.content:
-                        if block.type == "text":
-                            assistant_content.append({"type": "text", "text": block.text})
-                            text_parts.append(block.text)
-
-                        elif block.type == "tool_use":
-                            tool_name   = block.name
-                            tool_input  = block.input
-                            tool_use_id = block.id
-                            assistant_content.append({
-                                "type": "tool_use", "id": tool_use_id,
-                                "name": tool_name, "input": tool_input,
-                            })
-                            log.info("Alert investigation tool: %s", tool_name)
-
-                            try:
-                                result      = await mcp_session.call_tool(tool_name, tool_input)
-                                result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
-                                is_error    = bool(result.isError)
-                                if tool_name == "save_audit_results" and not is_error:
-                                    audit = dict(tool_input)
-                            except Exception as e:
-                                result_text = f"Tool error: {e}"
-                                is_error = True
-
-                            loop_messages.append({"role": "assistant", "content": assistant_content})
-                            loop_messages.append({
-                                "role": "user",
-                                "content": [{
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_use_id,
-                                    "content": [{"type": "text", "text": result_text}],
-                                    "is_error": is_error,
-                                }]
-                            })
-                            assistant_content = []
-
-                    if response.stop_reason != "tool_use":
-                        break
+            if response.stop_reason != "tool_use":
+                break
 
     except Exception as e:
         log.error("Alert investigation error: %s", e, exc_info=True)
