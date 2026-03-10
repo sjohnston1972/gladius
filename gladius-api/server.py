@@ -137,14 +137,37 @@ When running nmap scans:
 - Flag high-risk services (telnet, FTP, unauthenticated management ports, etc.) and note remediation
 - Summarise the scan and stop. Do not ask follow-up questions.
 
-When auditing devices:
-1. Connect to the device using connect_to_device
-2. Run relevant show commands using run_show_command
-3. Cross-reference findings with the knowledge base using query_knowledge_base
-4. Check for CVEs using query_nvd with cisco_only=True and the detected IOS version
-5. Present findings clearly organised by severity: HIGH, MEDIUM, LOW, PASS
-6. Call save_audit_results with ALL findings and calculated compliance scores — ALWAYS do this at the end of every audit, without being asked
-7. Offer to push remediations or email a report
+When auditing devices — EFFICIENCY RULES (strictly enforced):
+
+## Phase 1 — Single bulk data collection (ONE Claude loop, max 6 tool calls)
+1. connect_to_device
+2. run_show_command: "show running-config" — this is your PRIMARY data source. Derive ALL hardening findings from this one output. Do NOT run individual "show run | section X" commands.
+3. run_show_command: "show version" — get IOS version and platform for CVE/PSIRT queries
+4. run_show_command: "show inventory" — get hardware PIDs for EOX query
+5. run_show_command: "show ip interface brief" — interface state overview
+6. run_show_command: "show logging" — logging config (only if not already in running-config)
+
+## Phase 2 — External intelligence (ONE Claude loop, max 4 tool calls, run in parallel where possible)
+7. query_knowledge_base: ONE query covering the full benchmark scope (e.g. "CIS IOS XE hardening NIST 800-53")
+8. query_nvd: ONE call with the detected IOS version and cisco_only=True
+9. query_psirt: ONE call with the detected platform (e.g. "ios-xe")
+10. query_eox: ONE call with the hardware PIDs from show inventory
+
+## Phase 3 — Synthesise and save (ONE Claude loop)
+11. Analyse ALL collected data in memory. Do NOT call any show commands again.
+12. Build the complete findings list from the running-config output + CVE/PSIRT/KB results
+13. Call save_audit_results ONCE with all findings and scores
+14. Offer to push remediations or email a report
+
+## STRICT RULES — violations waste time and money:
+- NEVER repeat a tool call with the same arguments — if you already have the data, use it
+- NEVER call "show run | section X" — you already have the full running-config
+- NEVER call query_knowledge_base more than once per audit
+- NEVER call query_nvd more than once per audit
+- NEVER call query_psirt more than once per audit
+- NEVER call show version or show inventory more than once
+- Maximum 3 agentic loops per full device audit — if you need more, something is wrong
+- All findings must be derived from data already collected — no extra tool calls for clarification
 
 When building findings for save_audit_results, every finding object MUST use these exact field names:
 - title:    string — finding name; use the CVE ID for CVE findings (e.g. "CVE-2024-20399")
