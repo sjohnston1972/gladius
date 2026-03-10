@@ -308,8 +308,7 @@ async def _background_mcp_init():
         log.warning("MCP: no tools returned — running without MCP tools")
         return
 
-    # Pre-warm: run a trivial KB query so the embedding model is already loaded
-    # into memory before the first real user message arrives.
+    # Pre-warm: run a trivial KB query so the MCP embedding model is already loaded.
     try:
         log.info("MCP: pre-warming embedding model via query_knowledge_base...")
         t1 = asyncio.get_event_loop().time()
@@ -317,6 +316,18 @@ async def _background_mcp_init():
         log.info(f"MCP: pre-warm complete in {asyncio.get_event_loop().time()-t1:.1f}s — session fully hot")
     except Exception as e:
         log.warning(f"MCP: pre-warm ping failed (non-fatal): {e}")
+
+    # Pre-warm the design agent embed model (runs in gladius-api process, separate from MCP).
+    # Also cache the design-guidelines Chroma collection ID so design queries skip the lookup.
+    try:
+        log.info("Design: pre-warming embed model + caching design collection ID...")
+        t2 = asyncio.get_event_loop().time()
+        await asyncio.to_thread(get_embed_model)
+        elapsed = asyncio.get_event_loop().time() - t2
+        log.info(f"Design: embed model ready in {elapsed:.1f}s")
+        await _cache_design_collection_id()
+    except Exception as e:
+        log.warning(f"Design: pre-warm failed (non-fatal): {e}")
 
 
 @asynccontextmanager
@@ -1435,6 +1446,29 @@ async def snmp_alert(alert: SnmpAlertRequest):
 
 # ── DESIGN AGENT ──────────────────────────────────────────────────────────────
 
+# Cached Chroma collection ID for design-guidelines — populated at startup.
+_design_col_id: str | None = None
+
+async def _cache_design_collection_id():
+    """Fetch and cache the design-guidelines Chroma collection ID once at startup."""
+    global _design_col_id
+    try:
+        base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+        r = await asyncio.to_thread(
+            http_requests.get, f"{base}/collections", timeout=5
+        )
+        if r.status_code == 200:
+            cols = r.json() if isinstance(r.json(), list) else []
+            col = next((c for c in cols if c["name"] == "design-guidelines"), None)
+            if col:
+                _design_col_id = col["id"]
+                log.info(f"Design: collection ID cached ({_design_col_id[:8]}...)")
+            else:
+                log.warning("Design: design-guidelines collection not found in Chroma")
+    except Exception as e:
+        log.warning(f"Design: collection ID cache failed: {e}")
+
+
 DESIGN_SYSTEM_PROMPT = """You are the Gladius Design Agent — a specialist in enterprise network design, Cisco Validated Designs (CVDs), and infrastructure architecture best practices.
 
 Your knowledge base contains curated network design documentation including Cisco Validated Design guides, topology blueprints, IP addressing schemes, routing design patterns, and high-availability frameworks.
@@ -1484,42 +1518,45 @@ async def design_chat(request: ChatRequest):
 
 async def stream_design_response(messages: list) -> AsyncIterator[str]:
     """
-    Design agent stream — uses Claude with the design system prompt.
-    Queries the design-guidelines Chroma collection for RAG context
-    before passing to Claude.
+    Design agent stream — RAG lookup runs in a thread (non-blocking), then
+    streams Claude tokens in real-time as they arrive (no buffering).
     """
+    t_req = time.monotonic()
     try:
-        # ── RAG: pull relevant context from design-guidelines collection ──────
+        # ── RAG: pull context from design-guidelines collection ───────────────
+        # Runs entirely in a thread pool so the event loop is never blocked.
         rag_context = ""
         last_user_msg = next(
             (m["content"] for m in reversed(messages) if m["role"] == "user"), ""
         )
-        if last_user_msg:
+        log.info(f"Design: request received, col_id={'set' if _design_col_id else 'MISSING'}")
+
+        if last_user_msg and _design_col_id:
             try:
-                base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
-                # Get collection id
-                list_r = http_requests.get(f"{base}/collections", timeout=5)
-                if list_r.status_code == 200:
-                    cols = list_r.json() if isinstance(list_r.json(), list) else []
-                    design_col = next((c for c in cols if c["name"] == "design-guidelines"), None)
-                    if design_col:
-                        col_id = design_col["id"]
-                        query_embedding = get_embed_model().encode(last_user_msg).tolist()
-                        query_r = http_requests.post(
-                            f"{base}/collections/{col_id}/query",
-                            json={
-                                "query_embeddings": [query_embedding],
-                                "n_results": 5,
-                                "include": ["documents", "metadatas"],
-                            },
-                            timeout=10,
-                        )
-                        if query_r.status_code == 200:
-                            qdata = query_r.json()
-                            docs  = qdata.get("documents", [[]])[0]
-                            if docs:
-                                rag_context = "\n\n---\nRelevant design guidelines from knowledge base:\n" + "\n---\n".join(docs[:5])
-                                log.info(f"Design RAG: {len(docs)} chunks retrieved for query")
+                col_id_snapshot = _design_col_id  # avoid race with re-cache
+
+                def _rag_lookup():
+                    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+                    emb = get_embed_model().encode(last_user_msg).tolist()
+                    r = http_requests.post(
+                        f"{base}/collections/{col_id_snapshot}/query",
+                        json={
+                            "query_embeddings": [emb],
+                            "n_results": 5,
+                            "include": ["documents", "metadatas"],
+                        },
+                        timeout=10,
+                    )
+                    if r.status_code == 200:
+                        docs = r.json().get("documents", [[]])[0]
+                        if docs:
+                            return "\n\n---\nRelevant design guidelines from knowledge base:\n" + "\n---\n".join(docs[:5])
+                    return ""
+
+                t_rag = time.monotonic()
+                log.info(f"Design RAG: starting (t+{(t_rag-t_req)*1000:.0f}ms from request)")
+                rag_context = await asyncio.to_thread(_rag_lookup)
+                log.info(f"Design RAG: done in {(time.monotonic()-t_rag)*1000:.0f}ms, context={'yes' if rag_context else 'none'}")
             except Exception as e:
                 log.warning(f"Design RAG lookup failed (non-fatal): {e}")
 
@@ -1533,19 +1570,29 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
                     "content": last["content"] + rag_context,
                 }
 
-        response = await client.messages.create(
-            model=MODEL,
-            max_tokens=4096,
-            system=DESIGN_SYSTEM_PROMPT,
-            messages=augmented_messages,
-        )
+        # ── Stream Claude tokens in real-time ─────────────────────────────────
+        # max_tokens=2048: keeps responses focused; prevents stream timeouts on
+        # very long generations (RemoteProtocolError on 4096-token responses).
+        t_stream = time.monotonic()
+        log.info(f"Design: starting Claude stream (t+{(t_stream-t_req)*1000:.0f}ms from request)")
+        first_token = True
+        try:
+            async with client.messages.stream(
+                model=MODEL,
+                max_tokens=2048,
+                system=DESIGN_SYSTEM_PROMPT,
+                messages=augmented_messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    if first_token:
+                        log.info(f"Design: first token at t+{(time.monotonic()-t_req)*1000:.0f}ms from request")
+                        first_token = False
+                    yield f"data: {json.dumps({'type': 'text', 'content': text})}\n\n"
+        except Exception as stream_err:
+            # Log but emit done — partial response already sent to browser is still useful
+            log.warning(f"Design stream interrupted ({type(stream_err).__name__}): {stream_err}")
 
-        for block in response.content:
-            if block.type == "text":
-                for word in block.text.split(" "):
-                    yield f"data: {json.dumps({'type': 'text', 'content': word + ' '})}\n\n"
-                    await asyncio.sleep(0.005)
-
+        log.info(f"Design stream: finished in {(time.monotonic()-t_stream)*1000:.0f}ms total")
         global _last_claude_success
         _last_claude_success = time.monotonic()
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
