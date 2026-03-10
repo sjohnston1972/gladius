@@ -139,39 +139,42 @@ When running nmap scans:
 
 When auditing devices — EFFICIENCY RULES (strictly enforced):
 
-## Phase 1 — Single bulk data collection (ONE Claude loop, max 6 tool calls)
+## Phase 1 — Single bulk data collection (ONE Claude loop, ALL 5 tools in ONE response)
+CRITICAL: Your FIRST tool_use response MUST include ALL of the following tool calls together — do NOT call connect_to_device alone and wait. Return all 5 in a single response:
 1. connect_to_device
 2. run_show_command: "show running-config" — this is your PRIMARY data source. Derive ALL hardening findings from this one output. Do NOT run individual "show run | section X" commands.
 3. run_show_command: "show version" — get IOS version and platform for CVE/PSIRT queries
 4. run_show_command: "show inventory" — get hardware PIDs for EOX query
 5. run_show_command: "show ip interface brief" — interface state overview
-6. run_show_command: "show logging" — logging config (only if not already in running-config)
 
-## Phase 2 — External intelligence (ONE Claude loop, max 4 tool calls, run in parallel where possible)
-7. query_knowledge_base: ONE query covering the full benchmark scope (e.g. "CIS IOS XE hardening NIST 800-53")
-8. query_nvd: ONE call with the detected IOS version and cisco_only=True
-9. query_psirt: ONE call with the detected platform (e.g. "ios-xe")
-10. query_eox: ONE call with the hardware PIDs from show inventory
+## Phase 2 — External intelligence (ONE Claude loop, ALL 4 tools in ONE response)
+CRITICAL: Return ALL of the following in a single tool_use response — do NOT call them one at a time:
+6. query_knowledge_base: ONE query covering the full benchmark scope (e.g. "CIS IOS XE hardening NIST 800-53")
+7. query_nvd: ONE call with the detected IOS version and cisco_only=True
+8. query_psirt: ONE call with search_term only (e.g. "ios-xe") — NO severity filter, returns all severities at once
+9. query_eox: ONE call with the hardware PIDs from show inventory
 
 ## Phase 3 — Synthesise and save (ONE Claude loop)
-11. Analyse ALL collected data in memory. Do NOT call any show commands again.
-12. Build the complete findings list from the running-config output + CVE/PSIRT/KB results
-13. Call save_audit_results ONCE with all findings and scores
-14. Offer to push remediations or email a report
+10. Analyse ALL collected data in memory. Do NOT call any show commands again.
+11. Build findings list: CRITICAL, HIGH, MEDIUM, LOW severity only. Do NOT include PASS findings — they waste tokens and slow the audit.
+12. Call save_audit_results ONCE with all actionable findings and scores
+13. After save_audit_results succeeds, respond with ONE sentence: "Audit complete — N findings saved to the dashboard." followed by one line offering to push remediations or email the report. DO NOT re-list findings. DO NOT generate a report summary. DO NOT reproduce findings as text. The dashboard already has all findings — do not duplicate them.
 
 ## STRICT RULES — violations waste time and money:
+- NEVER respond with a single tool call when the phase requires multiple — batch all phase tools into one response
 - NEVER repeat a tool call with the same arguments — if you already have the data, use it
 - NEVER call "show run | section X" — you already have the full running-config
 - NEVER call query_knowledge_base more than once per audit
 - NEVER call query_nvd more than once per audit
-- NEVER call query_psirt more than once per audit
+- NEVER call query_psirt more than once per audit — one call, no severity filter
 - NEVER call show version or show inventory more than once
+- NEVER include PASS findings in save_audit_results — actionable findings only
 - Maximum 3 agentic loops per full device audit — if you need more, something is wrong
 - All findings must be derived from data already collected — no extra tool calls for clarification
 
 When building findings for save_audit_results, every finding object MUST use these exact field names:
 - title:    string — finding name; use the CVE ID for CVE findings (e.g. "CVE-2024-20399")
-- severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "PASS"
+- severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" — never include PASS findings
 - type:     "hardening" | "cve"
 - category: string — control group e.g. "Access Security", "Network Management", "Logging & Monitoring"
 - impact:   string — what this misconfiguration or vulnerability allows an attacker to do
@@ -183,10 +186,10 @@ When building findings for save_audit_results, every finding object MUST use the
 All nine fields must be present in every finding. Use empty string "" for any field that is not applicable rather than omitting the field.
 
 Compliance score calculation (for save_audit_results):
-- overall: percentage of checks that are PASS or LOW (not HIGH or MEDIUM), excluding CVE findings
-- nist: score based on NIST 800-53 control coverage from hardening findings only
-- cis: score based on CIS Cisco IOS XE benchmark pass rate from hardening findings only
-Round to nearest integer (0-100).
+- overall: estimate percentage of total checks passing. Count total controls checked, subtract HIGH+CRITICAL+MEDIUM failures, divide by total. Exclude CVE findings from this calculation.
+- nist: score based on NIST 800-53 control coverage — estimate percentage of applicable controls that pass
+- cis: score based on CIS Cisco IOS XE benchmark — estimate percentage of applicable benchmarks that pass
+Round to nearest integer (0-100). Use your judgement — these are audit estimates, not exact counts.
 
 Always use your tools — never fabricate data. If a tool call fails, say so explicitly."""
 
@@ -327,7 +330,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Gladius API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
 class Message(BaseModel):
     role: str
@@ -878,11 +881,14 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
 
     try:
         loop_messages = list(messages)
+        loop_count = 0
+        MAX_LOOPS = 8
 
-        while True:
-            response = client.messages.create(
+        while loop_count < MAX_LOOPS:
+            loop_count += 1
+            response = await client.messages.create(
                 model=MODEL,
-                max_tokens=8192,
+                max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=loop_messages,
                 tools=tools,
@@ -985,7 +991,7 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
 
 async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
     try:
-        response = client.messages.create(
+        response = await client.messages.create(
             model=MODEL,
             max_tokens=4096,
             system=SYSTEM_PROMPT,
@@ -1300,11 +1306,14 @@ async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
 
     try:
         loop_messages = list(messages)
+        loop_count = 0
+        MAX_LOOPS = 8
 
-        while True:
-            response = client.messages.create(
+        while loop_count < MAX_LOOPS:
+            loop_count += 1
+            response = await client.messages.create(
                 model=MODEL,
-                max_tokens=8192,
+                max_tokens=4096,
                 system=SYSTEM_PROMPT,
                 messages=loop_messages,
                 tools=tools,
