@@ -262,18 +262,42 @@ class MCPManager:
 mcp_manager = MCPManager()
 
 
+async def _background_mcp_init():
+    """
+    Fire-and-forget task: connect the MCP session and pre-warm the embedding
+    model so the first real user request pays zero cold-start cost.
+    """
+    global cached_tools
+    log.info("MCP: background init starting...")
+    t0 = asyncio.get_event_loop().time()
+
+    if not await mcp_manager.connect():
+        log.warning("MCP: background connect failed — Gladius will run without tools")
+        return
+
+    cached_tools = await mcp_manager.list_tools()
+    if cached_tools:
+        log.info(f"MCP: {len(cached_tools)} tools cached in {asyncio.get_event_loop().time()-t0:.1f}s")
+    else:
+        log.warning("MCP: no tools returned — running without MCP tools")
+        return
+
+    # Pre-warm: run a trivial KB query so the embedding model is already loaded
+    # into memory before the first real user message arrives.
+    try:
+        log.info("MCP: pre-warming embedding model via query_knowledge_base...")
+        t1 = asyncio.get_event_loop().time()
+        await mcp_manager.call_tool("query_knowledge_base", {"query": "network security", "n_results": 1})
+        log.info(f"MCP: pre-warm complete in {asyncio.get_event_loop().time()-t1:.1f}s — session fully hot")
+    except Exception as e:
+        log.warning(f"MCP: pre-warm ping failed (non-fatal): {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global cached_tools
-    # Connect persistent MCP session
-    if await mcp_manager.connect():
-        cached_tools = await mcp_manager.list_tools()
-        if cached_tools:
-            log.info(f"Tools cached: {[t['name'] for t in cached_tools]}")
-        else:
-            log.warning("No tools cached — Gladius will run without MCP tools")
-    else:
-        log.warning("MCP session failed at startup — running without tools")
+    # Start MCP init in background — FastAPI is ready to serve immediately.
+    # The pre-warm task loads the embedding model before the first user request.
+    asyncio.create_task(_background_mcp_init())
     yield
     await mcp_manager.disconnect()
 
