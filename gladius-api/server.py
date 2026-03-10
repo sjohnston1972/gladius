@@ -1533,7 +1533,7 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
                     "content": last["content"] + rag_context,
                 }
 
-        response = client.messages.create(
+        response = await client.messages.create(
             model=MODEL,
             max_tokens=4096,
             system=DESIGN_SYSTEM_PROMPT,
