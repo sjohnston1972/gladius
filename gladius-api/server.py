@@ -1605,22 +1605,40 @@ async def run_parallel_audit(
         await sse_queue.put({"type": event_type, **kwargs})
 
     # ── Extract device info for threat intel agent ─────────────────────────────
-    # We give the threat intel agent the raw audit_target so it can infer platform
-    threat_primer = (
-        f"The device being audited is at {audit_target}. "
-        f"Audit scope: {audit_scope}. "
-        f"Assume IOS XE platform — query 'ios-xe' for PSIRT. "
-        f"Query NVD with 'Cisco IOS XE' and cisco_only=True. "
-        f"For EOX, use common Cisco access switch PIDs as placeholder until device data arrives — "
-        f"focus your query_knowledge_base call on: '{audit_scope}'"
-    )
+    # Handle both {target, scope} and full-message {messages} schemas
+    # If scope is empty, audit_target contains the full user instruction
+    if audit_scope:
+        scope_text = audit_scope
+        device_directive = (
+            f"Connect to {audit_target} and collect all device data. "
+            f"Batch ALL tool calls (connect, 4x show commands, disconnect) in ONE response."
+        )
+        threat_directive = (
+            f"The device being audited is at {audit_target}. "
+            f"Audit scope: {audit_scope}. "
+            f"Assume IOS XE platform — query 'ios-xe' for PSIRT. "
+            f"Query NVD with 'Cisco IOS XE' and cisco_only=True. "
+            f"Focus your query_knowledge_base call on: '{audit_scope}'"
+        )
+    else:
+        # Full instruction passed as audit_target — extract IP for device agent
+        import re as _re
+        ip_match = _re.search(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', audit_target)
+        device_ip = ip_match.group(1) if ip_match else audit_target
+        scope_text = audit_target
+        device_directive = (
+            f"{audit_target}. "
+            f"Batch ALL tool calls (connect, 4x show commands, disconnect) in ONE response."
+        )
+        threat_directive = (
+            f"{audit_target}. "
+            f"Assume IOS XE platform — query 'ios-xe' for PSIRT. "
+            f"Query NVD with 'Cisco IOS XE' and cisco_only=True."
+        )
+        audit_target = device_ip  # use clean IP for synthesis
 
-    device_messages = [{"role": "user", "content":
-        f"Connect to {audit_target} and collect all device data. "
-        f"Batch ALL tool calls (connect, 4x show commands, disconnect) in ONE response."
-    }]
-
-    threat_messages = [{"role": "user", "content": threat_primer}]
+    device_messages = [{"role": "user", "content": device_directive}]
+    threat_messages = [{"role": "user", "content": threat_directive}]
 
     # ── Phase 1: Run Device + Threat Intel agents concurrently ────────────────
     await _push("subagent_start", agent="device", label="Device Collection")
@@ -1683,7 +1701,7 @@ async def run_parallel_audit(
     synthesis_messages = [{
         "role": "user",
         "content": (
-            f"Audit target: {audit_target}\nScope: {audit_scope}\n\n"
+            f"Audit target: {audit_target}\nScope: {scope_text}\n\n"
             f"## Device Data\n{device_data[:8000]}\n\n"
             f"## Threat Intelligence\n{threat_data[:8000]}\n\n"
             f"Synthesise the above into a structured audit report. "
@@ -1724,8 +1742,11 @@ async def run_parallel_audit(
 
 
 class ParallelAuditRequest(BaseModel):
-    target: str
+    # Accepts either {target, scope} directly OR {messages, conversation_id} from chat UI
+    target: str | None = None
     scope: str = "NIST CIS IOS XE benchmark, open CVEs and open PSIRT advisories"
+    messages: list | None = None
+    conversation_id: str | None = None
 
 
 @app.post("/api/audit/parallel")
@@ -1734,10 +1755,23 @@ async def parallel_audit(request: ParallelAuditRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
 
+    # Extract target and scope from messages if sent via chat UI
+    audit_target = request.target
+    audit_scope = request.scope
+    if not audit_target and request.messages:
+        # Use the full user message as the audit directive
+        last_msg = next((m["content"] for m in reversed(request.messages) if m.get("role") == "user"), None)
+        if last_msg:
+            audit_target = last_msg
+            audit_scope = ""  # target contains full instruction
+
+    if not audit_target:
+        raise HTTPException(status_code=422, detail="No audit target provided")
+
     sse_queue: asyncio.Queue = asyncio.Queue()
 
     # Launch orchestrator as background task
-    asyncio.create_task(run_parallel_audit(request.target, request.scope, sse_queue))
+    asyncio.create_task(run_parallel_audit(audit_target, audit_scope, sse_queue))
 
     async def _stream():
         while True:
