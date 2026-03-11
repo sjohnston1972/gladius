@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLADIUS — System Map</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#050510; overflow:hidden; font-family:'Courier New',monospace; user-select:none; }
+canvas { display:block; }
+
+#hud {
+  position:fixed; top:0; left:0; right:0;
+  display:flex; justify-content:space-between; align-items:center;
+  padding:8px 18px;
+  background:rgba(3,3,15,0.88);
+  border-bottom:1px solid #ff6b3533;
+  z-index:10; pointer-events:none;
+}
+#hud-title {
+  font-size:18px; letter-spacing:6px; font-weight:bold;
+  color:#ff6b35; text-shadow:0 0 16px #ff6b35, 0 0 32px #ff6b3566;
+}
+#hud-sub { font-size:9px; color:#ff6b3588; letter-spacing:3px; margin-top:2px; }
+#hud-stats { text-align:right; font-size:10px; color:#00ff9d88; line-height:1.8; }
+#hud-stats span { color:#00ff9d; text-shadow:0 0 6px #00ff9d; }
+
+#tooltip {
+  position:fixed; display:none;
+  background:rgba(3,3,15,0.97);
+  border:1px solid #00ff9d66;
+  box-shadow:0 0 24px #00ff9d22, inset 0 0 24px rgba(0,255,157,0.03);
+  color:#00ff9d; padding:14px 18px;
+  font-size:11px; max-width:300px; z-index:30;
+  pointer-events:none; line-height:1.8;
+}
+#tooltip h3 { font-size:13px; letter-spacing:2px; margin-bottom:8px; }
+#tooltip .desc-line::before { content:'▸ '; color:#ff6b35; }
+#tooltip .tools-header { color:#ff6b35; margin-top:8px; margin-bottom:2px; letter-spacing:1px; }
+#tooltip .tool-item { color:#888; font-size:10px; padding-left:8px; }
+#tooltip .conn-info { color:#00e5ff88; margin-top:8px; font-size:10px; }
+
+#legend {
+  position:fixed; bottom:40px; right:14px;
+  background:rgba(3,3,15,0.88); border:1px solid #00ff9d22;
+  padding:10px 14px; z-index:10; pointer-events:none;
+  font-size:9px; line-height:2; min-width:140px;
+}
+#legend h4 { color:#ff6b35; letter-spacing:3px; font-size:9px; margin-bottom:4px; }
+.leg-row { display:flex; align-items:center; gap:7px; }
+.leg-swatch { width:8px; height:8px; flex-shrink:0; image-rendering:pixelated; }
+
+#ticker {
+  position:fixed; bottom:0; left:0; right:0;
+  height:28px; background:rgba(3,3,15,0.92);
+  border-top:1px solid #ff6b3533;
+  overflow:hidden; z-index:10; pointer-events:none;
+  display:flex; align-items:center;
+}
+#ticker-inner {
+  white-space:nowrap; font-size:10px; color:#ff6b3588;
+  letter-spacing:1px; animation:ticker 60s linear infinite;
+  padding-left:100%;
+}
+@keyframes ticker {
+  0%   { transform:translateX(0); }
+  100% { transform:translateX(-100%); }
+}
+
+#controls {
+  position:fixed; top:56px; right:14px;
+  display:flex; flex-direction:column; gap:6px;
+  z-index:10;
+}
+.ctrl-btn {
+  background:rgba(3,3,15,0.88); border:1px solid #00ff9d44;
+  color:#00ff9d; font-family:'Courier New',monospace;
+  font-size:9px; padding:5px 10px; cursor:pointer;
+  letter-spacing:1px; text-align:center;
+  transition:all 0.15s;
+}
+.ctrl-btn:hover { background:#00ff9d22; border-color:#00ff9d; box-shadow:0 0 12px #00ff9d44; }
+.ctrl-btn.active { background:#00ff9d33; border-color:#00ff9d; color:#fff; }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div>
+    <div id="hud-title">◈ GLADIUS</div>
+    <div id="hud-sub">LIVE SYSTEM MAP // HOMELAB SECURITY PLATFORM</div>
+  </div>
+  <div id="hud-stats">
+    CONTAINERS: <span>8</span> &nbsp;|&nbsp; MCP TOOLS: <span>10</span> &nbsp;|&nbsp; TRAFFIC CATS: <span id="cat-count">0</span><br>
+    CONNECTIONS: <span>12</span> &nbsp;|&nbsp; STATUS: <span style="color:#00ff9d">ALL SYSTEMS NOMINAL</span>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<div id="legend">
+  <h4>◈ CAT BREEDS</h4>
+  <div id="legend-items"></div>
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn active" id="btn-cats" onclick="toggleCats()">CATS ON</button>
+  <button class="ctrl-btn active" id="btn-paths" onclick="togglePaths()">PATHS ON</button>
+  <button class="ctrl-btn" id="btn-more" onclick="addMoreCats()">+ MORE CATS</button>
+  <button class="ctrl-btn" id="btn-less" onclick="removeCats()">- LESS CATS</button>
+  <button class="ctrl-btn" id="btn-party" onclick="partyMode()">PARTY MODE</button>
+</div>
+
+<div id="ticker">
+  <div id="ticker-inner">
+    ◈ GLADIUS SYSTEM NOMINAL &nbsp;///&nbsp; CLAUDE claude-sonnet-4-6 ONLINE &nbsp;///&nbsp;
+    MCP TOOLS CACHED &nbsp;///&nbsp; ChromaDB VECTOR STORE READY &nbsp;///&nbsp;
+    SSH SESSIONS MONITORED &nbsp;///&nbsp; NVD API CONNECTED &nbsp;///&nbsp;
+    SLACK BOT LISTENING &nbsp;///&nbsp; OVERSEER WATCHING &nbsp;///&nbsp;
+    NMAP SCANNER READY &nbsp;///&nbsp; SMTP RELAY CONFIGURED &nbsp;///&nbsp;
+    NETWORK AUDIT IN PROGRESS &nbsp;///&nbsp; FINDINGS SAVED TO DASHBOARD &nbsp;///&nbsp;
+    ◈ ALL CATS ARE GOOD CATS ◈
+  </div>
+</div>
+
+<script>
+// ─── Canvas ───────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', () => { resize(); rebuildLayout(); });
+
+// ─── Palette ──────────────────────────────────────────────────────────────────
+const C = {
+  bg:     '#050510',
+  grid:   '#0b0b1e',
+  accent: '#00ff9d',
+  orange: '#ff6b35',
+  cyan:   '#00e5ff',
+  purple: '#b44fff',
+  yellow: '#ffe600',
+  pink:   '#ff4ddb',
+  blue:   '#4d9fff',
+  red:    '#ff4d4d',
+  teal:   '#00ffd5',
+  white:  '#f0f0ff',
+  darkbg: 'rgba(3,3,15,0.88)',
+};
+
+// ─── Cat Breeds ───────────────────────────────────────────────────────────────
+const BREEDS = {
+  siamese:  { body:'#f0dfc0', mark:'#6b4c2a', eyes:'#00e5ff', nose:'#ffb3c6', name:'SIAMESE'   },
+  tabby:    { body:'#cc7722', mark:'#7a3b0a', eyes:'#7fff00', nose:'#ffb3c6', name:'TABBY'     },
+  purple:   { body:'#c084fc', mark:'#7c3aed', eyes:'#ffffff', nose:'#f0c0ff', name:'PURPLE'    },
+  blue:     { body:'#60a5fa', mark:'#1d4ed8', eyes:'#ffffff', nose:'#c0e0ff', name:'BLUEPOINT'  },
+  ginger:   { body:'#f97316', mark:'#9a3412', eyes:'#22c55e', nose:'#ffb3c6', name:'GINGER'    },
+  teal:     { body:'#2dd4bf', mark:'#0f766e', eyes:'#ffffff', nose:'#99f6e4', name:'TEAL'      },
+  calico:   { body:'#fef3c7', mark:'#92400e', eyes:'#f97316', nose:'#ffb3c6', name:'CALICO'    },
+  pink:     { body:'#f472b6', mark:'#be185d', eyes:'#ffffff', nose:'#fce7f3', name:'ROSE'      },
+  black:    { body:'#1e1b4b', mark:'#0a0a18', eyes:'#ff0055', nose:'#ff6b6b', name:'MIDNIGHT'  },
+  white:    { body:'#f8fafc', mark:'#cbd5e1', eyes:'#60a5fa', nose:'#fda4af', name:'SNOWBALL'  },
+  tortie:   { body:'#b45309', mark:'#78350f', eyes:'#34d399', nose:'#ffb3c6', name:'TORTIE'    },
+  grey:     { body:'#94a3b8', mark:'#475569', eyes:'#00e5ff', nose:'#fda4af', name:'GRAPHITE'  },
+};
+
+// ─── Node Definitions (relative coords, scaled on layout) ────────────────────
+const NODE_DEFS = [
+  {
+    id:'browser', label:'WEB BROWSER', sub:'User Terminal',
+    color:C.cyan, rx:-0.40, ry:-0.28, type:'client',
+    desc:['Vanilla JS single-page app','SSE stream consumer','LocalStorage audit history','Chat interface to /api/chat'],
+  },
+  {
+    id:'gladius-api', label:'GLADIUS-API', sub:'FastAPI :8080',
+    color:C.orange, rx:-0.04, ry:-0.04, type:'core',
+    desc:['Central FastAPI hub','Claude claude-sonnet-4-6 agent loop','SSE streaming to browser','MCP subprocess manager','Tool cache + health endpoints'],
+  },
+  {
+    id:'mcp', label:'NETWORK-AUDIT-MCP', sub:'MCP stdio',
+    color:C.accent, rx:0.24, ry:-0.30, type:'core',
+    desc:['MCP tool server (stdio)','SSH via Paramiko','ChromaDB vector queries','NVD API CVE lookups','SMTP email reports','Nmap vulnerability scans'],
+    tools:['connect_to_device','run_show_command','push_config','disconnect_device','query_knowledge_base','query_nvd','get_cve_details','send_email','save_audit_results','run_nmap_scan'],
+  },
+  {
+    id:'chroma', label:'CHROMA-DB', sub:'Vector :8000',
+    color:C.purple, rx:0.44, ry:-0.28, type:'data',
+    desc:['ChromaDB vector store','NIST/CIS knowledge base','all-MiniLM-L6-v2 embeddings','Semantic security search'],
+  },
+  {
+    id:'snmp', label:'GLADIUS-SNMP', sub:'SNMP proxy :8000',
+    color:C.yellow, rx:0.18, ry:0.30, type:'service',
+    desc:['SNMP polling service','Python 3.11 + pysnmp<6','Proxied via /api/snmp/*','Device interface stats'],
+  },
+  {
+    id:'slack-bot', label:'GLADIUS-SLACK', sub:'Slack Bot :9090',
+    color:C.pink, rx:-0.36, ry:0.18, type:'service',
+    desc:['Slack audit bot','Forwards DMs to /api/chat','Persistent conversation history','Posts score cards to channels'],
+  },
+  {
+    id:'overseer', label:'GLADIUS-OVERSEER', sub:'Socket Mode',
+    color:C.red, rx:-0.42, ry:0.38, type:'service',
+    desc:['AI overseer agent','Claude claude-sonnet-4-6 model','Full project file access','Read/write/bash tools','Proactive Slack notifications'],
+  },
+  {
+    id:'cisco', label:'CISCO DEVICES', sub:'SSH targets',
+    color:'#5b8fff', rx:0.44, ry:0.12, type:'external',
+    desc:['Managed network devices','IOS XE / IOS firmware','SSH config + show commands','Security audit targets'],
+  },
+  {
+    id:'nvd', label:'NVD API', sub:'nvd.nist.gov',
+    color:C.yellow, rx:0.46, ry:-0.10, type:'external',
+    desc:['NIST NVD CVE database','Cisco IOS CVE lookups','Severity: CRITICAL/HIGH','Days-back filtering'],
+  },
+  {
+    id:'smtp', label:'SMTP RELAY', sub:'Email server',
+    color:C.teal, rx:0.42, ry:0.30, type:'external',
+    desc:['SMTP email relay','HTML audit report attachments','Configured via .env','Triggered by Claude or button'],
+  },
+  {
+    id:'slack-api', label:'SLACK API', sub:'api.slack.com',
+    color:C.pink, rx:-0.46, ry:0.06, type:'external',
+    desc:['Slack platform APIs','Socket Mode (overseer)','Bot token authentication','Channel + DM messaging'],
+  },
+];
+
+// ─── Connection Definitions ───────────────────────────────────────────────────
+const CONN_DEFS = [
+  { from:'browser',   to:'gladius-api', color:C.cyan,   label:'HTTP/SSE chat',    breed:'siamese', bend:-50 },
+  { from:'gladius-api',to:'browser',   color:C.cyan,   label:'SSE stream back',  breed:'grey',    bend:50  },
+  { from:'gladius-api',to:'mcp',       color:C.orange, label:'MCP stdio spawn',  breed:'tabby',   bend:-60 },
+  { from:'mcp',       to:'gladius-api',color:C.orange, label:'Tool results',     breed:'ginger',  bend:60  },
+  { from:'mcp',       to:'chroma',     color:C.purple, label:'Vector query',     breed:'purple',  bend:-40 },
+  { from:'mcp',       to:'cisco',      color:'#5b8fff',label:'SSH commands',     breed:'blue',    bend:40  },
+  { from:'mcp',       to:'nvd',        color:C.yellow, label:'CVE lookup',       breed:'tortie',  bend:-30 },
+  { from:'mcp',       to:'smtp',       color:C.teal,   label:'Email report',     breed:'teal',    bend:30  },
+  { from:'gladius-api',to:'snmp',      color:C.yellow, label:'SNMP proxy',       breed:'calico',  bend:50  },
+  { from:'slack-bot', to:'gladius-api',color:C.pink,   label:'Chat forward',     breed:'pink',    breed2:'rose', bend:-40 },
+  { from:'overseer',  to:'gladius-api',color:C.red,    label:'AI project query', breed:'black',   bend:-50 },
+  { from:'overseer',  to:'slack-api',  color:C.pink,   label:'Proactive notify', breed:'white',   bend:30  },
+  { from:'slack-bot', to:'slack-api',  color:C.pink,   label:'Slack events',     breed:'tortie',  bend:-30 },
+];
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let nodes       = [];
+let conns       = [];
+let cats        = [];
+let particles   = [];
+let hoveredNode = null;
+let time        = 0;
+let showCats    = true;
+let showPaths   = true;
+let isParty     = false;
+
+// ─── Layout ───────────────────────────────────────────────────────────────────
+function rebuildLayout() {
+  const W = canvas.width, H = canvas.height;
+  const cx = W * 0.5, cy = H * 0.52;
+  const sx = W * 0.44, sy = H * 0.42;
+
+  nodes = NODE_DEFS.map((def, i) => ({
+    ...def,
+    x: cx + def.rx * sx,
+    y: cy + def.ry * sy,
+    pulse: (i * 0.9) % (Math.PI * 2),
+    w: def.id === 'mcp' ? 120 : 96,
+    h: 60,
+  }));
+
+  conns = CONN_DEFS.map(def => ({
+    ...def,
+    fn: nodes.find(n => n.id === def.from),
+    tn: nodes.find(n => n.id === def.to),
+  })).filter(c => c.fn && c.tn);
+}
+
+// ─── Spawn Cats ───────────────────────────────────────────────────────────────
+const CAT_NAMES = [
+  'WHISKERS','PIXEL','NYAN','GLITCH','CIPHER','DAEMON','KERNEL','SOCKET',
+  'BUFFER','MALLOC','SEGFAULT','NULLPTR','VECTOR','MUTEX','THREAD','ASYNC',
+  'PROTO','FUZZ','PATCH','EXPLOIT','BEACON','PIVOT','SHELL','ROOTKIT',
+  'SNIFFERS','PORTSCANNER','FUZZY','CRUNCH','HASH','SALT','PEPPER','NONCE',
+];
+let nameIdx = 0;
+
+function spawnCat(conn, startProgress) {
+  const breedKeys = Object.keys(BREEDS);
+  const breed = conn.breed || breedKeys[Math.floor(Math.random() * breedKeys.length)];
+  return {
+    conn,
+    progress:   startProgress ?? Math.random(),
+    speed:      0.0012 + Math.random() * 0.001,
+    breed,
+    frame:      Math.floor(Math.random() * 4),
+    fTimer:     0,
+    fDelay:     6 + Math.floor(Math.random() * 6),
+    bob:        Math.random() * Math.PI * 2,
+    name:       CAT_NAMES[(nameIdx++) % CAT_NAMES.length],
+    happy:      Math.random() > 0.6,
+    size:       3,
+    arrived:    false,
+  };
+}
+
+function initCats() {
+  cats = [];
+  conns.forEach((conn, i) => {
+    const num = 1 + (i % 3 === 0 ? 1 : 0);
+    for (let j = 0; j < num; j++) {
+      cats.push(spawnCat(conn, j / num));
+    }
+  });
+  document.getElementById('cat-count').textContent = cats.length;
+}
+
+function addMoreCats() {
+  if (cats.length > 60) return;
+  conns.forEach(conn => cats.push(spawnCat(conn, Math.random())));
+  document.getElementById('cat-count').textContent = cats.length;
+}
+
+function removeCats() {
+  // Remove one cat per connection, keeping a minimum of 1 per conn
+  const toRemove = new Set();
+  conns.forEach(conn => {
+    const mine = cats.filter((c, i) => c.conn === conn && !toRemove.has(i));
+    if (mine.length > 1) {
+      // find index of one of these to remove
+      const victim = cats.findIndex((c, i) => c.conn === conn && !toRemove.has(i));
+      if (victim !== -1) toRemove.add(victim);
+    }
+  });
+  if (toRemove.size === 0) return; // already at minimum
+  cats = cats.filter((_, i) => !toRemove.has(i));
+  document.getElementById('cat-count').textContent = cats.length;
+}
+
+// ─── Bezier helpers ───────────────────────────────────────────────────────────
+function bezierPoint(p0, p1, p2, p3, t) {
+  const u = 1 - t;
+  return {
+    x: u*u*u*p0.x + 3*u*u*t*p1.x + 3*u*t*t*p2.x + t*t*t*p3.x,
+    y: u*u*u*p0.y + 3*u*u*t*p1.y + 3*u*t*t*p2.y + t*t*t*p3.y,
+    dx:3*u*u*(p1.x-p0.x)+6*u*t*(p2.x-p1.x)+3*t*t*(p3.x-p2.x),
+    dy:3*u*u*(p1.y-p0.y)+6*u*t*(p2.y-p1.y)+3*t*t*(p3.y-p2.y),
+  };
+}
+
+function getCtrl(fn, tn, bend) {
+  const mx = (fn.x + tn.x) / 2;
+  const my = (fn.y + tn.y) / 2;
+  const dx = tn.x - fn.x, dy = tn.y - fn.y;
+  const len = Math.sqrt(dx*dx + dy*dy) || 1;
+  const px2 = -dy/len * bend;
+  const py2 =  dx/len * bend;
+  return { c1:{ x:mx+px2*0.8, y:my+py2*0.8 }, c2:{ x:mx+px2*1.2, y:my+py2*1.2 } };
+}
+
+// ─── Pixel Cat Drawing ────────────────────────────────────────────────────────
+// Each "pixel" is S×S actual pixels. Sprite grid is 10 wide × 12 tall.
+//
+//  Frame 0  Frame 1  Frame 2  Frame 3
+//  walk cycle: shift between leg positions
+
+const CAT_ROWS = [
+  // col:  0123456789
+  row => '.#.#......',   // 0  ears
+  row => '#####.....',   // 1  ear base + head top
+  row => '#.B.#.....',   // 2  head (B=body, eyes embedded)
+  row => '##N##.....',   // 3  head mid (N=nose)
+  row => '######....',   // 4  neck/body
+  row => '#S###S#...',   // 5  body+stripe+tail
+  row => '#######...',   // 6  body+tail curve
+  row => '#####.....',   // 7  body lower
+  row => '#####.....',   // 8  hips
+];
+// legs vary per frame
+const LEG_FRAMES = [
+  ['.#..#.....', '.#..#.....'],   // frame 0
+  ['..#.#.....', '.#..#.....'],   // frame 1
+  ['.#..#.....', '..#.#.....'],   // frame 2
+  ['.##.##....', '.##.##....'],   // frame 3 (both down - landing)
+];
+
+function pxFill(color) {
+  ctx.fillStyle = color;
+}
+
+function drawPixelCat(cx2, cy2, pal, walkFrame, facingRight, happy, S) {
+  // Build pixel grid
+  const { body, mark, eyes, nose } = pal;
+  const grid = [];
+  for (let r = 0; r < 9; r++) grid.push(CAT_ROWS[r](r));
+  const legData = LEG_FRAMES[walkFrame % 4];
+  grid.push(legData[0]);   // row 9: upper legs
+  grid.push(legData[1]);   // row 10: lower legs
+
+  const W = 10, H = 11;
+
+  ctx.save();
+  ctx.translate(Math.round(cx2), Math.round(cy2));
+  if (!facingRight) {
+    ctx.translate(W * S, 0);
+    ctx.scale(-1, 1);
+  }
+
+  for (let r = 0; r < grid.length; r++) {
+    const row = grid[r];
+    for (let c2 = 0; c2 < row.length; c2++) {
+      const ch = row[c2];
+      if (ch === '.') continue;
+      let col;
+      if (ch === '#' || ch === 'B') col = body;
+      else if (ch === 'S')          col = mark;
+      else if (ch === 'N')          col = nose;
+      else                          col = body;
+
+      // Override for eyes at row 2 cols 1 and 3
+      if (r === 2 && (c2 === 1 || c2 === 3)) {
+        if (happy) {
+          col = mark; // squished happy eye
+          ctx.fillStyle = col;
+          ctx.fillRect(c2*S, r*S, S, Math.ceil(S*0.5));
+          continue;
+        } else {
+          col = eyes;
+        }
+      }
+      // Stripe overlay
+      if (r >= 5 && r <= 7 && (c2 === 1 || c2 === 4)) col = mark;
+      // Tail detail
+      if (r === 5 && c2 >= 5) col = mark;
+      if (r === 6 && c2 >= 6) col = mark;
+
+      ctx.fillStyle = col;
+      ctx.fillRect(c2*S, r*S, S, S);
+    }
+  }
+  ctx.restore();
+}
+
+// ─── Particles ────────────────────────────────────────────────────────────────
+function burst(x, y, color, n=6) {
+  for (let i = 0; i < n; i++) {
+    const a = (Math.PI * 2 / n) * i + Math.random() * 0.5;
+    const sp = 1.5 + Math.random() * 2;
+    particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 1, color, life: 1, sz: 2 + Math.random()*2 });
+  }
+}
+function hearts(x, y, color) {
+  // tiny heart pixel art at x,y
+  particles.push({ x, y: y - 10, vx: 0, vy: -0.4, color, life: 1.5, sz: 4, heart: true });
+}
+
+function tickParticles() {
+  particles = particles.filter(p => p.life > 0);
+  particles.forEach(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.06;
+    p.life -= p.heart ? 0.015 : 0.025;
+  });
+}
+function drawParticles() {
+  particles.forEach(p => {
+    const a = Math.max(0, Math.min(1, p.life));
+    const hex = Math.round(a * 255).toString(16).padStart(2,'0');
+    ctx.fillStyle = p.color + hex;
+    if (p.heart) {
+      // 3x3 heart
+      ctx.fillRect(p.x-1, p.y,   2, 1);
+      ctx.fillRect(p.x-2, p.y-1, 2, 1);
+      ctx.fillRect(p.x+1, p.y-1, 2, 1);
+      ctx.fillRect(p.x-2, p.y+1, 4, 1);
+      ctx.fillRect(p.x-1, p.y+2, 2, 1);
+    } else {
+      ctx.fillRect(Math.round(p.x), Math.round(p.y), Math.round(p.sz), Math.round(p.sz));
+    }
+  });
+}
+
+// ─── Draw Background ──────────────────────────────────────────────────────────
+function drawBG() {
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Grid
+  ctx.strokeStyle = C.grid;
+  ctx.lineWidth = 1;
+  const gs = 36;
+  for (let x = 0; x < canvas.width; x += gs) {
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();
+  }
+  for (let y = 0; y < canvas.height; y += gs) {
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.04)';
+  for (let y = 0; y < canvas.height; y += 3) ctx.fillRect(0, y, canvas.width, 1);
+}
+
+// ─── Draw Connection ──────────────────────────────────────────────────────────
+function drawConn(conn) {
+  if (!showPaths) return;
+  const { fn, tn, color, bend } = conn;
+  const { c1, c2 } = getCtrl(fn, tn, bend || 40);
+
+  ctx.save();
+
+  // Glow underlay — solid, blurred
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = 10;
+  ctx.strokeStyle = color + '33';
+  ctx.lineWidth   = 4;
+  ctx.beginPath();
+  ctx.moveTo(fn.x, fn.y);
+  ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, tn.x, tn.y);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Animated dashed line on top
+  ctx.strokeStyle = color + 'cc';
+  ctx.lineWidth   = 1.5;
+  ctx.setLineDash([5, 8]);
+  ctx.lineDashOffset = -(time * 28) % 13;
+  ctx.beginPath();
+  ctx.moveTo(fn.x, fn.y);
+  ctx.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, tn.x, tn.y);
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+// ─── Draw Node ────────────────────────────────────────────────────────────────
+const TYPE_ICONS = { core:'◈', service:'◇', data:'▣', external:'◉', client:'⬡' };
+const TYPE_BADGE = { core:C.orange, service:C.accent, data:C.purple, external:'#555', client:C.cyan };
+
+function drawNode(node) {
+  const { x, y, w, h, color, label, sub, type, pulse } = node;
+  const hx = x - w/2, hy = y - h/2;
+  const isHover  = node === hoveredNode;
+  const isDragged = dragNode === node;
+  const p = (Math.sin(time * 1.8 + pulse) + 1) / 2;
+
+  // Glow
+  ctx.shadowColor = color;
+  ctx.shadowBlur  = (isDragged || isHover) ? 30 : 12 + p * 8;
+
+  // Body
+  ctx.fillStyle = 'rgba(3,3,15,0.92)';
+  ctx.fillRect(hx, hy, w, h);
+
+  // Hover / drag overlay
+  if (isHover || isDragged) {
+    ctx.fillStyle = isDragged ? color + '28' : color + '18';
+    ctx.fillRect(hx, hy, w, h);
+  }
+
+  // Border
+  ctx.strokeStyle = isHover ? color : color + 'aa';
+  ctx.lineWidth = isHover ? 2 : 1;
+  ctx.strokeRect(hx, hy, w, h);
+  ctx.shadowBlur = 0;
+
+  // Corner pixels
+  ctx.fillStyle = color;
+  [[hx-1,hy-1],[hx+w-2,hy-1],[hx-1,hy+h-2],[hx+w-2,hy+h-2]].forEach(([px2,py2]) => {
+    ctx.fillRect(px2, py2, 3, 3);
+  });
+
+  // Header bar
+  ctx.fillStyle = color + '33';
+  ctx.fillRect(hx, hy, w, 15);
+
+  // Type dot
+  ctx.fillStyle = TYPE_BADGE[type] || '#666';
+  ctx.fillRect(hx + w - 10, hy + 4, 7, 7);
+
+  // Label — draw dark backing rect first, then bright text
+  ctx.textAlign = 'center';
+  const fontSize = label.length > 15 ? 8 : label.length > 10 ? 9 : 10;
+  ctx.font = `bold ${fontSize}px Courier New`;
+  const labelW = ctx.measureText(label).width;
+  ctx.fillStyle = 'rgba(3,3,15,0.7)';
+  ctx.fillRect(x - labelW/2 - 3, hy + 17, labelW + 6, fontSize + 4);
+  ctx.fillStyle = color;
+  ctx.shadowColor = color; ctx.shadowBlur = 8;
+  ctx.fillText(label, x, hy + 17 + fontSize);
+  ctx.shadowBlur = 0;
+
+  // Sub-label
+  ctx.font = '8px Courier New';
+  const subW = ctx.measureText(sub).width;
+  ctx.fillStyle = 'rgba(3,3,15,0.6)';
+  ctx.fillRect(x - subW/2 - 2, hy + 33, subW + 4, 10);
+  ctx.fillStyle = '#aaa';
+  ctx.fillText(sub, x, hy + 41);
+
+  // Activity bar
+  const bw = w - 20, bx2 = x - bw/2, by2 = hy + 47;
+  ctx.fillStyle = '#111';
+  ctx.fillRect(bx2, by2, bw, 4);
+  const fill = ((Math.sin(time * 3.5 + pulse * 2) + 1) / 2) * bw;
+  ctx.fillStyle = color + '99';
+  ctx.fillRect(bx2, by2, fill, 4);
+
+  ctx.textAlign = 'left';
+}
+
+// ─── Draw Cat on Path ─────────────────────────────────────────────────────────
+function drawCatOnPath(cat) {
+  if (!showCats) return;
+  const { conn, progress, breed, frame, bob, happy, size } = cat;
+  const { fn, tn, bend } = conn;
+  const { c1, c2 } = getCtrl(fn, tn, bend || 40);
+
+  const pt = bezierPoint(fn, {x:c1.x,y:c1.y}, {x:c2.x,y:c2.y}, tn, progress);
+  const bobY = Math.sin(time * 9 + bob) * 3;
+
+  const pal = BREEDS[breed] || BREEDS.tabby;
+  const facingRight = pt.dx >= 0;
+  const isHappy = happy && Math.sin(time * 5 + bob) > 0.3;
+  const S = isParty ? size + 1 : size;
+
+  drawPixelCat(pt.x - 15, pt.y - 22 + bobY, pal, frame, facingRight, isHappy, S);
+}
+
+// ─── Update ───────────────────────────────────────────────────────────────────
+function update() {
+  time += 0.016;
+
+  cats.forEach(cat => {
+    cat.progress += cat.speed * (isParty ? 1.8 : 1);
+    if (cat.progress >= 1) {
+      cat.progress = 0;
+      // Arrival burst
+      const tn = cat.conn.tn;
+      burst(tn.x, tn.y, cat.conn.color, 4);
+      if (Math.random() > 0.7) hearts(tn.x, tn.y, cat.conn.color);
+    }
+    cat.fTimer++;
+    if (cat.fTimer >= cat.fDelay) {
+      cat.frame = (cat.frame + 1) % 4;
+      cat.fTimer = 0;
+    }
+  });
+
+  if (isParty && Math.random() > 0.85) {
+    const n = nodes[Math.floor(Math.random() * nodes.length)];
+    burst(n.x + (Math.random()-0.5)*60, n.y + (Math.random()-0.5)*30,
+      [C.orange,C.cyan,C.pink,C.accent,C.purple][Math.floor(Math.random()*5)], 3);
+  }
+
+  tickParticles();
+}
+
+// ─── Draw ─────────────────────────────────────────────────────────────────────
+function draw() {
+  drawBG();
+  conns.forEach(drawConn);
+  drawParticles();
+  if (showCats) cats.forEach(drawCatOnPath);
+  nodes.forEach(drawNode);
+
+  // Corner decoration
+  ctx.fillStyle = C.accent + '33';
+  ctx.font = '9px Courier New';
+  ctx.textAlign = 'right';
+  ctx.fillText(`◈ ${cats.length} CATS ROAMING`, canvas.width - 14, canvas.height - 36);
+  ctx.textAlign = 'left';
+}
+
+// ─── Legend ───────────────────────────────────────────────────────────────────
+function buildLegend() {
+  const el = document.getElementById('legend-items');
+  el.innerHTML = '';
+  Object.entries(BREEDS).forEach(([key, pal]) => {
+    const d = document.createElement('div');
+    d.className = 'leg-row';
+    d.innerHTML = `<span class="leg-swatch" style="background:${pal.body};outline:1px solid ${pal.mark}"></span>
+      <span style="color:${pal.body}">${pal.name}</span>`;
+    el.appendChild(d);
+  });
+}
+
+// ─── Controls ─────────────────────────────────────────────────────────────────
+function toggleCats() {
+  showCats = !showCats;
+  const b = document.getElementById('btn-cats');
+  b.textContent = showCats ? 'CATS ON' : 'CATS OFF';
+  b.classList.toggle('active', showCats);
+}
+function togglePaths() {
+  showPaths = !showPaths;
+  const b = document.getElementById('btn-paths');
+  b.textContent = showPaths ? 'PATHS ON' : 'PATHS OFF';
+  b.classList.toggle('active', showPaths);
+}
+function partyMode() {
+  isParty = !isParty;
+  const b = document.getElementById('btn-party');
+  b.classList.toggle('active', isParty);
+  b.textContent = isParty ? '◈ PARTY! ◈' : 'PARTY MODE';
+  if (isParty) {
+    for (let i=0; i<3; i++) addMoreCats();
+  }
+}
+
+// ─── Mouse / Drag ─────────────────────────────────────────────────────────────
+let dragNode   = null;   // node being dragged
+let dragOffX   = 0;
+let dragOffY   = 0;
+let dragMoved  = false;  // did the mouse move enough to count as a drag?
+
+function getCanvasXY(e) {
+  const r = canvas.getBoundingClientRect();
+  return { mx: e.clientX - r.left, my: e.clientY - r.top };
+}
+
+function nodeAt(mx, my) {
+  // Return topmost node under cursor (last drawn = on top)
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (Math.abs(mx - n.x) < n.w/2 + 4 && Math.abs(my - n.y) < n.h/2 + 4) return n;
+  }
+  return null;
+}
+
+function showTooltip(e, n) {
+  const tip = document.getElementById('tooltip');
+  const badge = TYPE_BADGE[n.type] || '#888';
+  const connIn  = conns.filter(c => c.tn === n).length;
+  const connOut = conns.filter(c => c.fn === n).length;
+  let html = `<h3 style="color:${n.color};text-shadow:0 0 10px ${n.color}">${n.label}</h3>`;
+  html += `<div style="color:#555;font-size:10px;margin-bottom:6px">${n.sub} &nbsp;|&nbsp; <span style="color:${badge}">${n.type.toUpperCase()}</span></div>`;
+  (n.desc||[]).forEach(l => { html += `<div class="desc-line">${l}</div>`; });
+  if (n.tools) {
+    html += `<div class="tools-header">MCP TOOLS (${n.tools.length}):</div>`;
+    n.tools.forEach(t => { html += `<div class="tool-item">◸ ${t}</div>`; });
+  }
+  html += `<div class="conn-info">↙ ${connIn} incoming &nbsp;/&nbsp; ↗ ${connOut} outgoing</div>`;
+  tip.innerHTML = html;
+  tip.style.display = 'block';
+  const bx = e.clientX + 18, by = e.clientY - 10;
+  tip.style.left = Math.min(bx, window.innerWidth - 320) + 'px';
+  tip.style.top  = Math.max(10, Math.min(by, window.innerHeight - 300)) + 'px';
+}
+
+function hideTooltip() {
+  document.getElementById('tooltip').style.display = 'none';
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  const { mx, my } = getCanvasXY(e);
+  const n = nodeAt(mx, my);
+  if (n) {
+    dragNode  = n;
+    dragOffX  = mx - n.x;
+    dragOffY  = my - n.y;
+    dragMoved = false;
+    hideTooltip();
+    canvas.style.cursor = 'grabbing';
+    e.preventDefault();
+  }
+});
+
+canvas.addEventListener('mousemove', e => {
+  const { mx, my } = getCanvasXY(e);
+
+  if (dragNode) {
+    const newX = mx - dragOffX;
+    const newY = my - dragOffY;
+    // Only count as a drag if moved more than 3px
+    if (!dragMoved && (Math.abs(newX - dragNode.x) > 3 || Math.abs(newY - dragNode.y) > 3)) {
+      dragMoved = true;
+    }
+    dragNode.x = newX;
+    dragNode.y = newY;
+    canvas.style.cursor = 'grabbing';
+    return; // don't update hover while dragging
+  }
+
+  const n = nodeAt(mx, my);
+  hoveredNode = n;
+
+  if (n) {
+    canvas.style.cursor = 'grab';
+    showTooltip(e, n);
+  } else {
+    canvas.style.cursor = 'default';
+    hideTooltip();
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (e.button !== 0) return;
+  if (dragNode && !dragMoved) {
+    // It was a tap, not a drag — do the burst
+    const n = dragNode;
+    burst(n.x, n.y, n.color, 12);
+    hearts(n.x - 10, n.y, n.color);
+    hearts(n.x + 10, n.y, n.color);
+    for (let i=0; i<4; i++) hearts(n.x + (Math.random()-0.5)*40, n.y + (Math.random()-0.5)*20, n.color);
+  }
+  dragNode  = null;
+  dragMoved = false;
+  const { mx, my } = getCanvasXY(e);
+  hoveredNode = nodeAt(mx, my);
+  canvas.style.cursor = hoveredNode ? 'grab' : 'default';
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (!dragNode) {
+    hoveredNode = null;
+    hideTooltip();
+  }
+});
+
+// ─── Init & Loop ──────────────────────────────────────────────────────────────
+function init() {
+  rebuildLayout();
+  initCats();
+  buildLegend();
+}
+
+function animate() {
+  update();
+  draw();
+  requestAnimationFrame(animate);
+}
+
+init();
+animate();
+</script>
+</body>
+</html>
