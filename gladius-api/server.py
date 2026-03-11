@@ -1588,108 +1588,76 @@ async def run_subagent(
     return text_output, all_tool_results
 
 
-async def run_parallel_audit(
-    audit_target: str,
-    audit_scope: str,
-    sse_queue: asyncio.Queue,
-):
+async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asyncio.Queue):
     """
-    Orchestrates three subagents:
-      Phase 1: Device Agent + Threat Intel Agent run CONCURRENTLY
-      Phase 2: Synthesis Agent runs after both Phase 1 agents complete
-    Pushes SSE events to sse_queue throughout.
+    Full audit for a single device:
+      - Device Agent: connect, collect show data
+      - Threat Intel Agent: NVD, PSIRT, EOX, knowledge base
+      Both run concurrently, then a Synthesis Agent produces the report.
+    Emits device_start / tool_call / device_done SSE events.
     """
-    t_total = time.monotonic()
+    t_start = time.monotonic()
 
     async def _push(event_type: str, **kwargs):
         await sse_queue.put({"type": event_type, **kwargs})
 
-    # ── Extract device info for threat intel agent ─────────────────────────────
-    # Handle both {target, scope} and full-message {messages} schemas
-    # If scope is empty, audit_target contains the full user instruction
-    if audit_scope:
-        scope_text = audit_scope
-        device_directive = (
-            f"Connect to {audit_target} and collect all device data. "
-            f"Batch ALL tool calls (connect, 4x show commands, disconnect) in ONE response."
-        )
-        threat_directive = (
-            f"The device being audited is at {audit_target}. "
-            f"Audit scope: {audit_scope}. "
-            f"Assume IOS XE platform — query 'ios-xe' for PSIRT. "
-            f"Query NVD with 'Cisco IOS XE' and cisco_only=True. "
-            f"Focus your query_knowledge_base call on: '{audit_scope}'"
-        )
-    else:
-        # Full instruction passed as audit_target — extract IP for device agent
-        import re as _re
-        ip_match = _re.search(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', audit_target)
-        device_ip = ip_match.group(1) if ip_match else audit_target
-        scope_text = audit_target
-        device_directive = (
-            f"{audit_target}. "
-            f"Batch ALL tool calls (connect, 4x show commands, disconnect) in ONE response."
-        )
-        threat_directive = (
-            f"{audit_target}. "
-            f"Assume IOS XE platform — query 'ios-xe' for PSIRT. "
-            f"Query NVD with 'Cisco IOS XE' and cisco_only=True."
-        )
-        audit_target = device_ip  # use clean IP for synthesis
+    await _push("device_start", device=device_ip)
+
+    device_directive = (
+        f"Connect to {device_ip} and collect all device data needed for a security audit. "
+        f"Batch ALL tool calls (connect, show version, show running-config, show inventory, "
+        f"show ip interface brief, disconnect) in ONE response. Do not make multiple loops."
+    )
+
+    # Scope from the original instruction minus the IP
+    scope_text = full_instruction
+
+    threat_directive = (
+        f"The device being audited is at {device_ip}. "
+        f"Instruction: {full_instruction}. "
+        f"Assume IOS XE platform. Query PSIRT for 'ios-xe'. "
+        f"Query NVD with 'Cisco IOS XE' and cisco_only=True. "
+        f"Query knowledge base for the benchmark/compliance mentioned. "
+        f"Batch ALL tool calls in ONE response."
+    )
 
     device_messages = [{"role": "user", "content": device_directive}]
     threat_messages = [{"role": "user", "content": threat_directive}]
 
-    # ── Phase 1: Run Device + Threat Intel agents concurrently ────────────────
-    await _push("subagent_start", agent="device", label="Device Collection")
-    await _push("subagent_start", agent="threat", label="Threat Intelligence")
-    await _push("text", content="\n🔀 **Parallel Mode** — Device Collection & Threat Intelligence running concurrently...\n\n")
-
-    t_phase1 = time.monotonic()
-
+    # Phase 1: Device + Threat Intel concurrently
     device_task = asyncio.create_task(
-        run_subagent(DEVICE_AGENT_PROMPT, device_messages, DEVICE_TOOLS, "DeviceAgent")
+        run_subagent(DEVICE_AGENT_PROMPT, device_messages, DEVICE_TOOLS, f"DeviceAgent-{device_ip}")
     )
     threat_task = asyncio.create_task(
-        run_subagent(THREAT_INTEL_PROMPT, threat_messages, THREAT_TOOLS, "ThreatAgent")
+        run_subagent(THREAT_INTEL_PROMPT, threat_messages, THREAT_TOOLS, f"ThreatAgent-{device_ip}")
     )
 
-    # Stream status updates while waiting for both tasks
-    done_agents = set()
-    while len(done_agents) < 2:
-        await asyncio.sleep(1)
-        if device_task.done() and "device" not in done_agents:
-            done_agents.add("device")
-            elapsed = time.monotonic() - t_phase1
-            await _push("subagent_done", agent="device", label="Device Collection", elapsed=round(elapsed, 1))
-            await _push("text", content=f"✅ Device collection complete ({elapsed:.1f}s)\n")
-        if threat_task.done() and "threat" not in done_agents:
-            done_agents.add("threat")
-            elapsed = time.monotonic() - t_phase1
-            await _push("subagent_done", agent="threat", label="Threat Intelligence", elapsed=round(elapsed, 1))
-            await _push("text", content=f"✅ Threat intelligence complete ({elapsed:.1f}s)\n")
+    # Wait for both, stream tool_call events as they complete
+    done_set = set()
+    while len(done_set) < 2:
+        await asyncio.sleep(0.5)
+        if device_task.done() and "device" not in done_set:
+            done_set.add("device")
+        if threat_task.done() and "threat" not in done_set:
+            done_set.add("threat")
 
-    phase1_elapsed = time.monotonic() - t_phase1
-    log.info(f"[Orchestrator] Phase 1 complete in {phase1_elapsed:.1f}s")
-
-    # Retrieve results
     try:
         device_text, device_tools = device_task.result()
     except Exception as e:
         device_text, device_tools = f"Device collection failed: {e}", []
-        log.error(f"Device agent failed: {e}")
 
     try:
         threat_text, threat_tools = threat_task.result()
     except Exception as e:
         threat_text, threat_tools = f"Threat intel failed: {e}", []
-        log.error(f"Threat agent failed: {e}")
 
-    # ── Phase 2: Synthesis ────────────────────────────────────────────────────
-    await _push("subagent_start", agent="synthesis", label="Synthesising Findings")
-    await _push("text", content="\n🧠 **Synthesising findings** from both agents...\n\n")
+    # Emit tool calls for this device into the chat stream
+    for r in device_tools:
+        await _push("tool_call", tool=r["tool"], device=device_ip)
+    for r in threat_tools:
+        await _push("tool_call", tool=r["tool"], device=device_ip)
 
-    # Build synthesis context from both agents' tool outputs
+    # Phase 2: Synthesis
     device_data = "\n\n".join(
         f"[{r['tool']}]\n{r['output']}" for r in device_tools
     ) or device_text or "No device data collected"
@@ -1701,7 +1669,7 @@ async def run_parallel_audit(
     synthesis_messages = [{
         "role": "user",
         "content": (
-            f"Audit target: {audit_target}\nScope: {scope_text}\n\n"
+            f"Audit target: {device_ip}\nScope: {scope_text}\n\n"
             f"## Device Data\n{device_data[:8000]}\n\n"
             f"## Threat Intelligence\n{threat_data[:8000]}\n\n"
             f"Synthesise the above into a structured audit report. "
@@ -1711,19 +1679,16 @@ async def run_parallel_audit(
     }]
 
     synthesis_text, synthesis_tools = await run_subagent(
-        SYNTHESIS_AGENT_PROMPT, synthesis_messages, SYNTHESIS_TOOLS, "SynthesisAgent", max_loops=2
+        SYNTHESIS_AGENT_PROMPT, synthesis_messages, SYNTHESIS_TOOLS,
+        f"SynthesisAgent-{device_ip}", max_loops=2
     )
 
-    t_synthesis = time.monotonic()
-    await _push("subagent_done", agent="synthesis", label="Synthesis", elapsed=round(time.monotonic()-t_phase1, 1))
-
-    # Extract save_audit_results data and emit audit_saved
+    # Emit audit_saved
     for r in synthesis_tools:
         if r["tool"] == "save_audit_results":
             try:
                 audit_data = json.loads(r["output"]) if r["output"].strip().startswith("{") else {}
                 if not audit_data:
-                    # The tool output is a status message — get from _last_audit
                     global _last_audit
                     if _last_audit:
                         audit_data = _last_audit
@@ -1731,14 +1696,71 @@ async def run_parallel_audit(
                     if not audit_data.get("timestamp"):
                         audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
                     await _push("audit_saved", audit=audit_data)
-                    log.info("[Orchestrator] audit_saved event queued")
             except Exception as e:
-                log.warning(f"[Orchestrator] audit_saved parse failed: {e}")
+                log.warning(f"[DeviceAudit-{device_ip}] audit_saved parse failed: {e}")
 
-    total_elapsed = time.monotonic() - t_total
-    await _push("text", content=f"\n\n{synthesis_text}\n\n⏱️ Parallel audit completed in **{total_elapsed:.1f}s**\n")
+    elapsed = round(time.monotonic() - t_start, 1)
+    await _push("device_done", device=device_ip, elapsed=elapsed)
+    log.info(f"[DeviceAudit] {device_ip} complete in {elapsed}s")
+    return synthesis_text
+
+
+async def run_parallel_audit(
+    audit_target: str,
+    audit_scope: str,
+    sse_queue: asyncio.Queue,
+):
+    """
+    Multi-device orchestrator: spawns one run_device_audit task per device,
+    all running concurrently. Falls back to single-device audit if only one IP found.
+    """
+    import re as _re
+    t_total = time.monotonic()
+
+    async def _push(event_type: str, **kwargs):
+        await sse_queue.put({"type": event_type, **kwargs})
+
+    # Build the full instruction string
+    if audit_scope:
+        full_instruction = f"Audit {audit_target} against {audit_scope}"
+    else:
+        full_instruction = audit_target  # full message passed directly
+
+    # Extract all device IPs from the instruction
+    devices = list(dict.fromkeys(_re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', full_instruction)))
+
+    if not devices:
+        await _push("error", content="No device IPs found in audit request.")
+        await _push("done")
+        return
+
+    log.info(f"[Orchestrator] Launching {len(devices)} device audit(s): {devices}")
+    await _push("text", content=f"🚀 Launching **{len(devices)} parallel device audit{'s' if len(devices)>1 else ''}**: {', '.join(devices)}\n\n")
+
+    # Spawn one task per device — all run concurrently
+    tasks = {
+        ip: asyncio.create_task(run_device_audit(ip, full_instruction, sse_queue))
+        for ip in devices
+    }
+
+    results = {}
+    done_devices = set()
+    while len(done_devices) < len(devices):
+        await asyncio.sleep(0.5)
+        for ip, task in tasks.items():
+            if task.done() and ip not in done_devices:
+                done_devices.add(ip)
+                try:
+                    results[ip] = task.result()
+                except Exception as e:
+                    results[ip] = f"Audit failed: {e}"
+                    log.error(f"[Orchestrator] Device {ip} failed: {e}")
+
+    total_elapsed = round(time.monotonic() - t_total, 1)
+    summary = "\n".join(f"- **{ip}**: audit complete" for ip in devices)
+    await _push("text", content=f"\n\n✅ All device audits complete in **{total_elapsed}s**\n{summary}\n")
     await _push("done")
-    log.info(f"[Orchestrator] Parallel audit complete in {total_elapsed:.1f}s")
+    log.info(f"[Orchestrator] All {len(devices)} audits complete in {total_elapsed}s")
 
 
 class ParallelAuditRequest(BaseModel):
@@ -1751,32 +1773,29 @@ class ParallelAuditRequest(BaseModel):
 
 @app.post("/api/audit/parallel")
 async def parallel_audit(request: ParallelAuditRequest):
-    """Parallel audit endpoint — Device + Threat Intel agents run concurrently."""
+    """Parallel audit endpoint — one subagent per device, all concurrent."""
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
 
     # Extract target and scope from messages if sent via chat UI
     audit_target = request.target
-    audit_scope = request.scope
+    audit_scope  = request.scope
     if not audit_target and request.messages:
-        # Use the full user message as the audit directive
         last_msg = next((m["content"] for m in reversed(request.messages) if m.get("role") == "user"), None)
         if last_msg:
             audit_target = last_msg
-            audit_scope = ""  # target contains full instruction
+            audit_scope  = ""
 
     if not audit_target:
         raise HTTPException(status_code=422, detail="No audit target provided")
 
     sse_queue: asyncio.Queue = asyncio.Queue()
-
-    # Launch orchestrator as background task
     asyncio.create_task(run_parallel_audit(audit_target, audit_scope, sse_queue))
 
     async def _stream():
         while True:
             try:
-                event = await asyncio.wait_for(sse_queue.get(), timeout=120.0)
+                event = await asyncio.wait_for(sse_queue.get(), timeout=180.0)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") == "done":
                     break
