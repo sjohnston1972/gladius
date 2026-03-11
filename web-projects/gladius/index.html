@@ -2089,6 +2089,86 @@
   .design-send-btn svg { width: 16px; height: 16px; color: var(--accent); }
   .design-send-btn:hover svg { color: #fff; }
 
+  /* ── Parallel Mode Toggle ─────────────────────────────────────────────── */
+  .parallel-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,185,0,0.3);
+    background: rgba(255,185,0,0.05);
+    transition: all 0.2s;
+  }
+  .parallel-toggle:hover { border-color: rgba(255,185,0,0.6); background: rgba(255,185,0,0.1); }
+  .parallel-toggle input { display: none; }
+  .parallel-toggle-slider {
+    width: 32px; height: 18px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 9px;
+    position: relative;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .parallel-toggle-slider::after {
+    content: '';
+    position: absolute;
+    width: 12px; height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    top: 3px; left: 3px;
+    transition: transform 0.2s;
+  }
+  .parallel-toggle input:checked + .parallel-toggle-slider { background: #ffb900; }
+  .parallel-toggle input:checked + .parallel-toggle-slider::after { transform: translateX(14px); }
+  .parallel-toggle-label { font-size: 11px; font-weight: 600; color: #ffb900; letter-spacing: 0.05em; white-space: nowrap; }
+
+  /* ── Subagent Status Panel ────────────────────────────────────────────── */
+  .subagent-panel {
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px;
+    background: rgba(255,185,0,0.04);
+    border-bottom: 1px solid rgba(255,185,0,0.15);
+    flex-wrap: wrap;
+  }
+  .subagent-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 180px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 8px 12px;
+    transition: border-color 0.3s;
+  }
+  .subagent-card.active { border-color: rgba(255,185,0,0.5); background: rgba(255,185,0,0.06); }
+  .subagent-card.done   { border-color: rgba(0,230,118,0.4); background: rgba(0,230,118,0.04); }
+  .sa-icon { font-size: 18px; }
+  .sa-info { flex: 1; }
+  .sa-name { font-size: 11px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.05em; }
+  .sa-status { font-size: 12px; color: var(--text-muted, #666); margin-top: 2px; }
+  .subagent-card.active .sa-status { color: #ffb900; }
+  .subagent-card.done   .sa-status { color: #00e676; }
+  .sa-indicator {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .subagent-card.active .sa-indicator {
+    background: #ffb900;
+    box-shadow: 0 0 8px #ffb900;
+    animation: sa-pulse 1s ease-in-out infinite;
+  }
+  .subagent-card.done .sa-indicator { background: #00e676; box-shadow: 0 0 6px #00e676; animation: none; }
+  @keyframes sa-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 </head>
@@ -2321,6 +2401,38 @@
             </div>
           </div>
           <div style="flex:1"></div>
+          <label class="parallel-toggle" title="Run Device Collection and Threat Intelligence concurrently to reduce audit time">
+            <input type="checkbox" id="parallel-mode-toggle" onchange="toggleParallelMode(this.checked)">
+            <span class="parallel-toggle-slider"></span>
+            <span class="parallel-toggle-label">⚡ Parallel Mode</span>
+          </label>
+        </div>
+        <!-- Subagent status panel — shown only in parallel mode during an audit -->
+        <div class="subagent-panel" id="subagent-panel" style="display:none">
+          <div class="subagent-card" id="sa-device">
+            <div class="sa-icon">💻</div>
+            <div class="sa-info">
+              <div class="sa-name">Device Agent</div>
+              <div class="sa-status" id="sa-device-status">Idle</div>
+            </div>
+            <div class="sa-indicator" id="sa-device-dot"></div>
+          </div>
+          <div class="subagent-card" id="sa-threat">
+            <div class="sa-icon">🔍</div>
+            <div class="sa-info">
+              <div class="sa-name">Threat Intel Agent</div>
+              <div class="sa-status" id="sa-threat-status">Idle</div>
+            </div>
+            <div class="sa-indicator" id="sa-threat-dot"></div>
+          </div>
+          <div class="subagent-card" id="sa-synthesis">
+            <div class="sa-icon">🧠</div>
+            <div class="sa-info">
+              <div class="sa-name">Synthesis Agent</div>
+              <div class="sa-status" id="sa-synthesis-status">Waiting</div>
+            </div>
+            <div class="sa-indicator" id="sa-synthesis-dot"></div>
+          </div>
         </div>
 
         <div class="chat-messages" id="chat-messages">
@@ -3275,6 +3387,145 @@
     setTimeout(sendMessage, 100);
   }
 
+  // ── Parallel Mode ──────────────────────────────────────────────────────────
+  let parallelModeEnabled = localStorage.getItem('gladius-parallel-mode') === 'true';
+
+  function toggleParallelMode(enabled) {
+    parallelModeEnabled = enabled;
+    localStorage.setItem('gladius-parallel-mode', enabled);
+    const panel = document.getElementById('subagent-panel');
+    if (panel) panel.style.display = enabled ? 'flex' : 'none';
+    console.log('[Gladius] Parallel mode:', enabled ? 'ON' : 'OFF');
+  }
+
+  function initParallelToggle() {
+    const toggle = document.getElementById('parallel-mode-toggle');
+    if (toggle) {
+      toggle.checked = parallelModeEnabled;
+      toggleParallelMode(parallelModeEnabled);
+    }
+  }
+
+  function setSubagentState(agent, state, statusText) {
+    // state: 'idle' | 'active' | 'done'
+    const card = document.getElementById('sa-' + agent);
+    const statusEl = document.getElementById('sa-' + agent + '-status');
+    if (!card) return;
+    card.classList.remove('active', 'done');
+    if (state === 'active') card.classList.add('active');
+    if (state === 'done')   card.classList.add('done');
+    if (statusEl && statusText) statusEl.textContent = statusText;
+  }
+
+  function resetSubagentPanel() {
+    ['device', 'threat', 'synthesis'].forEach(a => setSubagentState(a, 'idle', a === 'synthesis' ? 'Waiting' : 'Idle'));
+  }
+
+  async function sendParallelAudit(text) {
+    // Extract target IP and scope from the user message
+    const ipMatch = text.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    const target  = ipMatch ? ipMatch[1] : text.split(' ').pop();
+    const scope   = text.replace(target, '').replace(/audit/i, '').trim() ||
+                    'NIST CIS IOS XE benchmark, open CVEs and open PSIRT advisories';
+
+    resetSubagentPanel();
+
+    const msgId   = 'bubble-' + Date.now();
+    const orbitId = 'orbit-'  + Date.now();
+    const now     = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const msgEl   = document.createElement('div');
+    msgEl.className = 'msg agent';
+    msgEl.innerHTML = `
+      <div class="avatar-orbit active" id="${orbitId}">
+        <div class="msg-avatar agent">A</div>
+        <div class="orbit-dot"></div>
+      </div>
+      <div>
+        <div class="msg-bubble" id="${msgId}"></div>
+        <div class="msg-meta">AUDIT AGENT · PARALLEL MODE · ${now}</div>
+      </div>`;
+    chatMessages.appendChild(msgEl);
+
+    let fullText = '';
+    const typingEl = appendTyping();
+
+    try {
+      const response = await fetch('/api/audit/parallel', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ target, scope }),
+      });
+
+      if (!response.ok) throw new Error(`API error ${response.status}`);
+      typingEl.remove();
+
+      const reader  = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer    = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+
+            if (event.type === 'text') {
+              fullText += event.content;
+              document.getElementById(msgId).innerHTML = renderBubbleContent(fullText, []);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+
+            } else if (event.type === 'subagent_start') {
+              setSubagentState(event.agent, 'active', 'Running…');
+
+            } else if (event.type === 'subagent_done') {
+              setSubagentState(event.agent, 'done', `Done (${event.elapsed}s)`);
+
+            } else if (event.type === 'audit_saved') {
+              try {
+                localStorage.setItem('gladius-audit-latest', JSON.stringify(event.audit));
+                let hist = [];
+                const raw = localStorage.getItem('gladius-audit-history');
+                if (raw) hist = JSON.parse(raw);
+                const newTs = event.audit.timestamp || '';
+                hist = hist.filter(h => h.timestamp !== newTs);
+                hist.unshift(event.audit);
+                if (hist.length > 10) hist.length = 10;
+                localStorage.setItem('gladius-audit-history', JSON.stringify(hist));
+                loadDashboard();
+                renderReports();
+                logActivity('Parallel audit saved — ' + event.audit.device + ' (' + (event.audit.findings?.length || 0) + ' findings)', event.audit.device);
+              } catch(e) { console.warn('audit_saved write failed', e); }
+
+            } else if (event.type === 'done') {
+              conversationHistory.push({ role: 'assistant', content: fullText });
+              const orbitEl = document.getElementById(orbitId);
+              if (orbitEl) orbitEl.classList.remove('active');
+              setSubagentState('synthesis', 'done', 'Complete');
+
+            } else if (event.type === 'error') {
+              document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
+              const orbitEl = document.getElementById(orbitId);
+              if (orbitEl) orbitEl.classList.remove('active');
+            }
+          } catch(e) { /* skip malformed */ }
+        }
+      }
+    } catch(err) {
+      typingEl.remove();
+      appendMsg('agent', `<span style="color:var(--danger)">Parallel audit error: ${err.message}</span>`);
+    } finally {
+      isSending = false;
+    }
+  }
+
+
   async function sendMessage() {
     const text = chatInput.value.trim();
     if (!text || isSending) return;
@@ -3284,6 +3535,11 @@
     conversationHistory.push({ role: 'user', content: text });
     chatInput.value = '';
     chatInput.style.height = 'auto';
+
+    // Route to parallel audit engine if parallel mode is enabled and message looks like an audit
+    if (parallelModeEnabled && /audit|scan|check|assess/i.test(text)) {
+      return sendParallelAudit(text);
+    }
 
     const typingEl = appendTyping();
 
@@ -5533,6 +5789,7 @@ ${cves.length ? `<!-- CVE TAB -->
   loadDashboard();
   renderReports();
   initWelcome();
+  initParallelToggle();
 
   async function initWelcome() {
     const now = new Date();
@@ -6231,6 +6488,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const { bubble, orbitWrap } = appendDesignMsg('design', '<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>', true);
     let fullText = '';
     let firstChunk = true;
+    const designContainer = document.getElementById('design-messages');
 
     try {
       const resp = await fetch('/api/chat/design', {
@@ -6258,6 +6516,7 @@ ${cves.length ? `<!-- CVE TAB -->
               if (firstChunk) { bubble.innerHTML = ''; firstChunk = false; }
               fullText += ev.content;
               bubble.innerHTML = renderDesignMarkdown(fullText);
+              designContainer.scrollTop = designContainer.scrollHeight;
             } else if (ev.type === 'done') {
               if (orbitWrap) orbitWrap.classList.remove('design-active');
               designMessages.push({ role: 'assistant', content: fullText });
