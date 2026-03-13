@@ -415,6 +415,64 @@
 
   .topbar-spacer { flex: 1; }
 
+  /* Agent completion toast */
+  .agent-toast {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    padding: 5px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    background: var(--bg-card);
+    white-space: nowrap;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.25s, transform 0.25s;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 0;
+    overflow: hidden;
+  }
+  .agent-toast.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    max-width: 400px;
+  }
+  .agent-toast-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    flex-shrink: 0;
+    animation: toastPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes toastPulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+  }
+
+  /* Nav item pulse when agent job completes off-screen */
+  @keyframes navItemPulse {
+    0%, 100% { background: transparent; }
+    50%      { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  }
+  .nav-item.agent-done {
+    animation: navItemPulse 1.4s ease-in-out infinite;
+    position: relative;
+  }
+  .nav-item.agent-done::after {
+    content: '';
+    position: absolute;
+    top: 7px; right: 8px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 7px var(--accent);
+  }
+
   .topbar-status {
     display: flex;
     align-items: center;
@@ -664,6 +722,93 @@
   .severity-badge.medium { background: var(--warn-dim); color: var(--warn); border: 1px solid var(--warn); }
   .severity-badge.low { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
   .severity-badge.pass { background: var(--success-dim); color: var(--success); border: 1px solid var(--success); }
+
+  /* Compact overrides for dashboard findings pane */
+  #dash-findings-body .finding-item { padding: 5px 0; }
+  #dash-findings-body .finding-text { font-size: 12px; }
+  #dash-findings-body .finding-text strong { font-family: var(--font-ui); font-size: 12px; font-weight: 600; }
+  #dash-findings-body .severity-badge { font-size: 9px; padding: 1px 4px; }
+
+  /* Resize handle between stacked panels */
+  .resize-handle-h {
+    height: 10px;
+    flex-shrink: 0;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 5;
+  }
+  .resize-handle-h::after {
+    content: '';
+    width: 36px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    transition: background 0.15s;
+  }
+  .resize-handle-h:hover::after,
+  .resize-handle-h.dragging::after { background: var(--accent); }
+
+  /* Device inventory row */
+  .inventory-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .inventory-item:last-child { border-bottom: none; }
+  .inventory-item:hover { opacity: 0.8; }
+  .inventory-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  }
+  .inventory-name {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .inventory-host {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+  .inventory-status {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    text-transform: uppercase;
+  }
+
+  /* Dashboard inventory table */
+  #inv-table { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:11px; }
+  #inv-table thead tr { border-bottom:1px solid var(--border); }
+  #inv-table th {
+    padding:4px 8px; text-align:left; font-size:9px; font-weight:500;
+    color:var(--text-dim); letter-spacing:0.08em; text-transform:uppercase;
+    white-space:nowrap;
+  }
+  #inv-table td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+  #inv-table tbody tr:last-child td { border-bottom:none; }
+  #inv-table tbody tr { cursor:pointer; transition:background 0.12s; }
+  #inv-table tbody tr:hover { background:var(--bg-card); }
+  #inv-col-status { width:28px; }
+  #inv-col-device { width:110px; }
+  #inv-col-host   { width:100px; }
+  #inv-col-desc   { }
+  #inv-col-uptime { width:90px; }
+  #inv-col-rtt    { width:52px; }
+  #inv-col-poll   { width:76px; }
 
   .finding-text {
     font-size: 15px;
@@ -1981,6 +2126,10 @@
   }
 
 
+  /* ── TSHOOT AGENT PAGE ── */
+  #page-tshoot { display: none; flex-direction: column; }
+  #page-tshoot.active { display: flex; }
+
   /* ── DESIGN AGENT PAGE ── */
   #page-design {
     display: none;
@@ -2132,6 +2281,23 @@
   .subagent-card.done .sa-indicator { background: #00e676; box-shadow: 0 0 6px #00e676; animation: none; }
   @keyframes sa-pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
 
+  /* Topbar persistent agent status chips */
+  #agent-status-chips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .topbar-agent-chip {
+    font-family:var(--font-mono); font-size:9px;
+    padding:2px 8px 2px 6px; border-radius:2px;
+    border:1px solid var(--border); color:var(--text-dim);
+    display:inline-flex; align-items:center; gap:4px;
+    transition:all 0.3s; white-space:nowrap;
+  }
+  .topbar-agent-chip.tac-active { border-color:var(--accent); color:var(--accent); }
+  .topbar-agent-chip.tac-done   { border-color:#00cc66; color:#00cc66; }
+  .tac-dot {
+    width:5px; height:5px; border-radius:50%; background:currentColor;
+    display:inline-block; flex-shrink:0;
+  }
+  .topbar-agent-chip.tac-active .tac-dot { animation:sa-pulse 1s ease-in-out infinite; }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 </head>
@@ -2188,6 +2354,10 @@
     <div class="nav-item" onclick="showPage('design', this)" title="Design Agent — Network design advisor">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4"/></svg>
       <span>Design</span>
+    </div>
+    <div class="nav-item" onclick="showPage('tshoot', this)" title="Tshoot Agent — Network diagnostics &amp; troubleshooting">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+      <span>Tshoot</span>
     </div>
   </div>
 
@@ -2249,9 +2419,8 @@
 
   <!-- Settings -->
   <div class="sidebar-section">
-    <div class="nav-item" onclick="showPage('settings', this)" title="Settings">
+    <div class="nav-item" onclick="showPage('settings', this)" title="Config">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      <span>Config</span>
     </div>
   </div>
 </nav>
@@ -2263,6 +2432,12 @@
   <div class="topbar">
     <div class="topbar-title">GLADIUS <span>//</span></div>
     <div class="topbar-breadcrumb" id="breadcrumb">DASHBOARD</div>
+    <div class="topbar-spacer"></div>
+    <div id="agent-status-chips"></div>
+    <div class="agent-toast" id="agent-toast">
+      <div class="agent-toast-dot"></div>
+      <span id="agent-toast-text"></span>
+    </div>
   </div>
 
   <!-- CONTENT -->
@@ -2271,10 +2446,11 @@
     <!-- DASHBOARD PAGE -->
     <div id="page-dashboard" class="page active">
       <div class="stats-row">
-        <div class="stat-card">
-          <div class="stat-label">Last Audit</div>
+        <div class="stat-card" id="last-audit-card" style="overflow:visible;cursor:pointer" onclick="toggleAuditSelector(event)">
+          <div class="stat-label">Last Audit <span style="font-size:8px;opacity:0.45;margin-left:3px">▼</span></div>
           <div class="stat-value accent" id="dash-device">—</div>
           <div class="stat-sub" id="dash-device-sub">No audits yet</div>
+          <div id="audit-selector-drop" onclick="event.stopPropagation()" style="display:none;position:absolute;z-index:300;min-width:260px;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden"></div>
         </div>
         <div class="stat-card danger filterable" id="filter-high" onclick="toggleFilter('HIGH')">
           <div class="stat-label">High Severity</div>
@@ -2299,21 +2475,53 @@
       </div>
 
       <div style="display:flex; gap:16px; flex:1;">
-        <!-- Recent Findings -->
-        <div class="panel" style="flex:1.2">
-          <div class="panel-header">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            <div class="panel-title" id="dash-findings-title">Latest Findings</div>
-            <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="dash-findings-date"></span>
+        <!-- Left column: Findings + Inventory (resizable) -->
+        <div id="dash-left-col" style="display:flex;flex-direction:column;flex:1.2">
+          <!-- Recent Findings (compact, scrollable) -->
+          <div class="panel" id="dash-findings-panel" style="height:230px;flex-shrink:0">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div class="panel-title" id="dash-findings-title">Latest Findings</div>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="dash-findings-date"></span>
+            </div>
+            <div class="panel-body" id="dash-findings-body">
+              <div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// Loading findings...</div>
+            </div>
           </div>
-          <div class="panel-body" id="dash-findings-body">
-            <div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// Loading findings...</div>
+
+          <!-- Resize handle -->
+          <div class="resize-handle-h" id="dash-resize-handle"></div>
+
+          <!-- Device Inventory -->
+          <div class="panel" id="dash-inventory-panel" style="flex:1;min-height:80px">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              <div class="panel-title">Device Inventory</div>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)" id="dash-inventory-count"></span>
+            </div>
+            <div class="panel-body" id="dash-inventory-body" style="padding:0">
+              <table id="inv-table">
+                <thead>
+                  <tr>
+                    <th id="inv-col-status"></th>
+                    <th id="inv-col-device">Device</th>
+                    <th id="inv-col-host">Host</th>
+                    <th id="inv-col-desc">Description</th>
+                    <th id="inv-col-uptime">Uptime</th>
+                    <th id="inv-col-rtt">RTT</th>
+                    <th id="inv-col-poll">Last Poll</th>
+                  </tr>
+                </thead>
+                <tbody id="inv-table-body">
+                  <tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-dim)">// Loading devices…</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
-        <!-- Activity + Score -->
-        <div style="display:flex;flex-direction:column;gap:16px;flex:0.8">
-          <!-- Compliance Score -->
+        <!-- Compliance Score -->
+        <div style="flex:0.8">
           <div class="panel">
             <div class="panel-header">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -2337,17 +2545,6 @@
               <div class="progress-bar"><div class="progress-fill" id="score-cis-bar" style="width:0%"></div></div>
             </div>
           </div>
-
-          <!-- Activity Log -->
-          <div class="panel" style="flex:1">
-            <div class="panel-header">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b8aa8" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-              <div class="panel-title">Activity Log</div>
-            </div>
-            <div class="panel-body" id="dash-activity-body">
-              <div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No activity yet</div>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -2360,7 +2557,7 @@
             <div class="agent-avatar">A</div>
             <div class="agent-info">
               <div class="name">AUDIT AGENT</div>
-              <div class="sub">CLAUDE CODE · MCP ACTIVE · 8 TOOLS</div>
+              <div class="sub">AUDIT AGENT · MCP TOOL EXECUTION</div>
             </div>
           </div>
           <div style="flex:1"></div>
@@ -2393,6 +2590,43 @@
     </div>
 
 
+    <!-- TSHOOT AGENT PAGE -->
+    <div id="page-tshoot" class="page">
+      <div class="chat-container">
+        <div class="chat-header">
+          <div class="agent-indicator">
+            <div class="agent-avatar">T</div>
+            <div class="agent-info">
+              <div class="name">TSHOOT AGENT</div>
+              <div class="sub">NETWORK DIAGNOSTICS · MCP TOOL EXECUTION</div>
+            </div>
+          </div>
+          <div style="flex:1"></div>
+        </div>
+
+        <div class="chat-messages" id="tshoot-messages">
+          <div class="msg agent">
+            <div class="msg-avatar agent">T</div>
+            <div>
+              <div class="msg-bubble" id="tshoot-welcome-bubble">Tshoot Agent online. Ready for diagnostics.</div>
+              <div class="msg-meta" id="tshoot-welcome-meta">TSHOOT AGENT · —</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="quick-cmds" id="tshoot-quick-cmds-row">
+          <!-- rendered by renderTshootQuickCmds() -->
+        </div>
+
+        <div class="chat-input-area">
+          <textarea class="chat-input" id="tshoot-input" placeholder="Diagnose a device, run a scan, test connectivity…" rows="1" onkeydown="handleTshootKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="send-btn" onclick="sendTshootMessage()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- DESIGN AGENT PAGE -->
     <div id="page-design" class="page">
       <div class="chat-container">
@@ -2400,7 +2634,7 @@
           <div class="agent-indicator">
             <div class="design-agent-avatar">D</div>
             <div class="agent-info">
-              <div class="name" style="color:var(--accent)">DESIGN AGENT</div>
+              <div class="name">DESIGN AGENT</div>
               <div class="sub">DESIGN GUIDELINES · RAG ENABLED · DESIGN-GUIDELINES COLLECTION</div>
             </div>
           </div>
@@ -2416,7 +2650,7 @@
             <div class="design-msg-avatar">D</div>
             <div>
               <div class="msg-bubble" id="design-welcome-bubble">Design Agent online. Initialising…</div>
-              <div class="msg-meta" id="design-welcome-meta">DESIGN · —</div>
+              <div class="msg-meta" id="design-welcome-meta">DESIGN AGENT · —</div>
             </div>
           </div>
         </div>
@@ -2601,10 +2835,10 @@
           <thead>
             <tr>
               <th>CVE ID</th>
-              <th>CVSS</th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortCVEs('cvss')">CVSS <span id="cve-sort-cvss" style="opacity:0.6"></span></th>
               <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortCVEs('severity')">SEVERITY <span id="cve-sort-severity" style="opacity:0.6"></span></th>
               <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortCVEs('published')">PUBLISHED <span id="cve-sort-published" style="opacity:0.6"></span></th>
-              <th>VENDOR</th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortCVEs('vendor')">VENDOR <span id="cve-sort-vendor" style="opacity:0.6"></span></th>
               <th>DESCRIPTION</th>
             </tr>
           </thead>
@@ -2640,9 +2874,9 @@
           <thead>
             <tr>
               <th>ADVISORY ID</th>
-              <th>CVSS</th>
-              <th>SEVERITY</th>
-              <th>PUBLISHED</th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortPSIRT('cvss')">CVSS <span id="psirt-sort-cvss" style="opacity:0.6"></span></th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortPSIRT('severity')">SEVERITY <span id="psirt-sort-severity" style="opacity:0.6"></span></th>
+              <th style="cursor:pointer;user-select:none;white-space:nowrap" onclick="sortPSIRT('published')">PUBLISHED <span id="psirt-sort-published" style="opacity:0.6"></span></th>
               <th>CVEs</th>
               <th>TITLE</th>
             </tr>
@@ -2795,7 +3029,9 @@
     </div>
 
     <!-- SETTINGS PAGE -->
-    <div id="page-settings" class="page" style="padding:20px;overflow-y:auto;flex-direction:column;gap:16px">
+    <div id="page-settings" class="page" style="padding:20px;gap:16px;align-items:flex-start">
+      <!-- Left: config panels -->
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:16px;overflow-y:auto;max-height:100%">
 
       <!-- Skin Picker Panel -->
       <div class="panel" style="max-width:820px">
@@ -2942,6 +3178,21 @@
         <div class="panel-body">
           <div id="settings-health-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px">
             <div style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);padding:20px 0;grid-column:1/-1">// Loading health status…</div>
+          </div>
+        </div>
+      </div>
+
+      </div><!-- /left col -->
+
+      <!-- Right: Activity Log -->
+      <div style="width:560px;flex-shrink:0;display:flex;flex-direction:column;max-height:100%">
+        <div class="panel" style="flex:1;display:flex;flex-direction:column;min-height:0">
+          <div class="panel-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b8aa8" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <div class="panel-title">Activity Log</div>
+          </div>
+          <div class="panel-body" id="dash-activity-body" style="flex:1;overflow-y:auto">
+            <div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No activity yet</div>
           </div>
         </div>
       </div>
@@ -3151,8 +3402,40 @@
     });
   }
 
+  // ── AGENT COMPLETION NOTIFICATIONS ──
+  let _currentPage = 'dashboard';
+  let _toastTimer  = null;
+
+  function notify(pageName, label, msg) {
+    if (_currentPage === pageName) return;
+    // Pulse the nav item
+    const navEl = document.querySelector(`.nav-item[onclick*="${pageName}"]`);
+    if (navEl) navEl.classList.add('agent-done');
+    // Show toast
+    const toast   = document.getElementById('agent-toast');
+    const toastTx = document.getElementById('agent-toast-text');
+    if (!toast || !toastTx) return;
+    toastTx.textContent = `${label} · ${msg}`;
+    toast.classList.add('visible');
+    toast.onclick = () => {
+      toast.classList.remove('visible');
+      showPage(pageName, navEl);
+    };
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => toast.classList.remove('visible'), 5000);
+  }
+
   // ── PAGE NAVIGATION ──
   function showPage(name, el) {
+    _currentPage = name;
+    // Clear any done (green) topbar chips for this tab
+    clearTopbarChipsForTab(name);
+    // Clear completion pulse on the tab we're navigating to
+    const targetNav = el || document.querySelector(`.nav-item[onclick*="${name}"]`);
+    if (targetNav) targetNav.classList.remove('agent-done');
+    // Dismiss toast if it points to this page
+    const toast = document.getElementById('agent-toast');
+    if (toast && _currentPage === name) toast.classList.remove('visible');
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.getElementById('page-' + name).classList.add('active');
@@ -3168,19 +3451,27 @@
       cve: 'CVE LOOKUP',
       settings: 'CONFIGURATION',
       ingest: 'DOCUMENT INGESTION',
-      snmp: 'SNMP POLLER'
+      snmp:   'SNMP POLLER',
+      tshoot: 'TSHOOT AGENT'
     };
     document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
     if (name === 'cve'      && !_cvesLoaded)  loadLatestCVEs();
     if (name === 'psirt'   && !_psirtLoaded) loadLatestPSIRT();
     if (name === 'ingest')  loadCollectionStats();
-    if (name === 'settings') refreshSettingsHealth();
+    if (name === 'settings') { refreshSettingsHealth(); renderActivityLog(); }
     if (name === 'snmp') {
       snmpRefresh();
       clearInterval(_snmpRefreshTimer);
       _snmpRefreshTimer = setInterval(snmpRefresh, 30000);
     } else {
       clearInterval(_snmpRefreshTimer);
+    }
+    if (name === 'dashboard') {
+      renderInventory();
+      clearInterval(_inventoryRefreshTimer);
+      _inventoryRefreshTimer = setInterval(renderInventory, 30000);
+    } else {
+      clearInterval(_inventoryRefreshTimer);
     }
   }
 
@@ -3274,6 +3565,9 @@
     document.getElementById('qcmd-prompt-input').value = cmd.prompt;
     document.getElementById('qcmd-modal-title').textContent = idx >= 0 ? 'EDIT QUICK COMMAND' : 'ADD QUICK COMMAND';
     document.getElementById('qcmd-delete-btn').style.display = idx >= 0 ? 'inline-block' : 'none';
+    // Reset to audit handlers in case tshoot modal overrode them
+    document.getElementById('qcmd-save-btn').onclick   = saveQcmdModal;
+    document.getElementById('qcmd-delete-btn').onclick = deleteQcmd;
     document.getElementById('qcmd-modal-overlay').classList.add('active');
     document.getElementById('qcmd-label-input').focus();
   }
@@ -3321,28 +3615,59 @@
 
 
   // ── MULTI-DEVICE AUTO-DETECTION ─────────────────────────────────────────
-  function extractIPs(text) {
-    const ipRe = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
-    const hostRe = /\b([a-zA-Z][a-zA-Z0-9\-]{2,}\.[a-zA-Z]{2,})\b/g;
-    const ips = [...text.matchAll(ipRe)].map(m => m[1]);
-    return [...new Set(ips)];
+  function extractDevices(text) {
+    const ipRe   = /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b/g;
+    const nameRe = /\b((?:IOU|SW|RTR|GW|FW|CORE|DIST|ACCESS|ASA|VPN|BR|R)\w*\d+\w*)\b/gi;
+    const _skip  = new Set(['IOS','IOSXE','XE','CVE','NVD','CIS','SSH','AAA','ACL','VPN']);
+    const ips    = [...text.matchAll(ipRe)].map(m => m[1]);
+    const names  = [...text.matchAll(nameRe)].map(m => m[1]).filter(n => !_skip.has(n.toUpperCase()));
+    return [...new Set([...ips, ...names])];
   }
 
   function spawnDeviceCards(devices) {
+    // Spawn persistent topbar chips for each device
+    devices.forEach(dev => {
+      const tacId = 'audit-' + dev.replace(/[\.\-]/g, '_');
+      spawnTopbarChip(tacId, dev + ' auditing', 'chat');
+    });
+
+    // Remove any existing chips from the header
+    const existing = document.getElementById('device-agent-chips');
+    if (existing) existing.remove();
+
+    // Inject per-device status chips into the AUDIT AGENT header bar
+    const agentInfo = document.querySelector('.agent-info');
+    if (agentInfo) {
+      const chips = document.createElement('div');
+      chips.id = 'device-agent-chips';
+      chips.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:5px';
+      devices.forEach(dev => {
+        const safeId = dev.replace(/[\.\-]/g, '_');
+        const chip = document.createElement('span');
+        chip.id = 'devchip-' + safeId;
+        chip.dataset.dev = dev;
+        chip.style.cssText = 'font-family:var(--font-mono);font-size:9px;padding:2px 8px;border-radius:2px;border:1px solid var(--border);color:var(--text-dim);background:var(--bg-card);display:inline-flex;align-items:center;gap:4px;transition:all 0.2s';
+        chip.innerHTML = `<span style="width:5px;height:5px;border-radius:50%;background:var(--border);display:inline-block" id="devdot-${safeId}"></span>${dev} <span id="devlbl-${safeId}" style="opacity:0.6">queued</span>`;
+        chips.appendChild(chip);
+      });
+      agentInfo.appendChild(chips);
+    }
+
+    // Also maintain the existing subagent-panel for backwards compat
     const panel = document.getElementById('subagent-panel');
     if (!panel) return;
     panel.innerHTML = '';
     devices.forEach(ip => {
       const card = document.createElement('div');
       card.className = 'subagent-card';
-      card.id = 'sa-' + ip.replace(/\./g, '-');
+      card.id = 'sa-' + ip.replace(/[\.\-]/g, '-');
       card.innerHTML = `
         <div class="sa-icon">💻</div>
         <div class="sa-info">
           <div class="sa-name">${ip}</div>
-          <div class="sa-status" id="sa-status-${ip.replace(/\./g,'-')}">Queued</div>
+          <div class="sa-status" id="sa-status-${ip.replace(/[\.\-]/g,'-')}">Queued</div>
         </div>
-        <div class="sa-indicator" id="sa-dot-${ip.replace(/\./g,'-')}"></div>
+        <div class="sa-indicator" id="sa-dot-${ip.replace(/[\.\-]/g,'-')}"></div>
       `;
       panel.appendChild(card);
     });
@@ -3350,14 +3675,80 @@
   }
 
   function setDeviceCardState(ip, state, statusText) {
-    const safeIp = ip.replace(/\./g, '-');
+    // Update subagent panel card
+    const safeIp = ip.replace(/[\.\-]/g, '-');
     const card = document.getElementById('sa-' + safeIp);
     const statusEl = document.getElementById('sa-status-' + safeIp);
-    if (!card) return;
-    card.classList.remove('active', 'done');
-    if (state === 'active') card.classList.add('active');
-    if (state === 'done')   card.classList.add('done');
-    if (statusEl && statusText) statusEl.textContent = statusText;
+    if (card) {
+      card.classList.remove('active', 'done');
+      if (state === 'active') card.classList.add('active');
+      if (state === 'done')   card.classList.add('done');
+      if (statusEl && statusText) statusEl.textContent = statusText;
+    }
+
+    // Update header chip (in-page, only present when on chat tab)
+    const safeId = ip.replace(/[\.\-]/g, '_');
+    const chip  = document.getElementById('devchip-' + safeId);
+    const dot   = document.getElementById('devdot-'  + safeId);
+    const lbl   = document.getElementById('devlbl-'  + safeId);
+    if (chip) {
+      if (state === 'active') {
+        chip.style.borderColor = 'var(--accent)';
+        chip.style.color = 'var(--accent)';
+        if (dot) { dot.style.background = 'var(--accent)'; dot.style.animation = 'sa-pulse 1s ease-in-out infinite'; }
+        if (lbl) lbl.textContent = 'auditing';
+      } else if (state === 'done') {
+        chip.style.borderColor = '#00cc66';
+        chip.style.color = '#00cc66';
+        if (dot) { dot.style.background = '#00cc66'; dot.style.animation = 'none'; }
+        if (lbl) lbl.textContent = statusText || 'done';
+      }
+    }
+
+    // Update topbar chip (always present, persists across tabs)
+    const tacId = 'audit-' + safeId;
+    if (state === 'done') {
+      setTopbarChipDone(tacId);
+    }
+  }
+
+  // ── TOPBAR AGENT STATUS CHIPS ──────────────────────────────────────────────
+  function spawnTopbarChip(chipId, label, tab) {
+    const bar = document.getElementById('agent-status-chips');
+    if (!bar) return;
+    const existing = document.getElementById('tac-' + chipId);
+    if (existing) existing.remove();
+    const chip = document.createElement('span');
+    chip.className = 'topbar-agent-chip tac-active';
+    chip.id = 'tac-' + chipId;
+    chip.dataset.tab = tab;
+    chip.innerHTML = `<span class="tac-dot"></span><span class="tac-lbl">${label}</span>`;
+    bar.appendChild(chip);
+  }
+
+  function setTopbarChipDone(chipId) {
+    const chip = document.getElementById('tac-' + chipId);
+    if (!chip) return;
+    chip.classList.remove('tac-active');
+    chip.classList.add('tac-done');
+    const lbl = chip.querySelector('.tac-lbl');
+    if (lbl) lbl.textContent = lbl.textContent.replace(/\s+(auditing|working)$/i, ' done');
+  }
+
+  function removeTopbarChip(chipId) {
+    const chip = document.getElementById('tac-' + chipId);
+    if (!chip) return;
+    chip.style.opacity = '0';
+    chip.style.transition = 'opacity 0.3s';
+    setTimeout(() => chip.remove(), 350);
+  }
+
+  function clearTopbarChipsForTab(tab) {
+    document.querySelectorAll(`.topbar-agent-chip.tac-done[data-tab="${tab}"]`).forEach(c => {
+      c.style.opacity = '0';
+      c.style.transition = 'opacity 0.4s';
+      setTimeout(() => c.remove(), 450);
+    });
   }
 
   async function sendMultiDeviceAudit(text, devices) {
@@ -3413,25 +3804,33 @@
               setDeviceCardState(event.device, 'active', 'Auditing…');
             } else if (event.type === 'device_done') {
               setDeviceCardState(event.device, 'done', `Done (${event.elapsed}s)`);
+            } else if (event.type === 'finding') {
+              onFindingStream(event.finding);
             } else if (event.type === 'audit_saved') {
               try {
                 localStorage.setItem('gladius-audit-latest', JSON.stringify(event.audit));
                 let hist = []; const raw = localStorage.getItem('gladius-audit-history');
                 if (raw) hist = JSON.parse(raw);
-                hist = hist.filter(h => h.timestamp !== (event.audit.timestamp||'')); 
+                hist = hist.filter(h => h.timestamp !== (event.audit.timestamp||''));
                 hist.unshift(event.audit); if (hist.length > 10) hist.length = 10;
                 localStorage.setItem('gladius-audit-history', JSON.stringify(hist));
                 loadDashboard(); renderReports();
+                appendAuditCard(event.audit);
                 logActivity('Multi-device audit saved — ' + event.audit.device, event.audit.device);
               } catch(e) { console.warn('audit_saved write failed', e); }
             } else if (event.type === 'done') {
               conversationHistory.push({ role: 'assistant', content: fullText });
               const orbitEl = document.getElementById(orbitId);
               if (orbitEl) orbitEl.classList.remove('active');
+              notify('chat', 'AUDIT AGENT', 'Parallel audit complete');
+              // Fade out in-page header chips and subagent panel after a delay
+              // (topbar chips remain green until user navigates back to Audit tab)
               setTimeout(() => {
                 const panel = document.getElementById('subagent-panel');
                 if (panel) { panel.style.opacity='0'; setTimeout(()=>{ panel.style.display='none'; panel.style.opacity='1'; }, 600); }
-              }, 3000);
+                const chips = document.getElementById('device-agent-chips');
+                if (chips) { chips.style.opacity='0'; chips.style.transition='opacity 0.6s'; setTimeout(()=>chips.remove(), 700); }
+              }, 4000);
             } else if (event.type === 'error') {
               document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
               const orbitEl = document.getElementById(orbitId);
@@ -3458,7 +3857,7 @@
     chatInput.style.height = 'auto';
 
     // Auto-detect multiple devices → parallel mode
-    const devices = extractIPs(text);
+    const devices = extractDevices(text);
     if (devices.length > 1 && /audit|scan|check|assess/i.test(text)) {
       return sendMultiDeviceAudit(text, devices);
     }
@@ -3502,6 +3901,11 @@
       let fullText = '';
       let toolsUsed = [];
 
+      // Topbar chip for single audit — spawned on first tool_start
+      const singleChipId = 'audit-single-' + Date.now();
+      let singleChipSpawned = false;
+      const singleDevices = extractDevices(text);
+
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -3524,6 +3928,19 @@
               document.getElementById(bubble.id).innerHTML = renderBubbleContent(fullText, toolsUsed);
               chatMessages.scrollTop = chatMessages.scrollHeight;
             } else if (event.type === 'tool_start') {
+              // Spawn topbar chip on first tool use
+              if (!singleChipSpawned) {
+                singleChipSpawned = true;
+                let chipLabel;
+                if (event.tool === 'connect_to_device' && event.input?.host) {
+                  chipLabel = event.input.host + ' auditing';
+                } else if (singleDevices.length === 1) {
+                  chipLabel = singleDevices[0] + ' auditing';
+                } else {
+                  chipLabel = 'Audit working';
+                }
+                spawnTopbarChip(singleChipId, chipLabel, 'chat');
+              }
               onToolStart(event.tool, event.input || {});
               if (!toolsUsed.includes(event.tool)) toolsUsed.push(event.tool);
               if (!msgAdded) { chatMessages.appendChild(msgEl); msgAdded = true; }
@@ -3534,10 +3951,13 @@
               document.getElementById(bubble.id).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
               const orbitErrEl = document.getElementById(orbitId);
               if (orbitErrEl) orbitErrEl.classList.remove('active');
+              if (singleChipSpawned) removeTopbarChip(singleChipId);
             } else if (event.type === 'done') {
               conversationHistory.push({ role: 'assistant', content: fullText });
               const orbitEl = document.getElementById(orbitId);
               if (orbitEl) orbitEl.classList.remove('active');
+              notify('chat', 'AUDIT AGENT', 'Response ready');
+              if (singleChipSpawned) setTopbarChipDone(singleChipId);
             } else if (event.type === 'send_templated_email') {
               // Server intercepted Claude's send_email — generate templated HTML and send it
               (async () => {
@@ -3563,10 +3983,13 @@
                   }
                 } catch(e) { console.error('[Gladius] Templated email error:', e); }
               })();
+            } else if (event.type === 'finding') {
+              onFindingStream(event.finding);
             } else if (event.type === 'audit_saved') {
               // Claude called save_audit_results — write to localStorage and refresh dashboard
               try {
                 localStorage.setItem('gladius-audit-latest', JSON.stringify(event.audit));
+                appendAuditCard(event.audit);
                 // Append to history (keep last 10, deduplicate by timestamp)
                 try {
                   let hist = [];
@@ -3645,6 +4068,200 @@
     chatMessages.appendChild(div);
     chatMessages.scrollTop = chatMessages.scrollHeight;
     return div;
+  }
+
+  function _finalizeLiveCard(audit) {
+    const score    = (audit.score || {}).overall || 0;
+    const nist     = (audit.score || {}).nist    || 0;
+    const cis      = (audit.score || {}).cis     || 0;
+    const gaugeCol = score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
+
+    // Update header
+    const hdr = document.getElementById(_liveHeaderId);
+    if (hdr) hdr.innerHTML = `
+      <div style="font-size:22px;font-weight:700;color:${gaugeCol}">${score}%</div>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${audit.device || audit.ip}</div>
+        <div style="font-size:10px;color:var(--text-dim)">${audit.ip} · ${audit.ios || ''}</div>
+      </div>
+      <div style="margin-left:auto;text-align:right;font-size:10px;color:var(--text-dim)">
+        NIST <span style="color:var(--accent)">${nist}%</span> &nbsp; CIS <span style="color:var(--accent)">${cis}%</span>
+      </div>`;
+
+    // Update badges
+    const bdg = document.getElementById(_liveBadgesId);
+    if (bdg) {
+      const c = _liveCounts;
+      const p = _livePasses.length;
+      bdg.style.display = 'flex'; bdg.style.flexWrap = 'wrap'; bdg.style.gap = '8px'; bdg.style.padding = '8px 14px';
+      bdg.innerHTML = [
+        c.CRITICAL ? `<span style="${_BADGE_CSS.CRITICAL};padding:2px 7px;border-radius:2px;font-size:10px">${c.CRITICAL} CRITICAL</span>` : '',
+        c.HIGH     ? `<span style="${_BADGE_CSS.HIGH};padding:2px 7px;border-radius:2px;font-size:10px">${c.HIGH} HIGH</span>`         : '',
+        c.MEDIUM   ? `<span style="${_BADGE_CSS.MEDIUM};padding:2px 7px;border-radius:2px;font-size:10px">${c.MEDIUM} MEDIUM</span>`     : '',
+        c.LOW      ? `<span style="${_BADGE_CSS.LOW};padding:2px 7px;border-radius:2px;font-size:10px">${c.LOW} LOW</span>`             : '',
+        c.CVE      ? `<span style="${_BADGE_CSS.CVE};padding:2px 7px;border-radius:2px;font-size:10px">${c.CVE} CVE</span>`             : '',
+        p          ? `<span style="${_BADGE_CSS.PASS};padding:2px 7px;border-radius:2px;font-size:10px">${p} PASSED</span>`            : '',
+      ].join('');
+    }
+
+    // Append collapsible passed checks
+    if (_livePasses.length && _liveTbody) {
+      let passRows = _livePasses.map(f => `
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:4px 8px;white-space:nowrap"><span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${_BADGE_CSS.PASS}">PASS</span></td>
+          <td style="padding:4px 8px;font-size:11px;color:var(--text-dim)">${f.title || ''}</td>
+        </tr>`).join('');
+      const passRow = document.createElement('tr');
+      passRow.innerHTML = `<td colspan="2" style="padding:0">
+        <details style="font-family:var(--font-mono)">
+          <summary style="padding:6px 8px;font-size:10px;color:#00cc66;cursor:pointer;list-style:none;user-select:none">
+            ▸ ${_livePasses.length} PASSED CHECK${_livePasses.length !== 1 ? 'S' : ''}
+          </summary>
+          <table style="width:100%;border-collapse:collapse">${passRows}</table>
+        </details></td>`;
+      _liveTbody.appendChild(passRow);
+    }
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function appendAuditCard(audit) {
+    // If findings streamed live, finalize that card instead of creating a new one
+    if (_liveCard) {
+      _finalizeLiveCard(audit);
+      appendRemediationPlan(audit);
+      _resetLiveCard();
+      return;
+    }
+    const now      = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const score    = (audit.score || {}).overall || 0;
+    const nist     = (audit.score || {}).nist    || 0;
+    const cis      = (audit.score || {}).cis     || 0;
+    const findings = audit.findings || [];
+    const counts   = { CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0, CVE:0, PASS:0 };
+    findings.forEach(f => {
+      if (f.type === 'cve') counts.CVE++;
+      else if (f.severity === 'PASS') counts.PASS++;
+      else if (counts[f.severity] !== undefined) counts[f.severity]++;
+    });
+    const gaugeCol = score >= 80 ? 'var(--success)' : score >= 60 ? 'var(--warning)' : 'var(--danger)';
+    const badgeCss = {
+      CRITICAL: 'background:#ff000033;color:#ff4444;border:1px solid #ff4444',
+      HIGH:     'background:#ff660033;color:#ff6600;border:1px solid #ff6600',
+      MEDIUM:   'background:#ffaa0033;color:#ffaa00;border:1px solid #ffaa00',
+      LOW:      'background:#44ff8833;color:#44ff88;border:1px solid #44ff88',
+      PASS:     'background:#00ff8822;color:#00cc66;border:1px solid #00cc66',
+      CVE:      'background:#ff000033;color:#ff4444;border:1px solid #ff4444',
+      INFO:     'background:#0088ff33;color:#4af;border:1px solid #4af'
+    };
+    const badge = (sev) => `<span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${badgeCss[sev]||badgeCss.INFO}">${sev}</span>`;
+
+    // Failed findings rows
+    const failed = findings.filter(f => f.severity !== 'PASS');
+    let rows = '';
+    failed.slice(0, 15).forEach(f => {
+      const sev = f.type === 'cve' ? 'CVE' : (f.severity || 'INFO');
+      rows += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:5px 8px;white-space:nowrap">${badge(sev)}</td>
+        <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${f.title || f.cve_id || ''}</td>
+      </tr>`;
+    });
+    if (failed.length > 15) rows += `<tr><td colspan="2" style="padding:5px 8px;font-size:11px;color:var(--text-dim);font-family:var(--font-mono)">… and ${failed.length - 15} more</td></tr>`;
+
+    // Passed checks — collapsible
+    const passes = findings.filter(f => f.severity === 'PASS');
+    let passRows = '';
+    passes.forEach(f => {
+      passRows += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:4px 8px;white-space:nowrap">${badge('PASS')}</td>
+        <td style="padding:4px 8px;font-size:11px;color:var(--text-dim)">${f.title || ''}</td>
+      </tr>`;
+    });
+    const passSection = passes.length ? `
+      <tr><td colspan="2" style="padding:0">
+        <details style="font-family:var(--font-mono)">
+          <summary style="padding:6px 8px;font-size:10px;color:#00cc66;cursor:pointer;list-style:none;user-select:none">
+            ▸ ${passes.length} PASSED CHECK${passes.length !== 1 ? 'S' : ''}
+          </summary>
+          <table style="width:100%;border-collapse:collapse">${passRows}</table>
+        </details>
+      </td></tr>` : '';
+
+    const html = `
+      <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;font-family:var(--font-mono);font-size:12px;max-width:560px">
+        <div style="background:var(--bg-panel);padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
+          <div style="font-size:22px;font-weight:700;color:${gaugeCol}">${score}%</div>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${audit.device || audit.ip}</div>
+            <div style="font-size:10px;color:var(--text-dim)">${audit.ip} · ${audit.ios || ''}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right;font-size:10px;color:var(--text-dim)">
+            NIST <span style="color:var(--accent)">${nist}%</span> &nbsp; CIS <span style="color:var(--accent)">${cis}%</span>
+          </div>
+        </div>
+        <div style="padding:8px 14px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          ${counts.CRITICAL ? `<span style="${badgeCss.CRITICAL};padding:2px 7px;border-radius:2px;font-size:10px">${counts.CRITICAL} CRITICAL</span>` : ''}
+          ${counts.HIGH     ? `<span style="${badgeCss.HIGH};padding:2px 7px;border-radius:2px;font-size:10px">${counts.HIGH} HIGH</span>`             : ''}
+          ${counts.MEDIUM   ? `<span style="${badgeCss.MEDIUM};padding:2px 7px;border-radius:2px;font-size:10px">${counts.MEDIUM} MEDIUM</span>`         : ''}
+          ${counts.LOW      ? `<span style="${badgeCss.LOW};padding:2px 7px;border-radius:2px;font-size:10px">${counts.LOW} LOW</span>`                 : ''}
+          ${counts.CVE      ? `<span style="${badgeCss.CVE};padding:2px 7px;border-radius:2px;font-size:10px">${counts.CVE} CVE</span>`                 : ''}
+          ${counts.PASS     ? `<span style="${badgeCss.PASS};padding:2px 7px;border-radius:2px;font-size:10px">${counts.PASS} PASSED</span>`             : ''}
+        </div>
+        <table style="width:100%;border-collapse:collapse">${rows}${passSection}</table>
+      </div>`;
+
+    const div = document.createElement('div');
+    div.className = 'msg agent';
+    div.innerHTML = `
+      <div class="msg-avatar agent">A</div>
+      <div>
+        <div class="msg-bubble">${html}</div>
+        <div class="msg-meta">AUDIT AGENT · RESULTS · ${now}</div>
+      </div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    // Follow up with remediation plan
+    appendRemediationPlan(audit);
+  }
+
+  function appendRemediationPlan(audit) {
+    const findings = (audit.findings || []).filter(f => f.severity !== 'PASS' && f.type !== 'cve');
+    if (!findings.length) return;
+
+    const sevOrder = { CRITICAL:0, HIGH:1, MEDIUM:2, LOW:3 };
+    const sevEmoji = { CRITICAL:'🔴 CRITICAL', HIGH:'🔴 HIGH', MEDIUM:'🟠 MEDIUM', LOW:'🟡 LOW' };
+    const sorted   = [...findings].sort((a,b) => (sevOrder[a.severity]??9) - (sevOrder[b.severity]??9));
+
+    let text = `**Remediation Plan — ${audit.device || audit.ip}**\n\n`;
+    let currentSev = null;
+    let num = 1;
+
+    sorted.forEach(f => {
+      if (f.severity !== currentSev) {
+        currentSev = f.severity;
+        text += `---\n### ${sevEmoji[f.severity] || f.severity}\n\n`;
+      }
+      text += `**${num++}. ${f.title}**\n`;
+      if (f.fix) text += `${f.fix}\n\n`;
+      if (f.commands) {
+        // commands may be comma-separated or already multi-line
+        const cmds = f.commands.includes('\n') ? f.commands : f.commands.split(/,\s*/).join('\n');
+        text += `\`\`\`\n${cmds}\n\`\`\`\n\n`;
+      }
+    });
+
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const div = document.createElement('div');
+    div.className = 'msg agent';
+    div.innerHTML = `
+      <div class="msg-avatar agent">A</div>
+      <div>
+        <div class="msg-bubble">${formatMessage(text)}</div>
+        <div class="msg-meta">AUDIT AGENT · REMEDIATION · ${now}</div>
+      </div>`;
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
   function appendTyping() {
@@ -4776,6 +5393,80 @@ ${cves.length ? `<!-- CVE TAB -->
   // ── SNMP MONITOR ─────────────────────────────────────────────────────────
 
   let _snmpRefreshTimer = null;
+  let _inventoryRefreshTimer = null;
+
+  // ── Live streaming audit card state ──────────────────────────────────────
+  let _liveCard     = null;   // outer .msg div
+  let _liveTbody    = null;   // tbody findings are appended to
+  let _liveHeaderId = null;   // id of header div (updated on audit_saved)
+  let _liveBadgesId = null;   // id of badges div (updated on audit_saved)
+  let _livePasses   = [];     // PASS findings collected during stream
+  const _liveCounts = { CRITICAL:0, HIGH:0, MEDIUM:0, LOW:0, CVE:0 };
+
+  const _BADGE_CSS = {
+    CRITICAL: 'background:#ff000033;color:#ff4444;border:1px solid #ff4444',
+    HIGH:     'background:#ff660033;color:#ff6600;border:1px solid #ff6600',
+    MEDIUM:   'background:#ffaa0033;color:#ffaa00;border:1px solid #ffaa00',
+    LOW:      'background:#44ff8833;color:#44ff88;border:1px solid #44ff88',
+    PASS:     'background:#00ff8822;color:#00cc66;border:1px solid #00cc66',
+    CVE:      'background:#ff000033;color:#ff4444;border:1px solid #ff4444',
+  };
+
+  function _resetLiveCard() {
+    _liveCard = null; _liveTbody = null; _liveHeaderId = null; _liveBadgesId = null;
+    _livePasses = []; _liveCounts.CRITICAL = _liveCounts.HIGH = _liveCounts.MEDIUM = _liveCounts.LOW = _liveCounts.CVE = 0;
+  }
+
+  function onFindingStream(finding) {
+    if (!finding) return;
+    if (!_liveCard) {
+      const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      const uid  = Date.now();
+      _liveHeaderId = 'lhdr-' + uid;
+      _liveBadgesId = 'lbdg-' + uid;
+      const tbodyId = 'ltbd-' + uid;
+      const div = document.createElement('div');
+      div.className = 'msg agent';
+      div.innerHTML = `
+        <div class="msg-avatar agent">A</div>
+        <div style="min-width:0;flex:1">
+          <div class="msg-bubble">
+            <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;font-family:var(--font-mono);font-size:12px;max-width:560px">
+              <div id="${_liveHeaderId}" style="background:var(--bg-panel);padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+                <div style="display:flex;gap:4px;align-items:center">
+                  <span style="width:6px;height:6px;border-radius:50%;background:var(--accent);display:inline-block;animation:blink 1s infinite"></span>
+                </div>
+                <span style="font-size:11px;color:var(--text-dim);letter-spacing:1px">ANALYSING — FINDINGS STREAMING…</span>
+              </div>
+              <div id="${_liveBadgesId}" style="padding:6px 14px;border-bottom:1px solid var(--border);font-size:10px;color:var(--text-dim);font-family:var(--font-mono)">
+                — incoming —
+              </div>
+              <table style="width:100%;border-collapse:collapse"><tbody id="${tbodyId}"></tbody></table>
+            </div>
+          </div>
+          <div class="msg-meta">AUDIT AGENT · LIVE FINDINGS · ${now}</div>
+        </div>`;
+      _liveCard   = div;
+      _liveTbody  = div.querySelector('#' + tbodyId);
+      chatMessages.appendChild(div);
+    }
+
+    if (finding.severity === 'PASS') {
+      _livePasses.push(finding);
+      return;
+    }
+
+    const sev = (finding.type === 'cve' || finding.cve_id) ? 'CVE' : (finding.severity || 'INFO');
+    if (_liveCounts[sev] !== undefined) _liveCounts[sev]++;
+    const css = _BADGE_CSS[sev] || 'background:#0088ff33;color:#4af;border:1px solid #4af';
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:5px 8px;white-space:nowrap"><span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${css}">${sev}</span></td>
+      <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${finding.title || finding.cve_id || ''}</td>`;
+    _liveTbody.appendChild(tr);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
 
   function snmpToggleAdd() {
     const panel = document.getElementById('snmp-add-panel');
@@ -4860,6 +5551,8 @@ ${cves.length ? `<!-- CVE TAB -->
         return;
       }
       if (count) count.textContent = `${devs.length} device${devs.length !== 1 ? 's' : ''}`;
+      // Remove placeholder / error rows (no id)
+      tbody.querySelectorAll('tr:not([id])').forEach(r => r.remove());
       // Update existing rows or rebuild
       const existingIds = new Set([...tbody.querySelectorAll('tr[id]')].map(r => r.id.replace('snmp-row-','')));
       const newIds      = new Set(devs.map(d => d.id));
@@ -5353,45 +6046,50 @@ ${cves.length ? `<!-- CVE TAB -->
     if (el) el.textContent = val;
   }
 
+  // Tracks which audit is currently displayed on the dashboard
+  let _dashCurrentAudit = null;
+
+  function _renderAuditOnDash(audit) {
+    _dashCurrentAudit = audit;
+    setEl('dash-device', audit.device || '—');
+    setEl('dash-device-sub', `${audit.ip || ''} · ${audit.ios || ''}`);
+
+    const isCveFn = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    const cves  = (audit.findings || []).filter(isCveFn).length;
+    const highs = (audit.findings || []).filter(f => f.severity === 'HIGH'   && !isCveFn(f)).length;
+    const meds  = (audit.findings || []).filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
+    const pass  = (audit.findings || []).filter(f => f.severity === 'PASS').length;
+    setEl('dash-high', highs);
+    setEl('dash-med',  meds);
+    setEl('dash-pass', pass);
+    setEl('dash-cve',  cves);
+
+    const title = document.getElementById('dash-findings-title');
+    if (title) title.textContent = `Latest Findings — ${audit.device || ''}`;
+    const dateEl = document.getElementById('dash-findings-date');
+    if (dateEl && audit.timestamp) {
+      const d = new Date(audit.timestamp);
+      dateEl.textContent = d.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
+    }
+    renderFindings(audit.findings || []);
+
+    const s = audit.score || {};
+    updateScore('overall', s.overall || 0);
+    updateScore('nist',    s.nist    || 0);
+    updateScore('cis',     s.cis     || 0);
+  }
+
   function loadDashboard() {
     // ── Audit data ─────────────────────────────────────────────────────────
     const raw = localStorage.getItem('gladius-audit-latest');
     if (raw) {
       try {
-        const audit = JSON.parse(raw);
-        setEl('dash-device', audit.device || '—');
-        setEl('dash-device-sub', `${audit.ip || ''} · ${audit.ios || ''}`);
-
-        const isCveFn = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
-        const cves   = (audit.findings || []).filter(isCveFn).length;
-        const highs = (audit.findings || []).filter(f => f.severity === 'HIGH' && !isCveFn(f)).length;
-        const meds  = (audit.findings || []).filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
-        const pass  = (audit.findings || []).filter(f => f.severity === 'PASS').length;
-        setEl('dash-high', highs);
-        setEl('dash-med',  meds);
-        setEl('dash-pass', pass);
-        setEl('dash-cve',  cves);
-
-        // Findings panel
-        const title = document.getElementById('dash-findings-title');
-        if (title) title.textContent = `Latest Findings — ${audit.device || ''}`;
-        const dateEl = document.getElementById('dash-findings-date');
-        if (dateEl && audit.timestamp) {
-          const d = new Date(audit.timestamp);
-          dateEl.textContent = d.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'}).toUpperCase();
-        }
-        renderFindings(audit.findings || []);
-
-        // Compliance scores
-        const s = audit.score || {};
-        updateScore('overall', s.overall || 0);
-        updateScore('nist',    s.nist    || 0);
-        updateScore('cis',     s.cis     || 0);
+        _renderAuditOnDash(JSON.parse(raw));
       } catch(e) { console.warn('Audit parse error', e); }
     }
 
-    // ── Activity log ───────────────────────────────────────────────────────
-    renderActivityLog();
+    // ── Device inventory (SNMP) ────────────────────────────────────────────
+    renderInventory();
 
     // ── KB vector count ────────────────────────────────────────────────────
     fetchKbCount();
@@ -5422,12 +6120,9 @@ ${cves.length ? `<!-- CVE TAB -->
     });
 
     // Re-render findings with the current filter applied
-    const raw = localStorage.getItem('gladius-audit-latest');
-    if (!raw) return;
-    try {
-      const audit = JSON.parse(raw);
-      renderFindings(audit.findings || []);
-    } catch(e) {}
+    const findings = _dashCurrentAudit?.findings
+      || (() => { try { return JSON.parse(localStorage.getItem('gladius-audit-latest') || '{}').findings || []; } catch(e) { return []; } })();
+    renderFindings(findings);
   }
 
   function renderFindings(findings) {
@@ -5458,15 +6153,62 @@ ${cves.length ? `<!-- CVE TAB -->
       const isCve = isCveFinding(f);
       const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
       const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
-      const preview = (f.impact || '').slice(0, 100);
       return `<div class="finding-item" style="cursor:pointer" onclick="openDetail(${i})">
         <div class="severity-badge ${cls}">${label}</div>
         <div class="finding-text">
           <strong>${f.title || ''}</strong>
-          ${preview ? `<span style="display:block;font-size:12px;color:var(--text-dim);margin-top:2px;line-height:1.4">${preview}${f.impact.length > 100 ? '…' : ''}</span>` : ''}
         </div>
       </div>`;
     }).join('');
+  }
+
+  async function renderInventory() {
+    const tbody = document.getElementById('inv-table-body');
+    const count = document.getElementById('dash-inventory-count');
+    if (!tbody) return;
+    try {
+      const resp = await fetch('/api/snmp/devices');
+      const data = await resp.json();
+      const devs = data.devices || [];
+      if (count) count.textContent = devs.length ? `${devs.length} device${devs.length !== 1 ? 's' : ''}` : '';
+      if (!devs.length) {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-dim)">// No SNMP devices — add via Network Monitor</td></tr>';
+        return;
+      }
+      tbody.innerHTML = devs.map(d => {
+        const col = d.status === 'ok'    ? 'var(--success)'
+                  : d.status === 'warn'  ? 'var(--warn,#f59e0b)'
+                  : d.status === 'error' ? 'var(--danger)'
+                  :                        'var(--text-dim)';
+        const tip = d.status === 'ok'    ? 'Reachable'
+                  : d.status === 'warn'  ? 'Stale'
+                  : d.status === 'error' ? (d.error || 'Unreachable')
+                  :                        'Not polled';
+        const label    = d.sysName || d.name;
+        const sub      = d.sysName && d.sysName !== d.name ? d.name : '';
+        const fullDesc = (d.sysDescr || '').replace(/\s+/g, ' ');
+        const desc     = fullDesc.length > 60 ? fullDesc.substring(0, 60) + '…' : fullDesc || '—';
+        const rttMs    = d.response_ms != null ? d.response_ms : null;
+        const rttStr   = rttMs != null ? `${rttMs}ms` : '—';
+        const rttColor = rttMs != null && rttMs > 500 ? 'var(--warn,#f59e0b)' : 'var(--text-secondary)';
+        const lastPoll = d.last_poll
+          ? new Date(d.last_poll).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})
+          : '—';
+        return `<tr onclick="showPage('snmp')" title="${tip}">
+          <td style="text-align:center">
+            <div style="width:8px;height:8px;border-radius:50%;background:${col};box-shadow:0 0 5px ${col};display:inline-block" title="${tip}"></div>
+          </td>
+          <td style="color:var(--text-primary);font-weight:600;white-space:nowrap">${label}</td>
+          <td style="color:var(--accent);white-space:nowrap">${d.host}</td>
+          <td style="color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${fullDesc}">${desc}</td>
+          <td style="color:var(--text-secondary);white-space:nowrap">${d.sysUpTime || '—'}</td>
+          <td style="color:${rttColor};white-space:nowrap">${rttStr}</td>
+          <td style="color:var(--text-dim);white-space:nowrap">${lastPoll}</td>
+        </tr>`;
+      }).join('');
+    } catch(e) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--danger)">// SNMP unreachable</td></tr>';
+    }
   }
 
   function renderActivityLog() {
@@ -5706,9 +6448,106 @@ ${cves.length ? `<!-- CVE TAB -->
     setSkin(saved);
   })();
 
+  // ── Audit history selector ────────────────────────────────────────────────
+  function toggleAuditSelector(e) {
+    const drop = document.getElementById('audit-selector-drop');
+    const card = document.getElementById('last-audit-card');
+    if (!drop || !card) return;
+    const isOpen = drop.style.display !== 'none';
+    if (isOpen) { drop.style.display = 'none'; return; }
+
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem('gladius-audit-history') || '[]'); } catch(e) {}
+    if (!hist.length) { drop.style.display = 'none'; return; }
+
+    // Position using fixed coords so overflow:hidden on ancestors doesn't clip it
+    const rect = card.getBoundingClientRect();
+    drop.style.position = 'fixed';
+    drop.style.top  = (rect.bottom + 6) + 'px';
+    drop.style.left = rect.left + 'px';
+
+    drop.innerHTML = hist.map((a, i) => {
+      const ts   = a.timestamp ? new Date(a.timestamp).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+      const score = (a.score || {}).overall;
+      const scoreHtml = score != null
+        ? `<span style="font-family:var(--font-mono);font-size:10px;color:${score>=70?'var(--success)':score>=40?'var(--warn,#f59e0b)':'var(--danger)'};margin-left:auto">${score}%</span>`
+        : '';
+      const isCurrent = _dashCurrentAudit && _dashCurrentAudit.timestamp === a.timestamp;
+      return `<div onclick="selectDashAudit(${i})" style="display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;${isCurrent?'background:var(--accent-dim);color:var(--accent)':'color:var(--text-secondary)'}">
+        <span style="color:var(--accent);min-width:16px">${i===0?'★':i+1}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;color:${isCurrent?'var(--accent)':'var(--text-primary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.device || a.ip || '—'}</div>
+          <div style="font-size:9px;color:var(--text-dim);margin-top:1px">${ts} · ${a.ip || ''}</div>
+        </div>
+        ${scoreHtml}
+      </div>`;
+    }).join('');
+
+    drop.style.display = 'block';
+    // Close on outside click
+    setTimeout(() => {
+      const close = (ev) => {
+        if (!document.getElementById('last-audit-card')?.contains(ev.target)) {
+          drop.style.display = 'none';
+          document.removeEventListener('click', close);
+        }
+      };
+      document.addEventListener('click', close);
+    }, 0);
+  }
+
+  function selectDashAudit(idx) {
+    document.getElementById('audit-selector-drop').style.display = 'none';
+    let hist = [];
+    try { hist = JSON.parse(localStorage.getItem('gladius-audit-history') || '[]'); } catch(e) {}
+    const audit = hist[idx];
+    if (!audit) return;
+    _activeFilter = null;
+    _renderAuditOnDash(audit);
+    toggleFilter('HIGH');
+  }
+
+  // ── Dashboard panel resize ─────────────────────────────────────────────────
+  (function() {
+    const handle   = document.getElementById('dash-resize-handle');
+    const topPanel = document.getElementById('dash-findings-panel');
+    if (!handle || !topPanel) return;
+    // Set initial position: just below halfway of the available content area
+    const topbar   = 48;  // px
+    const statsRow = document.querySelector('.stats-row')?.offsetHeight || 90;
+    const padding  = 32;
+    const available = window.innerHeight - topbar - statsRow - padding;
+    topPanel.style.height = Math.round(available * 0.55) + 'px';
+
+    let dragging = false, startY = 0, startH = 0;
+    handle.addEventListener('mousedown', e => {
+      dragging = true;
+      startY = e.clientY;
+      startH = topPanel.offsetHeight;
+      handle.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ns-resize';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const newH = Math.max(80, Math.min(startH + (e.clientY - startY), 600));
+      topPanel.style.height = newH + 'px';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      dragging = false;
+      handle.classList.remove('dragging');
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    });
+  })();
+
   // Initialise quick commands
   renderQuickCmds();
   loadDashboard();
+  // Default HIGH filter active on first load
+  if (_dashCurrentAudit) toggleFilter('HIGH');
   renderReports();
   initWelcome();
 
@@ -5718,6 +6557,8 @@ ${cves.length ? `<!-- CVE TAB -->
     const meta = document.getElementById('welcome-meta');
     const bubble = document.getElementById('welcome-bubble');
     if (meta) meta.textContent = `AUDIT AGENT · ${ts}`;
+    const tshootMeta = document.getElementById('tshoot-welcome-meta');
+    if (tshootMeta) tshootMeta.textContent = `TSHOOT AGENT · ${ts}`;
 
     try {
       const [healthRes, kbRes] = await Promise.all([
@@ -5865,7 +6706,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (!tbody) return;
 
     // Update sort indicators
-    ['severity', 'published'].forEach(col => {
+    ['cvss', 'severity', 'published', 'vendor'].forEach(col => {
       const el = document.getElementById(`cve-sort-${col}`);
       if (el) el.textContent = _cveSortCol === col ? (_cveSortDir === -1 ? '↓' : '↑') : '';
     });
@@ -5880,6 +6721,12 @@ ${cves.length ? `<!-- CVE TAB -->
       if (_cveSortCol === 'severity') {
         av = _sevRank[a.severity] ?? 0;
         bv = _sevRank[b.severity] ?? 0;
+      } else if (_cveSortCol === 'cvss') {
+        av = parseFloat(a.score) || 0;
+        bv = parseFloat(b.score) || 0;
+      } else if (_cveSortCol === 'vendor') {
+        av = (a.vendor || '').toLowerCase();
+        bv = (b.vendor || '').toLowerCase();
       } else {
         av = a.published || '';
         bv = b.published || '';
@@ -5899,7 +6746,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <td class="cve-id" style="white-space:nowrap">
           <div style="display:flex;align-items:center;gap:5px">
             ${c.id}
-            <button onclick="event.stopPropagation();agentCVE('${c.id}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+            <button onclick="event.stopPropagation();agentCVE('${c.id}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
           </div>
         </td>
         <td class="${sevClass(c.severity)}">${c.score}</td>
@@ -5913,7 +6760,11 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   // ── PSIRT TAB ──────────────────────────────────────────────────────────────
-  let _psirtLoaded = false;
+  let _psirtLoaded   = false;
+  let _psirtData     = [];
+  let _psirtSubtitle = '';
+  let _psirtSortCol  = 'published';
+  let _psirtSortDir  = -1;
 
   function loadLatestPSIRT() {
     _psirtLoaded = true;
@@ -5947,25 +6798,66 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   function renderPSIRTTable(advisories, subtitle) {
+    _psirtData     = advisories || [];
+    _psirtSubtitle = subtitle || '';
+    _psirtSortCol  = 'published';
+    _psirtSortDir  = -1;
+    _renderPSIRTRows();
+  }
+
+  function sortPSIRT(col) {
+    if (_psirtSortCol === col) {
+      _psirtSortDir *= -1;
+    } else {
+      _psirtSortCol = col;
+      _psirtSortDir = -1;
+    }
+    _renderPSIRTRows();
+  }
+
+  function _renderPSIRTRows() {
     const tbody = document.getElementById('psirt-tbody');
     if (!tbody) return;
-    if (!advisories || !advisories.length) {
+
+    // Update sort indicators
+    ['cvss', 'severity', 'published'].forEach(col => {
+      const el = document.getElementById(`psirt-sort-${col}`);
+      if (el) el.textContent = _psirtSortCol === col ? (_psirtSortDir === -1 ? '↓' : '↑') : '';
+    });
+
+    if (!_psirtData.length) {
       tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px;padding:30px">// No advisories found</td></tr>`;
       return;
     }
+
+    const sorted = [..._psirtData].sort((a, b) => {
+      let av, bv;
+      if (_psirtSortCol === 'severity') {
+        av = _sevRank[a.severity] ?? 0;
+        bv = _sevRank[b.severity] ?? 0;
+      } else if (_psirtSortCol === 'cvss') {
+        av = parseFloat(a.cvss) || 0;
+        bv = parseFloat(b.cvss) || 0;
+      } else {
+        av = a.published || '';
+        bv = b.published || '';
+      }
+      return av < bv ? _psirtSortDir : av > bv ? -_psirtSortDir : 0;
+    });
+
     const sevClass = s => s === 'CRITICAL' ? 'score-critical' : s === 'HIGH' ? 'score-high' : '';
     const badgeCls = s => s === 'CRITICAL' || s === 'HIGH' ? 'high' : s === 'MEDIUM' ? 'medium' : 'low';
     let html = '';
-    if (subtitle) {
-      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${subtitle}</td></tr>`;
+    if (_psirtSubtitle) {
+      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${_psirtSubtitle}</td></tr>`;
     }
-    advisories.forEach(a => {
+    sorted.forEach(a => {
       const cveList = (a.cves || []).slice(0, 3).join(', ') + (a.cve_count > 3 ? ` +${a.cve_count - 3}` : '');
       html += `<tr style="cursor:pointer" onclick="window.open('${a.url}','_blank')" title="${(a.summary||'').replace(/"/g,'&quot;')}">
         <td class="cve-id" style="white-space:nowrap">
           <div style="display:flex;align-items:center;gap:5px">
             ${a.id}
-            <button onclick="event.stopPropagation();agentPSIRT('${a.id}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+            <button onclick="event.stopPropagation();agentPSIRT('${a.id}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
           </div>
         </td>
         <td class="${sevClass(a.severity)}">${a.cvss}</td>
@@ -6051,7 +6943,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <td class="cve-id" style="white-space:nowrap">
           <div style="display:flex;align-items:center;gap:5px">
             ${r.pid}
-            <button onclick="event.stopPropagation();agentEOX('${r.pid}')" style="font-size:9px;padding:2px 5px;background:none;border:1px solid var(--accent);color:var(--accent);border-radius:2px;cursor:pointer;font-family:var(--font-mono);opacity:0.6;line-height:1.4;flex-shrink:0" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.6'">ASK ▶</button>
+            <button onclick="event.stopPropagation();agentEOX('${r.pid}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
           </div>
         </td>
         <td style="font-size:12px;color:var(--text-secondary)">${r.description || '—'}</td>
@@ -6359,7 +7251,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
   function appendDesignMsg(role, html_content, streaming = false) {
     const container = document.getElementById('design-messages');
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const isDesign = role === 'design';
 
     const wrapper = document.createElement('div');
@@ -6382,7 +7274,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     const meta = document.createElement('div');
     meta.className = 'msg-meta';
-    meta.textContent = isDesign ? `DESIGN · ${now}` : `USER · ${now}`;
+    meta.textContent = isDesign ? `DESIGN AGENT · ${now}` : `USER · ${now}`;
 
     msgBody.appendChild(bubble);
     msgBody.appendChild(meta);
@@ -6405,6 +7297,9 @@ ${cves.length ? `<!-- CVE TAB -->
     appendDesignMsg('user', escapeHtml(text));
 
     designStreaming = true;
+
+    const designChipId = 'design-' + Date.now();
+    spawnTopbarChip(designChipId, 'Design working', 'design');
 
     const { bubble, orbitWrap } = appendDesignMsg('design', '<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>', true);
     let fullText = '';
@@ -6442,9 +7337,12 @@ ${cves.length ? `<!-- CVE TAB -->
               if (orbitWrap) orbitWrap.classList.remove('design-active');
               designMessages.push({ role: 'assistant', content: fullText });
               renderMermaidIn(bubble);
+              notify('design', 'DESIGN AGENT', 'Response ready');
+              setTopbarChipDone(designChipId);
             } else if (ev.type === 'error') {
               bubble.innerHTML = `<span style="color:var(--danger)">Error: ${escapeHtml(ev.content)}</span>`;
               if (orbitWrap) orbitWrap.classList.remove('design-active');
+              removeTopbarChip(designChipId);
             }
           } catch(e) {}
         }
@@ -6452,6 +7350,7 @@ ${cves.length ? `<!-- CVE TAB -->
     } catch(err) {
       bubble.innerHTML = `<span style="color:var(--danger)">Connection error: ${escapeHtml(err.message)}</span>`;
       if (orbitWrap) orbitWrap.classList.remove('design-active');
+      removeTopbarChip(designChipId);
     }
 
     designStreaming = false;
@@ -6468,7 +7367,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
   // Init design welcome timestamp
   (async function() {
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const meta   = document.getElementById('design-welcome-meta');
     const bubble = document.getElementById('design-welcome-bubble');
     if (meta) meta.textContent = `DESIGN AGENT · ${now}`;
@@ -6628,6 +7527,227 @@ ${cves.length ? `<!-- CVE TAB -->
 
   renderDesignQuickCmds();
 
+  // TSHOOT AGENT
+  // ══════════════════════════════════════════════════════════════════════════
+
+  let tshootHistory  = [];
+  let tshootSending  = false;
+
+  const DEFAULT_TSHOOT_QUICK_CMDS = [
+    { label: 'Ping IOU2',       prompt: 'Run a scapy ping test to 192.168.20.18' },
+    { label: 'Trace IOU2',      prompt: 'Run a scapy traceroute to 192.168.20.18' },
+    { label: 'Port Scan',       prompt: 'Run an nmap service scan on 192.168.20.18' },
+    { label: 'Show Interfaces', prompt: 'Connect to 192.168.20.18 and show ip interface brief' },
+    { label: 'ARP Scan',        prompt: 'Run a scapy arp_scan on 192.168.20.0/24' },
+    { label: 'CDP Neighbors',   prompt: 'Connect to 192.168.20.18 and show cdp neighbors detail' },
+  ];
+
+  function loadTshootQuickCmds() {
+    try {
+      const s = localStorage.getItem('gladius-tshoot-qcmds');
+      return s ? JSON.parse(s) : DEFAULT_TSHOOT_QUICK_CMDS;
+    } catch(e) { return DEFAULT_TSHOOT_QUICK_CMDS; }
+  }
+  function saveTshootQuickCmds(cmds) {
+    localStorage.setItem('gladius-tshoot-qcmds', JSON.stringify(cmds));
+  }
+
+  function renderTshootQuickCmds() {
+    const row = document.getElementById('tshoot-quick-cmds-row');
+    if (!row) return;
+    const cmds = loadTshootQuickCmds();
+    row.innerHTML = '';
+    cmds.forEach((cmd, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'quick-cmd-wrap';
+      const tip = document.createElement('div');
+      tip.className = 'quick-cmd-tooltip';
+      tip.textContent = cmd.prompt;
+      const btn = document.createElement('button');
+      btn.className = 'quick-cmd';
+      btn.textContent = cmd.label;
+      btn.addEventListener('click', () => sendTshootQuick(cmd.prompt));
+      const edit = document.createElement('button');
+      edit.className = 'quick-cmd-edit';
+      edit.title = 'Edit';
+      edit.textContent = '✎';
+      edit.addEventListener('click', () => openTshootQcmdModal(i));
+      wrap.appendChild(tip); wrap.appendChild(btn); wrap.appendChild(edit);
+      row.appendChild(wrap);
+    });
+    const addBtn = document.createElement('button');
+    addBtn.className = 'quick-cmd';
+    addBtn.style.opacity = '0.5';
+    addBtn.textContent = '+ Add';
+    addBtn.addEventListener('click', () => openTshootQcmdModal(-1));
+    row.appendChild(addBtn);
+  }
+
+  let _tshootEditingIdx = null;
+  function openTshootQcmdModal(idx) {
+    _tshootEditingIdx = idx;
+    const cmds = loadTshootQuickCmds();
+    const cmd  = idx >= 0 ? cmds[idx] : { label: '', prompt: '' };
+    document.getElementById('qcmd-label-input').value  = cmd.label;
+    document.getElementById('qcmd-prompt-input').value = cmd.prompt;
+    document.getElementById('qcmd-modal-title').textContent = idx >= 0 ? 'EDIT TSHOOT COMMAND' : 'ADD TSHOOT COMMAND';
+    document.getElementById('qcmd-delete-btn').style.display = idx >= 0 ? 'inline-block' : 'none';
+    // Override save/delete to target tshoot storage
+    document.getElementById('qcmd-save-btn').onclick   = saveTshootQcmdModal;
+    document.getElementById('qcmd-delete-btn').onclick = deleteTshootQcmd;
+    document.getElementById('qcmd-modal-overlay').classList.add('active');
+    document.getElementById('qcmd-label-input').focus();
+  }
+  function saveTshootQcmdModal() {
+    const label  = document.getElementById('qcmd-label-input').value.trim();
+    const prompt = document.getElementById('qcmd-prompt-input').value.trim();
+    if (!label || !prompt) return;
+    const cmds = loadTshootQuickCmds();
+    if (_tshootEditingIdx >= 0) cmds[_tshootEditingIdx] = { label, prompt };
+    else cmds.push({ label, prompt });
+    saveTshootQuickCmds(cmds);
+    renderTshootQuickCmds();
+    closeQcmdModal();
+  }
+  function deleteTshootQcmd() {
+    if (_tshootEditingIdx < 0) return;
+    const cmds = loadTshootQuickCmds();
+    cmds.splice(_tshootEditingIdx, 1);
+    saveTshootQuickCmds(cmds);
+    renderTshootQuickCmds();
+    closeQcmdModal();
+  }
+
+  function sendTshootQuick(prompt) {
+    showPage('tshoot', document.querySelector(".nav-item[onclick*='tshoot']"));
+    document.getElementById('tshoot-input').value = prompt;
+    setTimeout(sendTshootMessage, 100);
+  }
+
+  function handleTshootKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTshootMessage(); }
+  }
+
+  function appendTshootMsg(role, html) {
+    const msgs = document.getElementById('tshoot-messages');
+    if (!msgs) return;
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const div = document.createElement('div');
+    if (role === 'user') {
+      div.className = 'msg user';
+      div.innerHTML = `<div class="msg-bubble user">${html}</div><div class="msg-meta user">USER · ${now}</div>`;
+    } else {
+      div.className = 'msg agent';
+      div.innerHTML = `
+        <div class="msg-avatar agent">T</div>
+        <div><div class="msg-bubble">${html}</div><div class="msg-meta">TSHOOT AGENT · ${now}</div></div>`;
+    }
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+    return div;
+  }
+
+  async function sendTshootMessage() {
+    const input = document.getElementById('tshoot-input');
+    const text  = input.value.trim();
+    if (!text || tshootSending) return;
+    tshootSending = true;
+    input.value = ''; input.style.height = 'auto';
+    appendTshootMsg('user', text);
+    tshootHistory.push({ role: 'user', content: text });
+
+    const tshootChipId = 'tshoot-' + Date.now();
+    spawnTopbarChip(tshootChipId, 'Tshoot working', 'tshoot');
+
+    const msgs = document.getElementById('tshoot-messages');
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'msg agent';
+    typingDiv.innerHTML = `
+      <div class="avatar-orbit active">
+        <div class="msg-avatar agent">T</div>
+        <div class="orbit-dot"></div>
+      </div>
+      <div><div class="msg-bubble"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div></div>`;
+    msgs.appendChild(typingDiv); msgs.scrollTop = msgs.scrollHeight;
+
+    const now    = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const msgId  = 'tshoot-bubble-' + Date.now();
+    const orbitId = 'tshoot-orbit-' + Date.now();
+    const msgEl  = document.createElement('div');
+    msgEl.className = 'msg agent';
+    msgEl.innerHTML = `
+      <div class="avatar-orbit active" id="${orbitId}">
+        <div class="msg-avatar agent">T</div>
+        <div class="orbit-dot"></div>
+      </div>
+      <div>
+        <div class="msg-bubble" id="${msgId}"></div>
+        <div class="msg-meta">TSHOOT AGENT · ${now}</div>
+      </div>`;
+    let msgAdded = false;
+
+    try {
+      const resp = await fetch('/api/tshoot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: tshootHistory }),
+      });
+      if (!resp.ok) throw new Error(`API error ${resp.status}`);
+      typingDiv.remove();
+
+      const reader  = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '', fullText = '', toolsUsed = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n'); buffer = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'text') {
+              fullText += event.content;
+              if (!msgAdded) { msgs.appendChild(msgEl); msgAdded = true; }
+              document.getElementById(msgId).innerHTML = renderBubbleContent(fullText, toolsUsed);
+              msgs.scrollTop = msgs.scrollHeight;
+            } else if (event.type === 'tool_start') {
+              onToolStart(event.tool, event.input || {});
+              if (!toolsUsed.includes(event.tool)) toolsUsed.push(event.tool);
+              if (!msgAdded) { msgs.appendChild(msgEl); msgAdded = true; }
+              document.getElementById(msgId).innerHTML = renderBubbleContent(fullText, toolsUsed);
+              msgs.scrollTop = msgs.scrollHeight;
+            } else if (event.type === 'tool_done') {
+              // tool done — no action needed, tool_start already showed it
+            } else if (event.type === 'done') {
+              tshootHistory.push({ role: 'assistant', content: fullText });
+              const orbitEl = document.getElementById(orbitId);
+              if (orbitEl) orbitEl.classList.remove('active');
+              notify('tshoot', 'TSHOOT AGENT', 'Diagnostics complete');
+              setTopbarChipDone(tshootChipId);
+            } else if (event.type === 'error') {
+              if (!msgAdded) { msgs.appendChild(msgEl); msgAdded = true; }
+              document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
+              const orbitEl = document.getElementById(orbitId);
+              if (orbitEl) orbitEl.classList.remove('active');
+              removeTopbarChip(tshootChipId);
+            }
+          } catch(e) { /* skip malformed */ }
+        }
+      }
+    } catch(err) {
+      typingDiv.remove();
+      appendTshootMsg('agent', `<span style="color:var(--danger)">Connection error: ${err.message}</span>`);
+      removeTopbarChip(tshootChipId);
+    } finally {
+      tshootSending = false;
+    }
+  }
+
+  renderTshootQuickCmds();
+
 </script>
   <!-- FINDING DETAIL PANEL -->
   <div class="detail-overlay" id="detail-overlay" onclick="closeDetail()"></div>
@@ -6644,7 +7764,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <button class="btn btn-ghost" id="qcmd-delete-btn" style="margin-right:auto;color:var(--danger);border-color:var(--danger)" onclick="deleteQcmd()">Delete</button>
         <button class="btn btn-ghost" onclick="resetQuickCmds()">Reset Defaults</button>
         <button class="btn btn-ghost" onclick="closeQcmdModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="saveQcmdModal()">Save</button>
+        <button class="btn btn-primary" id="qcmd-save-btn" onclick="saveQcmdModal()">Save</button>
       </div>
     </div>
   </div>

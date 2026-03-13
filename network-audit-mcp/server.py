@@ -47,9 +47,8 @@ EOX_CLIENT_KEY       = os.getenv("EOX_CLIENT_KEY")
 EOX_CLIENT_SECRET    = os.getenv("EOX_CLIENT_SECRET")
 EOX_API_BASE         = "https://apix.cisco.com/supporttools/eox/rest/5"
 
-_ssh_client  = None
-_ssh_channel = None
-_device_host = None
+# sessions keyed by host: { host: {"client": SSHClient, "channel": channel} }
+_sessions: dict = {}
 
 log.info("Loading embedding model...")
 embed_model = SentenceTransformer(EMBED_MODEL)
@@ -103,31 +102,38 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="run_show_command",
-            description="Run a read-only show command on the connected Cisco device. Must call connect_to_device first.",
+            description="Run a read-only show command on a connected Cisco device. Must call connect_to_device first.",
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "The show command to execute e.g. 'show running-config'"}
+                    "command": {"type": "string", "description": "The show command to execute e.g. 'show running-config'"},
+                    "host": {"type": "string", "description": "IP/hostname of the device session to use. Required when multiple sessions are open."}
                 },
                 "required": ["command"]
             }
         ),
         types.Tool(
             name="push_config",
-            description="Push configuration commands to the connected Cisco device. Only use after explicit user approval.",
+            description="Push configuration commands to a connected Cisco device. Only use after explicit user approval.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "commands": {"type": "array", "items": {"type": "string"}, "description": "List of configuration commands to push"},
-                    "confirmed": {"type": "boolean", "description": "Must be true - confirms user has approved these changes"}
+                    "confirmed": {"type": "boolean", "description": "Must be true - confirms user has approved these changes"},
+                    "host": {"type": "string", "description": "IP/hostname of the device session to use. Required when multiple sessions are open."}
                 },
                 "required": ["commands", "confirmed"]
             }
         ),
         types.Tool(
             name="disconnect_device",
-            description="Close the SSH connection to the current device.",
-            inputSchema={"type": "object", "properties": {}}
+            description="Close the SSH connection to a device. Specify host to close a specific session, or omit to close all sessions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "host": {"type": "string", "description": "IP/hostname to disconnect. Omit to disconnect all open sessions."}
+                }
+            }
         ),
         types.Tool(
             name="send_email",
@@ -351,10 +357,23 @@ async def list_tools() -> list[types.Tool]:
                     "ip":        {"type": "string",  "description": "Device IP address"},
                     "ios":       {"type": "string",  "description": "IOS version string"},
                     "timestamp": {"type": "string",  "description": "ISO timestamp of audit"},
-                    "findings":  {"type": "array",   "description": "Array of finding objects", "items": {"type": "object"}},
+                    "findings":  {"type": "array",   "description": "Array of ALL finding objects — include every control checked. Use severity=PASS for controls that passed, CRITICAL/HIGH/MEDIUM/LOW for failures.", "items": {"type": "object"}},
                     "score":     {"type": "object",  "description": "Compliance scores: {overall, nist, cis}"}
                 },
                 "required": ["device", "ip", "findings", "score"]
+            }
+        ),
+        types.Tool(
+            name="stream_finding",
+            description="Stream a single finding title to the live chat card. Only 3 fields needed — keep it minimal. Call once per finding in Phase 3, batched alongside save_audit_results.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title":    {"type": "string", "description": "Finding title or CVE ID"},
+                    "severity": {"type": "string", "description": "CRITICAL | HIGH | MEDIUM | LOW | PASS"},
+                    "type":     {"type": "string", "description": "hardening | cve"}
+                },
+                "required": ["title", "severity", "type"]
             }
         ),
         types.Tool(
@@ -484,6 +503,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _run_dig(**arguments)
     elif name == "run_scapy":
         return await _run_scapy(**arguments)
+    elif name == "stream_finding":
+        return [types.TextContent(type="text", text="ok")]
     elif name == "save_audit_results":
         return await _save_audit_results(**arguments)
     elif name == "query_psirt":
@@ -552,30 +573,31 @@ async def _query_design_kb(query: str, num_results: int = 5) -> list[types.TextC
 
 
 async def _connect_to_device(host: str, username: str = None, password: str = None) -> list[types.TextContent]:
-    global _ssh_client, _ssh_channel, _device_host
+    global _sessions
     username = username or LAB_USERNAME
     password = password or LAB_PASSWORD
     if not username or not password:
         return [types.TextContent(type="text", text="ERROR: No credentials provided and no lab defaults configured.")]
-    if _ssh_client:
+    if host in _sessions:
         try:
-            _ssh_client.close()
+            _sessions[host]["client"].close()
         except Exception:
             pass
+        del _sessions[host]
     log.info(f"Connecting to {host} as {username}...")
     try:
-        _ssh_client = paramiko.SSHClient()
-        _ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        _ssh_client.connect(hostname=host, username=username, password=password,
-                            look_for_keys=False, allow_agent=False, timeout=15, auth_timeout=15)
-        _ssh_channel = _ssh_client.invoke_shell()
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(hostname=host, username=username, password=password,
+                       look_for_keys=False, allow_agent=False, timeout=15, auth_timeout=15)
+        channel = client.invoke_shell()
         time.sleep(1)
-        _clear_buffer()
-        _ssh_channel.send("terminal length 0\n")
+        _clear_buffer(channel)
+        channel.send("terminal length 0\n")
         time.sleep(0.5)
-        _clear_buffer()
-        _device_host = host
-        log.info(f"Connected to {host}")
+        _clear_buffer(channel)
+        _sessions[host] = {"client": client, "channel": channel}
+        log.info(f"Connected to {host} ({len(_sessions)} session(s) open)")
         return [types.TextContent(type="text", text=f"Successfully connected to {host} as {username}")]
     except paramiko.AuthenticationException:
         return [types.TextContent(type="text", text=f"ERROR: Authentication failed for {host}.")]
@@ -584,59 +606,87 @@ async def _connect_to_device(host: str, username: str = None, password: str = No
         return [types.TextContent(type="text", text=f"ERROR: Connection failed: {e}")]
 
 
-async def _run_show_command(command: str) -> list[types.TextContent]:
-    if not _ssh_channel:
-        return [types.TextContent(type="text", text="ERROR: Not connected. Call connect_to_device first.")]
+def _resolve_session(host: str = None):
+    """Return (host, channel) for the given host, or the only open session if host is omitted."""
+    if host:
+        s = _sessions.get(host)
+        if not s:
+            return None, None
+        return host, s["channel"]
+    if len(_sessions) == 1:
+        h = next(iter(_sessions))
+        return h, _sessions[h]["channel"]
+    return None, None
+
+
+async def _run_show_command(command: str, host: str = None) -> list[types.TextContent]:
+    h, channel = _resolve_session(host)
+    if not channel:
+        hint = f" (open sessions: {list(_sessions.keys())})" if _sessions else ""
+        return [types.TextContent(type="text", text=f"ERROR: No active session{' for ' + host if host else ''}{hint}. Call connect_to_device first.")]
     blocked = ["conf", "write", "copy", "delete", "reload", "no ", "shutdown"]
     if any(command.strip().lower().startswith(b) for b in blocked):
         return [types.TextContent(type="text", text=f"ERROR: '{command}' not permitted in read-only mode.")]
-    log.info(f"Running: {command}")
+    log.info(f"Running on {h}: {command}")
     try:
-        _ssh_channel.send(command + "\n")
+        channel.send(command + "\n")
         time.sleep(0.5)
-        output = _clear_buffer(timeout=10)
+        output = _clear_buffer(channel, timeout=10)
         return [types.TextContent(type="text", text=output)]
     except Exception as e:
         return [types.TextContent(type="text", text=f"ERROR: Command failed: {e}")]
 
 
-async def _push_config(commands: list, confirmed: bool) -> list[types.TextContent]:
+async def _push_config(commands: list, confirmed: bool, host: str = None) -> list[types.TextContent]:
     if not confirmed:
         return [types.TextContent(type="text", text="ERROR: Set confirmed=true to proceed.")]
-    if not _ssh_channel:
-        return [types.TextContent(type="text", text="ERROR: Not connected. Call connect_to_device first.")]
-    log.info(f"Pushing {len(commands)} commands to {_device_host}")
+    h, channel = _resolve_session(host)
+    if not channel:
+        hint = f" (open sessions: {list(_sessions.keys())})" if _sessions else ""
+        return [types.TextContent(type="text", text=f"ERROR: No active session{' for ' + host if host else ''}{hint}. Call connect_to_device first.")]
+    log.info(f"Pushing {len(commands)} commands to {h}")
     try:
         output = ""
-        _ssh_channel.send("configure terminal\n")
+        channel.send("configure terminal\n")
         time.sleep(0.5)
-        output += _clear_buffer()
+        output += _clear_buffer(channel)
         for cmd in commands:
-            _ssh_channel.send(cmd + "\n")
+            channel.send(cmd + "\n")
             time.sleep(0.3)
-            output += _clear_buffer()
-        _ssh_channel.send("end\n")
+            output += _clear_buffer(channel)
+        channel.send("end\n")
         time.sleep(0.3)
-        output += _clear_buffer()
-        _ssh_channel.send("write memory\n")
+        output += _clear_buffer(channel)
+        channel.send("write memory\n")
         time.sleep(2)
-        output += _clear_buffer()
-        return [types.TextContent(type="text", text=f"Configuration applied:\n{output}")]
+        output += _clear_buffer(channel)
+        return [types.TextContent(type="text", text=f"Configuration applied to {h}:\n{output}")]
     except Exception as e:
         return [types.TextContent(type="text", text=f"ERROR: Config push failed: {e}")]
 
 
-async def _disconnect_device() -> list[types.TextContent]:
-    global _ssh_client, _ssh_channel, _device_host
-    msg = "No active connection."
-    if _ssh_client:
+async def _disconnect_device(host: str = None) -> list[types.TextContent]:
+    global _sessions
+    if host:
+        s = _sessions.pop(host, None)
+        if not s:
+            return [types.TextContent(type="text", text=f"No active session for {host}.")]
         try:
-            _ssh_client.close()
-            msg = f"Disconnected from {_device_host}"
-        except Exception as e:
-            msg = f"Error during disconnect: {e}"
-    _ssh_client = _ssh_channel = _device_host = None
-    return [types.TextContent(type="text", text=msg)]
+            s["client"].close()
+        except Exception:
+            pass
+        return [types.TextContent(type="text", text=f"Disconnected from {host}")]
+    # No host — disconnect all
+    if not _sessions:
+        return [types.TextContent(type="text", text="No active sessions.")]
+    closed = list(_sessions.keys())
+    for s in _sessions.values():
+        try:
+            s["client"].close()
+        except Exception:
+            pass
+    _sessions.clear()
+    return [types.TextContent(type="text", text=f"Disconnected from: {', '.join(closed)}")]
 
 
 async def _query_nvd(
@@ -1599,8 +1649,7 @@ async def _save_audit_results(device: str, ip: str, findings: list, score: dict,
     """POST audit results to the Gladius API so the dashboard can display them."""
     import datetime
     gladius_api = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
-    if not timestamp:
-        timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
     payload = {
         "device":    device,
         "ip":        ip,
@@ -1821,12 +1870,12 @@ async def _query_eox(
     return [types.TextContent(type="text", text=output)]
 
 
-def _clear_buffer(timeout: int = 5) -> str:
+def _clear_buffer(channel, timeout: int = 5) -> str:
     output = ""
     start  = time.time()
     while (time.time() - start) < timeout:
-        if _ssh_channel.recv_ready():
-            chunk   = _ssh_channel.recv(8192).decode("utf-8", errors="ignore")
+        if channel.recv_ready():
+            chunk   = channel.recv(8192).decode("utf-8", errors="ignore")
             output += chunk
             if any(p in chunk for p in ["#", ">"]):
                 break

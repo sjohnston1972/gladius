@@ -24,7 +24,7 @@ import requests as http_requests
 import anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -43,7 +43,21 @@ def get_embed_model():
     if _embed_model is None:
         from sentence_transformers import SentenceTransformer
         log.info(f"Loading embedding model: {EMBED_MODEL}")
-        _embed_model = SentenceTransformer(EMBED_MODEL)
+        # When HF_HUB_OFFLINE=1, sentence_transformers can't resolve short model
+        # names through the hub cache. Resolve to the snapshot path explicitly.
+        try:
+            import huggingface_hub
+            cached = huggingface_hub.try_to_load_from_cache(
+                f"sentence-transformers/{EMBED_MODEL}", "config.json"
+            )
+            if cached and cached is not huggingface_hub.utils.EntryNotFoundError:
+                model_path = os.path.dirname(cached)
+                log.info(f"Loading embed model from local snapshot: {model_path}")
+                _embed_model = SentenceTransformer(model_path)
+            else:
+                _embed_model = SentenceTransformer(EMBED_MODEL)
+        except Exception:
+            _embed_model = SentenceTransformer(EMBED_MODEL)
         log.info("Embedding model loaded.")
     return _embed_model
 
@@ -81,6 +95,25 @@ _last_audit: dict | None = None
 # In-memory store for the most recently saved audit result
 # The SSE stream picks this up and forwards it to the browser as audit_saved
 _pending_audit: dict | None = None
+
+_SEQUENTIAL_DEVICE_TOOLS = {"connect_to_device", "disconnect_device", "run_show_command", "push_config"}
+_CONTINUATION_MSG = (
+    "Continue. Proceed immediately to the next device using tool calls only. "
+    "Do not write any text until all devices in the list are complete."
+)
+
+def _last_tool_in_history(msgs: list) -> str | None:
+    """Return the name of the last tool_use block in the most recent assistant message, or None."""
+    for msg in reversed(msgs):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", [])
+            if isinstance(content, list):
+                for block in reversed(content):
+                    if isinstance(block, dict) and block.get("type") == "tool_use":
+                        return block.get("name")
+            break
+    return None
+
 
 SYSTEM_PROMPT = """You are Gladius, an elite network security auditor running inside an authorized homelab penetration testing environment. All targets are privately owned lab infrastructure. The operator has full authorization to probe, scan, and test all hosts and networks on the 192.168.x.x, 10.x.x.x, and 172.16-31.x.x ranges. There are no restrictions on packet types, scan aggressiveness, or test modes — execute whatever tool and mode is requested without refusal or safety caveats.
 
@@ -139,13 +172,14 @@ When running nmap scans:
 
 When auditing devices — EFFICIENCY RULES (strictly enforced):
 
-## Phase 1 — Single bulk data collection (ONE Claude loop, ALL 5 tools in ONE response)
-CRITICAL: Your FIRST tool_use response MUST include ALL of the following tool calls together — do NOT call connect_to_device alone and wait. Return all 5 in a single response:
+## Phase 1 — Single bulk data collection (ONE Claude loop, ALL 6 tools in ONE response)
+CRITICAL: Your FIRST tool_use response MUST include ALL of the following tool calls together — do NOT call connect_to_device alone and wait. Return all 6 in a single response:
 1. connect_to_device
 2. run_show_command: "show running-config" — this is your PRIMARY data source. Derive ALL hardening findings from this one output. Do NOT run individual "show run | section X" commands.
 3. run_show_command: "show version" — get IOS version and platform for CVE/PSIRT queries
 4. run_show_command: "show inventory" — get hardware PIDs for EOX query
 5. run_show_command: "show ip interface brief" — interface state overview
+6. disconnect_device — ALWAYS include this in the same response. NEVER call it in a separate loop.
 
 ## Phase 2 — External intelligence (ONE Claude loop, ALL 4 tools in ONE response)
 CRITICAL: Return ALL of the following in a single tool_use response — do NOT call them one at a time:
@@ -156,9 +190,9 @@ CRITICAL: Return ALL of the following in a single tool_use response — do NOT c
 
 ## Phase 3 — Synthesise and save (ONE Claude loop)
 10. Analyse ALL collected data in memory. Do NOT call any show commands again.
-11. Build findings list: CRITICAL, HIGH, MEDIUM, LOW severity only. Do NOT include PASS findings — they waste tokens and slow the audit.
-12. Call save_audit_results ONCE with all actionable findings and scores
-13. After save_audit_results succeeds, respond with ONE sentence: "Audit complete — N findings saved to the dashboard." followed by one line offering to push remediations or email the report. DO NOT re-list findings. DO NOT generate a report summary. DO NOT reproduce findings as text. The dashboard already has all findings — do not duplicate them.
+11. Build findings list: include ALL checks — CRITICAL, HIGH, MEDIUM, LOW for failures, and PASS for every control that passed. PASS findings must have title, severity="PASS", type="hardening", category, and empty strings for impact/fix/commands/ref.
+12. Call save_audit_results ONCE with all findings and scores.
+13. After save_audit_results succeeds, respond with ONE sentence: "Audit complete — N findings saved to the dashboard." followed by one line offering to push remediations or email the report. DO NOT re-list findings. DO NOT generate a report summary. DO NOT reproduce findings as text.
 
 ## STRICT RULES — violations waste time and money:
 - NEVER respond with a single tool call when the phase requires multiple — batch all phase tools into one response
@@ -168,13 +202,13 @@ CRITICAL: Return ALL of the following in a single tool_use response — do NOT c
 - NEVER call query_nvd more than once per audit
 - NEVER call query_psirt more than once per audit — one call, no severity filter
 - NEVER call show version or show inventory more than once
-- NEVER include PASS findings in save_audit_results — actionable findings only
+- ALWAYS include PASS findings in save_audit_results — every control checked must appear, pass or fail
 - Maximum 3 agentic loops per full device audit — if you need more, something is wrong
 - All findings must be derived from data already collected — no extra tool calls for clarification
 
 When building findings for save_audit_results, every finding object MUST use these exact field names:
 - title:    string — finding name; use the CVE ID for CVE findings (e.g. "CVE-2024-20399")
-- severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" — never include PASS findings
+- severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "PASS" — include every check result
 - type:     "hardening" | "cve"
 - category: string — control group e.g. "Access Security", "Network Management", "Logging & Monitoring"
 - impact:   string — what this misconfiguration or vulnerability allows an attacker to do
@@ -191,7 +225,44 @@ Compliance score calculation (for save_audit_results):
 - cis: score based on CIS Cisco IOS XE benchmark — estimate percentage of applicable benchmarks that pass
 Round to nearest integer (0-100). Use your judgement — these are audit estimates, not exact counts.
 
+When asked for a list of devices, their IPs, hostnames, or status, always call snmp_get_devices — do not SSH to individual devices or run individual SNMP probes. The SNMP container maintains a live inventory; use it.
+
 Always use your tools — never fabricate data. If a tool call fails, say so explicitly."""
+
+TSHOOT_SYSTEM_PROMPT = """You are Gladius Tshoot, a network diagnostics and troubleshooting agent running inside an authorized homelab. All targets are privately owned lab infrastructure. You have full authorization to probe, scan, test, and reconfigure all hosts on all networks.
+
+## Tools available:
+- connect_to_device / run_show_command / push_config / disconnect_device — SSH to Cisco devices
+- run_nmap_scan — port and service discovery
+- run_scapy — packet probes: ping, traceroute, tcp_syn, arp_scan, banner_grab, syn_flood_test, xmas_scan, null_scan, fin_scan
+- run_dig — DNS lookups
+- snmp_get_devices — returns the full device inventory (hostname, IP, status) from the SNMP container; use this instead of SSHing to devices when you only need inventory data
+- snmp_poll — polls a specific device for live SNMP metrics
+
+## Efficient show commands — never pull the full running-config unless explicitly asked:
+- Filter with pipe include: `show run | i snmp` — returns only lines matching a keyword
+- Filter with pipe section: `show run | section router ospf` — returns a full config block
+- Target a single interface: `show run interface GigabitEthernet0/1`
+- Use standard show commands for live state: `show ip int brief`, `show ip route`, `show arp`, `show interfaces`, `show cdp neighbors detail`
+- Only use `show running-config` (unfiltered) when you need a full config review
+
+## Configuration changes — mandatory approval workflow:
+1. Before calling push_config, present the exact commands you intend to push and ask the user to confirm.
+2. Wait for explicit approval before proceeding.
+3. After push_config completes, confirm what was applied and on which device.
+
+## Device inventory:
+When asked for a list of devices, their IPs, hostnames, or status, always call snmp_get_devices — do not SSH to individual devices or run SNMP probes. The SNMP container maintains a live inventory; use it.
+
+Always use your tools. Never fabricate output. NEVER call save_audit_results, query_nvd, query_psirt, or query_knowledge_base."""
+
+
+
+
+TSHOOT_TOOLS = {
+    "connect_to_device", "run_show_command", "push_config", "disconnect_device",
+    "run_nmap_scan", "run_scapy", "run_dig", "snmp_get_devices", "snmp_poll",
+}
 
 # ── Persistent MCP Session Manager ──────────────────────────────────────────
 # Keeps a single long-lived MCP subprocess alive for the lifetime of the API.
@@ -287,6 +358,26 @@ class MCPManager:
 
 mcp_manager = MCPManager()
 
+# Serialise synthesis phases across all concurrent device audits — prevents
+# 4 simultaneous Claude API calls that would hit Anthropic rate limits.
+_synthesis_sem: asyncio.Semaphore | None = None
+
+def get_synthesis_sem() -> asyncio.Semaphore:
+    global _synthesis_sem
+    if _synthesis_sem is None:
+        _synthesis_sem = asyncio.Semaphore(1)
+    return _synthesis_sem
+
+
+async def make_fresh_mcp_manager() -> "MCPManager":
+    """Spawn a fresh, isolated MCP subprocess — own process = own SSH session state.
+    Used by parallel device audits so concurrent devices don't clobber each other's
+    _ssh_client global inside the MCP server."""
+    mgr = MCPManager()
+    if not await mgr.connect():
+        raise RuntimeError("Failed to create fresh MCP session for device audit")
+    return mgr
+
 
 async def _background_mcp_init():
     """
@@ -317,17 +408,19 @@ async def _background_mcp_init():
     except Exception as e:
         log.warning(f"MCP: pre-warm ping failed (non-fatal): {e}")
 
-    # Pre-warm the design agent embed model (runs in gladius-api process, separate from MCP).
-    # Also cache the design-guidelines Chroma collection ID so design queries skip the lookup.
+    # Pre-warm the design agent embed model and cache the collection ID.
+    # These are independent — cache the collection ID even if embed model load fails.
     try:
-        log.info("Design: pre-warming embed model + caching design collection ID...")
+        log.info("Design: pre-warming embed model...")
         t2 = asyncio.get_event_loop().time()
         await asyncio.to_thread(get_embed_model)
-        elapsed = asyncio.get_event_loop().time() - t2
-        log.info(f"Design: embed model ready in {elapsed:.1f}s")
+        log.info(f"Design: embed model ready in {asyncio.get_event_loop().time()-t2:.1f}s")
+    except Exception as e:
+        log.warning(f"Design: embed model pre-warm failed (non-fatal): {e}")
+    try:
         await _cache_design_collection_id()
     except Exception as e:
-        log.warning(f"Design: pre-warm failed (non-fatal): {e}")
+        log.warning(f"Design: collection ID cache failed (non-fatal): {e}")
 
 
 @asynccontextmanager
@@ -877,12 +970,131 @@ async def chat(request: ChatRequest):
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+
+@app.post("/api/tshoot")
+async def tshoot(request: ChatRequest):
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    return StreamingResponse(
+        stream_tshoot(messages),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def stream_tshoot(messages: list) -> AsyncIterator[str]:
+    """Tshoot agent — filtered tool set, diagnostics-focused system prompt."""
+    tools = [t for t in cached_tools if t["name"] in TSHOOT_TOOLS]
+    _TRUNCATE_TOOLS = {"run_show_command", "run_nmap_scan"}
+    _TOOL_MAX_CHARS  = 6000
+
+    try:
+        loop_messages  = list(messages)
+        loop_count     = 0
+        MAX_LOOPS      = 20   # sequential multi-device ops need 1 loop per device
+        _force_tools   = False  # set after disconnect_device to force next call to use tools
+        _text_breaks   = 0    # consecutive text-only responses after disconnect — cap at 2
+
+        while loop_count < MAX_LOOPS:
+            loop_count += 1
+            api_kwargs = dict(
+                model=MODEL, max_tokens=4096, system=TSHOOT_SYSTEM_PROMPT,
+                messages=loop_messages, tools=tools,
+            )
+            if _force_tools:
+                api_kwargs["tool_choice"] = {"type": "any"}
+                _force_tools = False
+            response = await client.messages.create(**api_kwargs)
+
+            assistant_content = []
+            tool_calls = []
+
+            for block in response.content:
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                    for i, word in enumerate(block.text.split(" ")):
+                        chunk = word + (" " if i < len(block.text.split(" ")) - 1 else "")
+                        yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+                        await asyncio.sleep(0.01)
+                elif block.type == "tool_use":
+                    assistant_content.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+                    tool_calls.append((block.id, block.name, block.input))
+                    _STRIP = {'attachment_html', 'body'}
+                    slim = {k: v for k, v in block.input.items() if k not in _STRIP}
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool': block.name, 'input': slim})}\n\n"
+
+            if not tool_calls:
+                # Claude returned text-only. If it just finished a device, force it back on track.
+                if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
+                    _text_breaks += 1
+                    _force_tools = True
+                    log.info(f"[Tshoot] Text-only after disconnect_device (break #{_text_breaks}) — forcing tool call")
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
+                    continue
+                global _last_claude_success
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                break
+
+            _text_breaks = 0  # Claude used tools — reset the counter
+
+            tool_results = []
+            for tool_use_id, tool_name, tool_input in tool_calls:
+                log.info(f"[Tshoot] tool: {tool_name}")
+                try:
+                    result      = await mcp_manager.call_tool(tool_name, tool_input)
+                    result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                    is_error    = bool(result.isError)
+                except Exception as e:
+                    result_text = f"Tool error: {e}"
+                    is_error    = True
+                    log.error(f"[Tshoot] {tool_name} failed: {e}")
+
+                yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
+
+                context_text = result_text
+                if tool_name in _TRUNCATE_TOOLS and len(result_text) > _TOOL_MAX_CHARS:
+                    context_text = result_text[:_TOOL_MAX_CHARS] + f"\n[truncated — {len(result_text)} chars total]"
+
+                # Inject directive into disconnect_device result so Claude sees it immediately
+                if tool_name == "disconnect_device":
+                    context_text += "\n\n[SYSTEM DIRECTIVE: Device complete. Your next response MUST be connect_to_device for the next device — zero text output until all devices are done.]"
+
+                tool_results.append({
+                    "type": "tool_result", "tool_use_id": tool_use_id,
+                    "content": [{"type": "text", "text": context_text}],
+                    "is_error": is_error,
+                })
+
+            if assistant_content:
+                loop_messages.append({"role": "assistant", "content": assistant_content})
+            if tool_results:
+                loop_messages.append({"role": "user", "content": tool_results})
+
+            if response.stop_reason != "tool_use":
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                break
+
+        else:
+            log.warning("[Tshoot] MAX_LOOPS reached — forcing done")
+            _last_claude_success = time.monotonic()
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    except Exception as e:
+        log.error(f"[Tshoot] stream error: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
 async def stream_response(messages: list) -> AsyncIterator[str]:
     """
     Uses the persistent MCP session — no subprocess spin-up per request.
     Tool calls are serialised through the MCPManager lock.
     """
-    tools = cached_tools
+    # Exclude legacy/internal tools that should never be called by the main agent
+    _BLOCKED_TOOLS = {"stream_finding"}
+    tools = [t for t in cached_tools if t["name"] not in _BLOCKED_TOOLS]
 
     if not tools:
         log.warning("No tools available — falling back to Claude only")
@@ -890,22 +1102,32 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
             yield chunk
         return
 
+    # Tool outputs that balloon in size — truncate before adding to Claude context
+    _TRUNCATE_TOOLS = {"query_nvd", "query_psirt", "run_show_command", "query_knowledge_base"}
+    _TOOL_MAX_CHARS = 6000
+    _audit_saved = False  # break loop immediately after save_audit_results
+
     try:
         loop_messages = list(messages)
-        loop_count = 0
-        MAX_LOOPS = 8
+        loop_count    = 0
+        MAX_LOOPS     = 20  # sequential multi-device ops need 1 loop per device; audits exit early via _audit_saved
+        _force_tools  = False
+        _text_breaks  = 0
 
         while loop_count < MAX_LOOPS:
             loop_count += 1
-            response = await client.messages.create(
-                model=MODEL,
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                messages=loop_messages,
-                tools=tools,
+            api_kwargs = dict(
+                model=MODEL, max_tokens=8192, system=SYSTEM_PROMPT,
+                messages=loop_messages, tools=tools,
             )
+            if _force_tools:
+                api_kwargs["tool_choice"] = {"type": "any"}
+                _force_tools = False
+            response = await client.messages.create(**api_kwargs)
 
+            # Pass 1: stream text and collect all blocks + tool calls from this response
             assistant_content = []
+            tool_calls = []  # list of (tool_use_id, tool_name, tool_input)
 
             for block in response.content:
                 if block.type == "text":
@@ -916,84 +1138,125 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
                         await asyncio.sleep(0.01)
 
                 elif block.type == "tool_use":
-                    tool_name    = block.name
-                    tool_input   = block.input
-                    tool_use_id  = block.id
-
                     assistant_content.append({
                         "type": "tool_use",
-                        "id": tool_use_id,
-                        "name": tool_name,
-                        "input": tool_input,
+                        "id":    block.id,
+                        "name":  block.name,
+                        "input": block.input,
                     })
+                    tool_calls.append((block.id, block.name, block.input))
 
-                    # Strip bulky fields before sending input to the browser
+                    # Notify browser of each tool start
                     _STRIP = {'findings', 'attachment_html', 'body', 'commands'}
-                    slim_input = {k: v for k, v in tool_input.items() if k not in _STRIP}
-                    if 'commands' in tool_input:
-                        slim_input['commands_count'] = len(tool_input['commands'])
-                    if 'findings' in tool_input:
-                        slim_input['findings_count'] = len(tool_input['findings'])
-                    yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name, 'input': slim_input})}\n\n"
-                    log.info(f"Tool call: {tool_name}({tool_input})")
+                    slim_input = {k: v for k, v in block.input.items() if k not in _STRIP}
+                    if 'commands' in block.input:
+                        slim_input['commands_count'] = len(block.input['commands'])
+                    if 'findings' in block.input:
+                        slim_input['findings_count'] = len(block.input['findings'])
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool': block.name, 'input': slim_input})}\n\n"
 
-                    try:
-                        # Cache audit when save_audit_results fires (for templated emails)
-                        if tool_name == "save_audit_results":
-                            global _last_audit
-                            _last_audit = tool_input
+            if not tool_calls:
+                if response.stop_reason != "tool_use":
+                    if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
+                        _text_breaks += 1
+                        _force_tools = True
+                        log.info(f"[Chat] Text-only after disconnect_device (break #{_text_breaks}) — forcing tool call")
+                        loop_messages.append({"role": "assistant", "content": assistant_content})
+                        loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
+                        continue
+                    global _last_claude_success
+                    _last_claude_success = time.monotonic()
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    break
 
-                        # Intercept send_email — signal browser to send templated HTML instead
-                        if tool_name == "send_email" and _last_audit:
-                            payload = json.dumps({
-                                "type":      "send_templated_email",
-                                "subject":   tool_input.get("subject", ""),
-                                "recipient": tool_input.get("recipient", ""),
-                            })
-                            yield f"data: {payload}\n\n"
-                            result_text    = "Templated HTML report email dispatched via browser"
-                            result_payload = {"type": "text", "text": result_text}
-                            is_error       = False
-                            log.info("send_email intercepted — signalling browser to send templated report")
-                        else:
-                            result      = await mcp_manager.call_tool(tool_name, tool_input)
-                            result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
-                            result_payload = {"type": "text", "text": result_text}
-                            is_error    = bool(result.isError)
-                            log.info(f"Tool {tool_name} succeeded, {len(result_text)} chars returned")
-                    except Exception as e:
-                        log.error(f"Tool {tool_name} failed: {type(e).__name__}: {e}", exc_info=True)
-                        result_payload = {"type": "text", "text": f"Tool error: {type(e).__name__}: {e}"}
-                        is_error    = True
+            _text_breaks = 0  # Claude used tools — reset counter
 
-                    yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
+            # Pass 2: execute all tool calls, collect results, then append ONE message pair
+            tool_results = []
+            for tool_use_id, tool_name, tool_input in tool_calls:
+                log.info(f"Tool call: {tool_name}")
+                try:
+                    if tool_name == "save_audit_results":
+                        global _last_audit
+                        _last_audit = tool_input
 
-                    if tool_name == "save_audit_results" and not is_error:
-                        audit_data = dict(tool_input)
-                        if not audit_data.get("timestamp"):
-                            audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
-                        audit_payload = json.dumps({"type": "audit_saved", "audit": audit_data})
-                        yield f"data: {audit_payload}\n\n"
-                        log.info("audit_saved event streamed to browser")
-                        _pending_audit = None
+                    if tool_name == "send_email" and _last_audit:
+                        payload = json.dumps({
+                            "type":      "send_templated_email",
+                            "subject":   tool_input.get("subject", ""),
+                            "recipient": tool_input.get("recipient", ""),
+                        })
+                        yield f"data: {payload}\n\n"
+                        result_text = "Templated HTML report email dispatched via browser"
+                        is_error    = False
+                        log.info("send_email intercepted — signalling browser to send templated report")
+                    else:
+                        result      = await mcp_manager.call_tool(tool_name, tool_input)
+                        result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                        is_error    = bool(result.isError)
+                        log.info(f"Tool {tool_name} done — {len(result_text)} chars")
+                except Exception as e:
+                    log.error(f"Tool {tool_name} failed: {type(e).__name__}: {e}", exc_info=True)
+                    result_text = f"Tool error: {type(e).__name__}: {e}"
+                    is_error    = True
 
-                    loop_messages.append({"role": "assistant", "content": assistant_content})
-                    loop_messages.append({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": [result_payload],
-                            "is_error": is_error,
-                        }]
-                    })
-                    assistant_content = []
+                yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
 
-            if response.stop_reason != "tool_use":
-                global _last_claude_success
+                if tool_name == "save_audit_results" and not is_error:
+                    audit_data = dict(tool_input)
+                    audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+                    for finding in audit_data.get("findings", []):
+                        slim = {
+                            "title":    finding.get("title", ""),
+                            "severity": finding.get("severity", ""),
+                            "type":     finding.get("type", "hardening"),
+                        }
+                        yield f"data: {json.dumps({'type': 'finding', 'finding': slim})}\n\n"
+                        await asyncio.sleep(0.03)
+                    yield f"data: {json.dumps({'type': 'audit_saved', 'audit': audit_data})}\n\n"
+                    log.info("audit_saved event streamed to browser")
+                    _pending_audit = None
+                    _audit_saved = True
+
+                # Truncate large outputs before feeding back to Claude context
+                context_text = result_text
+                if tool_name in _TRUNCATE_TOOLS and len(result_text) > _TOOL_MAX_CHARS:
+                    context_text = result_text[:_TOOL_MAX_CHARS] + f"\n[truncated — {len(result_text)} chars total]"
+
+                # Directive injected into disconnect_device result — seen by Claude before next response
+                if tool_name == "disconnect_device":
+                    context_text += "\n\n[SYSTEM DIRECTIVE: Device complete. Your next response MUST be connect_to_device for the next device — zero text output until all devices are done.]"
+
+                tool_results.append({
+                    "type":        "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content":     [{"type": "text", "text": context_text}],
+                    "is_error":    is_error,
+                })
+
+            # Append ONE assistant message + ONE user message (all tool results batched)
+            if assistant_content:
+                loop_messages.append({"role": "assistant", "content": assistant_content})
+            if tool_results:
+                loop_messages.append({"role": "user", "content": tool_results})
+
+            # Break immediately after audit is saved — skip the post-audit summary loop
+            if _audit_saved:
+                log.info("save_audit_results succeeded — skipping post-audit Claude loop")
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
+
+            if response.stop_reason != "tool_use":
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                break
+
+        else:
+            # Emitted if MAX_LOOPS reached without a natural stop
+            log.warning(f"MAX_LOOPS ({MAX_LOOPS}) reached — forcing done")
+        _last_claude_success = time.monotonic()
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     except Exception as e:
         log.error(f"Stream error: {type(e).__name__}: {e}", exc_info=True)
@@ -1004,7 +1267,7 @@ async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
     try:
         response = await client.messages.create(
             model=MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             system=SYSTEM_PROMPT,
             messages=messages,
         )
@@ -1318,13 +1581,13 @@ async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
     try:
         loop_messages = list(messages)
         loop_count = 0
-        MAX_LOOPS = 8
+        MAX_LOOPS = 5
 
         while loop_count < MAX_LOOPS:
             loop_count += 1
             response = await client.messages.create(
                 model=MODEL,
-                max_tokens=4096,
+                max_tokens=8192,
                 system=SYSTEM_PROMPT,
                 messages=loop_messages,
                 tools=tools,
@@ -1444,6 +1707,36 @@ async def snmp_alert(alert: SnmpAlertRequest):
     return {"status": "investigating", "device": alert.name, "host": alert.host}
 
 
+# ── SNMP PROXY ────────────────────────────────────────────────────────────────
+
+@app.get("/api/snmp/devices")
+async def snmp_get_devices():
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.get(f"{SNMP_URL}/devices", timeout=10))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+@app.post("/api/snmp/devices")
+async def snmp_add_device(request: Request):
+    body = await request.body()
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices", data=body, headers={"Content-Type": "application/json"}, timeout=10))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+@app.delete("/api/snmp/devices/{dev_id}")
+async def snmp_delete_device(dev_id: str):
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.delete(f"{SNMP_URL}/devices/{dev_id}", timeout=10))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+@app.post("/api/snmp/devices/{dev_id}/poll")
+async def snmp_poll_device(dev_id: str):
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/{dev_id}/poll", timeout=30))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+@app.post("/api/snmp/poll")
+async def snmp_poll(request: Request):
+    body = await request.body()
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/poll", data=body, headers={"Content-Type": "application/json"}, timeout=30))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
 # ── PARALLEL AUDIT ENGINE ─────────────────────────────────────────────────────
 # Spawns two concurrent subagents (Device + Threat Intel) then feeds both
 # results into a Synthesis agent. Cuts sequential audit time by ~40%.
@@ -1478,8 +1771,12 @@ You will receive:
 
 Your job is to synthesise ALL of this into a structured audit report by calling save_audit_results ONCE.
 
-## Findings rules:
-- CRITICAL, HIGH, MEDIUM, LOW only — NO PASS findings
+## If device data is empty or shows a connection/SSH failure:
+Call save_audit_results with ONLY a single CRITICAL finding titled "Device Unreachable — SSH Connection Failed", severity=CRITICAL, type="hardening". Set overall/nist/cis scores to 0. Do NOT fabricate SNMP findings, topology findings, or any other findings — only the one connection error finding.
+
+## Findings rules (when device data IS available):
+- Include ALL severities: CRITICAL, HIGH, MEDIUM, LOW, and PASS
+- PASS findings = controls that passed (e.g. "SSH v2 Enabled", "Password encryption active")
 - Every finding MUST have all 9 fields: title, severity, type, category, impact, fix, commands, ref, cve_id
 - Use empty string "" for non-applicable fields (never omit a field)
 - type = "hardening" or "cve"
@@ -1491,7 +1788,7 @@ Your job is to synthesise ALL of this into a structured audit report by calling 
 - cis: % of CIS IOS XE benchmark controls passing
 
 ## After save_audit_results succeeds:
-Respond with ONE sentence: "Audit complete — N findings saved to the dashboard." then offer to push remediations or email the report. DO NOT re-list findings."""
+Respond with ONE sentence: "Audit complete — N findings saved to the dashboard." DO NOT re-list findings."""
 
 # Tool subsets for each subagent — prevents agents from calling out-of-scope tools
 DEVICE_TOOLS = {"connect_to_device", "disconnect_device", "run_show_command"}
@@ -1505,6 +1802,7 @@ async def run_subagent(
     allowed_tools: set,
     agent_name: str,
     max_loops: int = 3,
+    call_tool_fn=None,
 ) -> tuple[str, list]:
     """
     Run a focused Claude subagent with a restricted tool subset.
@@ -1522,7 +1820,7 @@ async def run_subagent(
     for loop in range(max_loops):
         response = await client.messages.create(
             model=MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             system=system_prompt,
             messages=loop_messages,
             tools=tools if tools else [],
@@ -1561,7 +1859,8 @@ async def run_subagent(
             log.info(f"[{agent_name}] tool: {tool_name}")
             t_tool = time.monotonic()
             try:
-                result = await mcp_manager.call_tool(tool_name, tool_input)
+                _caller = call_tool_fn or mcp_manager.call_tool
+                result = await _caller(tool_name, tool_input)
                 result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
                 is_error = bool(result.isError)
                 log.info(f"[{agent_name}] {tool_name} done in {time.monotonic()-t_tool:.1f}s")
@@ -1588,29 +1887,26 @@ async def run_subagent(
     return text_output, all_tool_results
 
 
-async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asyncio.Queue):
+async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asyncio.Queue, device_name: str | None = None):
     """
-    Full audit for a single device:
-      - Device Agent: connect, collect show data
-      - Threat Intel Agent: NVD, PSIRT, EOX, knowledge base
-      Both run concurrently, then a Synthesis Agent produces the report.
-    Emits device_start / tool_call / device_done SSE events.
+    Full audit for a single device using an isolated MCP subprocess per device
+    (prevents SSH session conflicts when multiple devices are audited in parallel).
+    Phases: Device data collection + Threat intel (concurrent) → Synthesis → save
+    device_name: human-readable label (e.g. "IOU2") shown in UI; falls back to device_ip.
     """
     t_start = time.monotonic()
+    display = device_name or device_ip
 
     async def _push(event_type: str, **kwargs):
         await sse_queue.put({"type": event_type, **kwargs})
 
-    await _push("device_start", device=device_ip)
+    await _push("device_start", device=display)
 
     device_directive = (
         f"Connect to {device_ip} and collect all device data needed for a security audit. "
-        f"Batch ALL tool calls (connect, show version, show running-config, show inventory, "
-        f"show ip interface brief, disconnect) in ONE response. Do not make multiple loops."
+        f"Batch ALL tool calls (connect_to_device, run_show_command for running-config/version/"
+        f"inventory/interface-brief, disconnect_device) in ONE response. Do not make multiple loops."
     )
-
-    # Scope from the original instruction minus the IP
-    scope_text = full_instruction
 
     threat_directive = (
         f"The device being audited is at {device_ip}. "
@@ -1624,84 +1920,138 @@ async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asy
     device_messages = [{"role": "user", "content": device_directive}]
     threat_messages = [{"role": "user", "content": threat_directive}]
 
-    # Phase 1: Device + Threat Intel concurrently
-    device_task = asyncio.create_task(
-        run_subagent(DEVICE_AGENT_PROMPT, device_messages, DEVICE_TOOLS, f"DeviceAgent-{device_ip}")
-    )
-    threat_task = asyncio.create_task(
-        run_subagent(THREAT_INTEL_PROMPT, threat_messages, THREAT_TOOLS, f"ThreatAgent-{device_ip}")
-    )
-
-    # Wait for both, stream tool_call events as they complete
-    done_set = set()
-    while len(done_set) < 2:
-        await asyncio.sleep(0.5)
-        if device_task.done() and "device" not in done_set:
-            done_set.add("device")
-        if threat_task.done() and "threat" not in done_set:
-            done_set.add("threat")
+    # Create an isolated MCP subprocess for SSH device operations.
+    # This gives this device its own _ssh_client global, preventing conflicts
+    # when multiple device audits run concurrently.
+    fresh_mgr = None
+    try:
+        fresh_mgr = await make_fresh_mcp_manager()
+        log.info(f"[DeviceAudit-{display}] fresh MCP session ready")
+    except Exception as e:
+        log.error(f"[DeviceAudit-{display}] failed to create fresh MCP session: {e}")
+        await _push("error", content=f"Device {display}: MCP session failed — {e}")
+        await _push("device_done", device=display, elapsed=0)
+        return ""
 
     try:
-        device_text, device_tools = device_task.result()
-    except Exception as e:
-        device_text, device_tools = f"Device collection failed: {e}", []
-
-    try:
-        threat_text, threat_tools = threat_task.result()
-    except Exception as e:
-        threat_text, threat_tools = f"Threat intel failed: {e}", []
-
-    # Emit tool calls for this device into the chat stream
-    for r in device_tools:
-        await _push("tool_call", tool=r["tool"], device=device_ip)
-    for r in threat_tools:
-        await _push("tool_call", tool=r["tool"], device=device_ip)
-
-    # Phase 2: Synthesis
-    device_data = "\n\n".join(
-        f"[{r['tool']}]\n{r['output']}" for r in device_tools
-    ) or device_text or "No device data collected"
-
-    threat_data = "\n\n".join(
-        f"[{r['tool']}]\n{r['output']}" for r in threat_tools
-    ) or threat_text or "No threat intel collected"
-
-    synthesis_messages = [{
-        "role": "user",
-        "content": (
-            f"Audit target: {device_ip}\nScope: {scope_text}\n\n"
-            f"## Device Data\n{device_data[:8000]}\n\n"
-            f"## Threat Intelligence\n{threat_data[:8000]}\n\n"
-            f"Synthesise the above into a structured audit report. "
-            f"Call save_audit_results once with all findings. "
-            f"CRITICAL and HIGH findings are the priority."
+        # Phase 1: Device data + Threat intel run concurrently.
+        # DeviceAgent uses the isolated fresh_mgr (own SSH session).
+        # ThreatAgent uses shared mcp_manager (no SSH — just external API calls).
+        device_task = asyncio.create_task(
+            run_subagent(
+                DEVICE_AGENT_PROMPT, device_messages, DEVICE_TOOLS,
+                f"DeviceAgent-{display}", max_loops=3,
+                call_tool_fn=fresh_mgr.call_tool,
+            )
         )
-    }]
+        threat_task = asyncio.create_task(
+            run_subagent(
+                THREAT_INTEL_PROMPT, threat_messages, THREAT_TOOLS,
+                f"ThreatAgent-{display}", max_loops=3,
+            )
+        )
 
-    synthesis_text, synthesis_tools = await run_subagent(
-        SYNTHESIS_AGENT_PROMPT, synthesis_messages, SYNTHESIS_TOOLS,
-        f"SynthesisAgent-{device_ip}", max_loops=2
-    )
+        done_set: set = set()
+        while len(done_set) < 2:
+            await asyncio.sleep(0.5)
+            if device_task.done() and "device" not in done_set:
+                done_set.add("device")
+            if threat_task.done() and "threat" not in done_set:
+                done_set.add("threat")
 
-    # Emit audit_saved
-    for r in synthesis_tools:
-        if r["tool"] == "save_audit_results":
-            try:
-                audit_data = json.loads(r["output"]) if r["output"].strip().startswith("{") else {}
-                if not audit_data:
-                    global _last_audit
-                    if _last_audit:
-                        audit_data = _last_audit
-                if audit_data:
-                    if not audit_data.get("timestamp"):
-                        audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
-                    await _push("audit_saved", audit=audit_data)
-            except Exception as e:
-                log.warning(f"[DeviceAudit-{device_ip}] audit_saved parse failed: {e}")
+        try:
+            device_text, device_tools = device_task.result()
+        except Exception as e:
+            device_text, device_tools = f"Device collection failed: {e}", []
+            log.error(f"[DeviceAudit-{display}] device agent failed: {e}")
+
+        try:
+            threat_text, threat_tools = threat_task.result()
+        except Exception as e:
+            threat_text, threat_tools = f"Threat intel failed: {e}", []
+            log.error(f"[DeviceAudit-{display}] threat agent failed: {e}")
+
+        # Emit tool call events for the chat stream
+        for r in device_tools:
+            await _push("tool_call", tool=r["tool"], device=display)
+        for r in threat_tools:
+            await _push("tool_call", tool=r["tool"], device=display)
+
+        # Phase 2: Synthesis — serialised via semaphore to prevent concurrent Claude
+        # API calls from all devices hitting Anthropic rate limits simultaneously.
+        device_data = "\n\n".join(
+            f"[{r['tool']}]\n{r['output']}" for r in device_tools
+        ) or device_text or ""
+
+        threat_data = "\n\n".join(
+            f"[{r['tool']}]\n{r['output']}" for r in threat_tools
+        ) or threat_text or ""
+
+        # Detect failed device data so synthesis agent doesn't hallucinate
+        device_failed = not device_tools and not device_text.strip()
+        if device_failed:
+            device_data = "DEVICE CONNECTION FAILED — no data collected"
+
+        synthesis_messages = [{
+            "role": "user",
+            "content": (
+                f"Audit target: {display} (IP: {device_ip})\nScope: {full_instruction}\n\n"
+                f"## Device Data\n{device_data[:8000]}\n\n"
+                f"## Threat Intelligence\n{threat_data[:8000]}\n\n"
+                f"Synthesise the above into a structured audit report. "
+                f"Use device name '{display}' and IP '{device_ip}' in save_audit_results. "
+                f"Call save_audit_results once with all findings (include PASS findings). "
+                f"CRITICAL and HIGH findings are the priority."
+            )
+        }]
+
+        # Capture audit data from save_audit_results before it reaches MCP
+        captured_audit: dict = {}
+
+        async def synthesis_tool_fn(tool_name: str, tool_input: dict):
+            if tool_name == "save_audit_results":
+                captured_audit.update(tool_input)
+            return await mcp_manager.call_tool(tool_name, tool_input)
+
+        log.info(f"[DeviceAudit-{display}] waiting for synthesis slot")
+        async with get_synthesis_sem():
+            log.info(f"[DeviceAudit-{display}] synthesis started")
+            synthesis_text, _ = await run_subagent(
+                SYNTHESIS_AGENT_PROMPT, synthesis_messages, SYNTHESIS_TOOLS,
+                f"SynthesisAgent-{display}", max_loops=2,
+                call_tool_fn=synthesis_tool_fn,
+            )
+
+        # Stream findings + emit audit_saved
+        if captured_audit:
+            audit_data = dict(captured_audit)
+            # Always set the correct device name and IP
+            if display and display != device_ip:
+                audit_data.setdefault("device", display)
+            audit_data["ip"] = device_ip
+            audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+            for finding in audit_data.get("findings", []):
+                slim = {
+                    "title":    finding.get("title", ""),
+                    "severity": finding.get("severity", ""),
+                    "type":     finding.get("type", "hardening"),
+                }
+                await sse_queue.put({"type": "finding", "finding": slim})
+                await asyncio.sleep(0.03)
+            await _push("audit_saved", audit=audit_data)
+            log.info(f"[DeviceAudit-{display}] audit_saved emitted — {len(captured_audit.get('findings', []))} findings")
+        else:
+            log.warning(f"[DeviceAudit-{display}] no audit data captured from synthesis agent")
+
+    finally:
+        # Always clean up the isolated MCP subprocess
+        if fresh_mgr:
+            await fresh_mgr.disconnect()
+            log.info(f"[DeviceAudit-{display}] fresh MCP session closed")
 
     elapsed = round(time.monotonic() - t_start, 1)
-    await _push("device_done", device=device_ip, elapsed=elapsed)
-    log.info(f"[DeviceAudit] {device_ip} complete in {elapsed}s")
+    await _push("device_done", device=display, elapsed=elapsed)
+    log.info(f"[DeviceAudit] {display} ({device_ip}) complete in {elapsed}s")
     return synthesis_text
 
 
@@ -1726,20 +2076,64 @@ async def run_parallel_audit(
     else:
         full_instruction = audit_target  # full message passed directly
 
-    # Extract all device IPs from the instruction
-    devices = list(dict.fromkeys(_re.findall(r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b', full_instruction)))
+    # Extract all device IPs and common lab hostnames from the instruction
+    ip_pattern   = r'\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b'
+    host_pattern = r'\b((?:IOU|SW|RTR|GW|FW|CORE|DIST|ACCESS|ASA|VPN|R|BR)[\w\-]*\d+[\w\-]*)\b'
+    _exclude     = {'IOS', 'IOS-XE', 'IOSXE', 'XE', 'CVE', 'NVD', 'CIS', 'SSH', 'AAA', 'ACL', 'VPN'}
+    ips   = _re.findall(ip_pattern, full_instruction)
+    names = [n for n in _re.findall(host_pattern, full_instruction, _re.IGNORECASE)
+             if n.upper() not in _exclude]
+
+    # Resolve hostnames → IPs via SNMP device list (build name→ip map from sysName)
+    snmp_name_map: dict[str, str] = {}
+    try:
+        snmp_resp = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: http_requests.get(f"{SNMP_URL}/devices", timeout=5)
+        )
+        if snmp_resp.ok:
+            for dev in snmp_resp.json().get("devices", []):
+                host = dev.get("host", "")
+                sys_name = dev.get("sysName", "")
+                # sysName is like "IOU2.clydeford.net" — map short name and fqdn
+                short = sys_name.split(".")[0].upper() if sys_name else ""
+                if short:
+                    snmp_name_map[short] = host
+                if sys_name:
+                    snmp_name_map[sys_name.upper()] = host
+    except Exception as e:
+        log.warning(f"[Orchestrator] SNMP lookup failed (will use hostnames directly): {e}")
+
+    # Build device list: resolve names to IPs where possible, keep IPs as-is
+    # Also build a display_name map so audit cards show the device name not just IP
+    device_display: dict[str, str] = {}  # ip_or_host → display_name
+    resolved = []
+    for name in names:
+        ip = snmp_name_map.get(name.upper(), name)  # fallback: use name as host
+        resolved.append(ip)
+        device_display[ip] = name  # display as original name in UI
+    devices = list(dict.fromkeys(ips + resolved))
+    for raw_ip in ips:
+        if raw_ip not in device_display:
+            device_display[raw_ip] = raw_ip
+
+    if snmp_name_map and names:
+        resolved_pairs = [(n, snmp_name_map.get(n.upper(), "unresolved")) for n in names]
+        log.info(f"[Orchestrator] SNMP resolved: {resolved_pairs}")
 
     if not devices:
         await _push("error", content="No device IPs found in audit request.")
         await _push("done")
         return
 
-    log.info(f"[Orchestrator] Launching {len(devices)} device audit(s): {devices}")
-    await _push("text", content=f"🚀 Launching **{len(devices)} parallel device audit{'s' if len(devices)>1 else ''}**: {', '.join(devices)}\n\n")
+    display_names = [device_display.get(ip, ip) for ip in devices]
+    log.info(f"[Orchestrator] Launching {len(devices)} device audit(s): {list(zip(display_names, devices))}")
+    await _push("text", content=f"🚀 Launching **{len(devices)} parallel device audit{'s' if len(devices)>1 else ''}**: {', '.join(display_names)}\n\n")
 
     # Spawn one task per device — all run concurrently
     tasks = {
-        ip: asyncio.create_task(run_device_audit(ip, full_instruction, sse_queue))
+        ip: asyncio.create_task(
+            run_device_audit(ip, full_instruction, sse_queue, device_name=device_display.get(ip, ip))
+        )
         for ip in devices
     }
 
@@ -1757,7 +2151,7 @@ async def run_parallel_audit(
                     log.error(f"[Orchestrator] Device {ip} failed: {e}")
 
     total_elapsed = round(time.monotonic() - t_total, 1)
-    summary = "\n".join(f"- **{ip}**: audit complete" for ip in devices)
+    summary = "\n".join(f"- **{device_display.get(ip, ip)}**: audit complete" for ip in devices)
     await _push("text", content=f"\n\n✅ All device audits complete in **{total_elapsed}s**\n{summary}\n")
     await _push("done")
     log.info(f"[Orchestrator] All {len(devices)} audits complete in {total_elapsed}s")
@@ -1938,15 +2332,13 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
                 }
 
         # ── Stream Claude tokens in real-time ─────────────────────────────────
-        # max_tokens=2048: keeps responses focused; prevents stream timeouts on
-        # very long generations (RemoteProtocolError on 4096-token responses).
         t_stream = time.monotonic()
         log.info(f"Design: starting Claude stream (t+{(t_stream-t_req)*1000:.0f}ms from request)")
         first_token = True
         try:
             async with client.messages.stream(
                 model=MODEL,
-                max_tokens=2048,
+                max_tokens=8192,
                 system=DESIGN_SYSTEM_PROMPT,
                 messages=augmented_messages,
             ) as stream:
