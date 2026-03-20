@@ -296,6 +296,13 @@ Via chat:
 - gladius-api caches the MCP tool list at startup. After updating network-audit-mcp,
   always restart gladius-api too so it picks up new tools.
 
+- **index.html CSS placement trap**: `generateReportHTML()` contains a full `<style>...</style>`
+  block inside its JS template literal (around line 5100–5250). Any CSS accidentally placed
+  inside that block is a JS string — it never applies to the document. Symptom: styles appear
+  to have no effect, or `display:none` rules are ignored causing elements to always be visible.
+  Always add new document CSS before the main `</style>` tag (currently ~line 2570), not
+  anywhere near the `generateReportHTML` function.
+
 ---
 
 ## Deployment Notes
