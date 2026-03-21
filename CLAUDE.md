@@ -6,6 +6,7 @@
 gladius-api  - C:\docker\net-core\gladius-api
 network-audit-mcp - C:\docker\net-core\network-audit-mcp
 frontend - C:\docker\net-core\web-projects\gladius
+gladius-pyats - C:\docker\net-core\gladius-pyats
 
 
 ## What Is This
