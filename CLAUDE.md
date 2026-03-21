@@ -26,6 +26,9 @@ query a NIST/CIS knowledge base, look up CVEs, and save structured results back 
 | `network-audit-mcp` | MCP server — all tools (SSH, ChromaDB, NVD, email) | stdio |
 | `chroma-db` | ChromaDB vector store — NIST/CIS knowledge base | 8000 |
 | `web-projects` | nginx — serves `index.html` static frontend | 80/443 |
+| `gladius-pyats` | pyATS Factory — LLM-driven script generation and execution | 8090 |
+| `gladius-slack` | Slack audit bot — forwards messages to gladius-api | 9090 |
+| `gladius-overseer` | Slack AI overseer — Claude with project access | — |
 
 `gladius-api` spawns `network-audit-mcp` as a subprocess via stdio (MCP protocol).
 There is no direct HTTP between them except for `save_audit_results` which POSTs back to
@@ -58,6 +61,12 @@ gladius/
 │   └── server.py          # FastAPI app — Claude agent, SSE, all HTTP endpoints
 ├── network-audit-mcp/
 │   └── server.py          # MCP server — all Claude tools
+├── gladius-pyats/
+│   └── app.py             # pyATS Factory — script generation, execution, coder agent
+├── gladius-slack/
+│   └── app.py             # Slack audit bot
+├── gladius-overseer/
+│   └── app.py             # Slack AI overseer
 └── web-projects/gladius/
     └── index.html         # Entire frontend — single file, vanilla JS
 ```
@@ -136,7 +145,7 @@ This was missing from the MCP server and is why report history wasn't working. I
 
 ## web-projects/index.html
 
-Single-file frontend, ~5000 lines of vanilla JS + CSS. No framework, no build step.
+Single-file frontend, ~10000 lines of vanilla JS + CSS. No framework, no build step.
 
 ### Key JS Functions
 
@@ -153,6 +162,12 @@ Single-file frontend, ~5000 lines of vanilla JS + CSS. No framework, no build st
 | `buildAuditContext()` | Injects last 3 audits as context before every chat message |
 | `logActivity(text, hi)` | Adds entry to activity log |
 | `setSkin(name)` | Switches colour theme |
+| `launchNmapScan()` | Runs nmap scan via Claude agent, streams formatted results |
+| `launchScapyScan()` | Runs scapy packet forge via Claude agent, streams formatted results |
+| `autoSendChat()` | Sends message to pyATS Factory Ollama agent |
+| `coderSendChat()` | Sends message to Gladius Code agent |
+| `_autoRenderAetestResults()` | Parses pyATS aetest output into table with expandable detail |
+| `notify(page, label, msg)` | Shows topbar toast + nav pulse when agent completes off-screen |
 
 ### localStorage Keys
 

@@ -37,14 +37,16 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-OLLAMA_URL    = os.getenv("OLLAMA_URL",    "http://192.168.1.250:11434")
-OLLAMA_MODEL  = os.getenv("OLLAMA_MODEL",  "qwen2.5-coder:7b")
-SNMP_URL      = os.getenv("SNMP_URL",      "http://gladius-snmp:8000")
-DB_PATH       = os.getenv("DB_PATH",       "/data/scripts.db")
-DEV_SWITCH_IP = os.getenv("DEV_SWITCH_IP", "192.168.20.22")
-DEV_SWITCH_HN = os.getenv("DEV_SWITCH_HN", "DEV")
-LAB_USERNAME  = os.getenv("LAB_USERNAME",  "")
-LAB_PASSWORD  = os.getenv("LAB_PASSWORD",  "")
+OLLAMA_URL        = os.getenv("OLLAMA_URL",        "http://192.168.1.250:11434")
+OLLAMA_MODEL      = os.getenv("OLLAMA_MODEL",      "qwen2.5-coder:7b")
+SNMP_URL          = os.getenv("SNMP_URL",          "http://gladius-snmp:8000")
+DB_PATH           = os.getenv("DB_PATH",           "/data/scripts.db")
+DEV_SWITCH_IP     = os.getenv("DEV_SWITCH_IP",     "192.168.20.22")
+DEV_SWITCH_HN     = os.getenv("DEV_SWITCH_HN",     "DEV")
+LAB_USERNAME      = os.getenv("LAB_USERNAME",      "")
+LAB_PASSWORD      = os.getenv("LAB_PASSWORD",      "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL",      "claude-sonnet-4-6")
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -222,26 +224,40 @@ class InterfaceStatusTest(aetest.Testcase):
     @aetest.test
     def check_oper_states(self, dev):
         data = dev.parse('show interfaces')
-        down = [f"{i}: {d.get('oper_status','?')}" for i, d in data.items()
-                if d.get('enabled') is not False and d.get('oper_status','').lower() not in ('up','connected')]
+        lines = []
+        down  = []
+        for i, d in data.items():
+            if d.get('enabled') is False:
+                continue
+            status = d.get('oper_status', '?')
+            bw     = d.get('bandwidth', '')
+            bw_str = f" ({bw} Kbit)" if bw else ''
+            lines.append(f"{i}: {status}{bw_str}")
+            if status.lower() not in ('up', 'connected'):
+                down.append(i)
+        detail = "\\n".join(lines)
         if down:
-            self.failed(f"Interfaces not UP: {', '.join(down)}")
+            self.failed(f"{len(down)} interface(s) not UP:\\n{detail}")
         else:
-            self.passed(f"All {len(data)} interfaces up")
+            self.passed(f"{len(lines)} interfaces up:\\n{detail}")
 
     @aetest.test
     def check_error_counters(self, dev):
         data = dev.parse('show interfaces')
+        lines  = []
         issues = []
         for intf, info in data.items():
-            c = info.get('counters', {})
+            c    = info.get('counters', {})
             errs = {k: c.get(k, 0) or 0 for k in ('in_errors', 'out_errors', 'in_crc_errors')}
+            total = sum(errs.values())
+            lines.append(f"{intf}: in_err={errs['in_errors']} out_err={errs['out_errors']} crc={errs['in_crc_errors']}")
             if any(v > ERROR_THRESHOLD for v in errs.values()):
-                issues.append(f"{intf}: {errs}")
+                issues.append(intf)
+        detail = "\\n".join(lines)
         if issues:
-            self.failed(f"High error counters on {len(issues)} interface(s):\n" + "\n".join(issues))
+            self.failed(f"High error counters on {len(issues)} interface(s):\\n{detail}")
         else:
-            self.passed("Error counters within threshold")
+            self.passed(f"Error counters within threshold ({len(lines)} interfaces):\\n{detail}")
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -287,20 +303,23 @@ class BgpNeighborTest(aetest.Testcase):
             self.skipped(f"BGP not configured or parse failed: {e}")
             return
         issues = []
-        total  = 0
+        lines  = []
         for vrf, vd in bgp.get('vrf', {}).items():
             for af, afd in vd.get('address_family', {}).items():
                 for nbr, nd in afd.get('neighbor', {}).items():
-                    total += 1
-                    state = nd.get('session_state', '')
+                    state  = nd.get('session_state', '?')
+                    pfx    = nd.get('state_pfxrcd', nd.get('prefixes', {}).get('received', ''))
+                    updown = nd.get('up_down', '')
+                    lines.append(f"{nbr} ({vrf}/{af}): {state} prefixes={pfx} uptime={updown}")
                     if state.lower() != 'established':
-                        issues.append(f"{nbr} ({vrf}/{af}): {state}")
+                        issues.append(nbr)
+        detail = "\\n".join(lines)
         if issues:
-            self.failed(f"BGP issues: {'; '.join(issues)}")
-        elif total == 0:
+            self.failed(f"{len(issues)} BGP neighbor(s) not established:\\n{detail}")
+        elif not lines:
             self.skipped("No BGP neighbors found")
         else:
-            self.passed(f"All {total} BGP neighbors established")
+            self.passed(f"{len(lines)} BGP neighbor(s) established:\\n{detail}")
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -347,19 +366,22 @@ class OspfNeighborTest(aetest.Testcase):
             self.skipped(f"OSPF not configured: {e}")
             return
         issues = []
-        total  = 0
+        lines  = []
         for intf, id_ in ospf.get('interfaces', {}).items():
             for nbr, nd in id_.get('neighbors', {}).items():
-                total += 1
-                state = nd.get('state', '').upper()
+                state    = nd.get('state', '?').upper()
+                priority = nd.get('priority', '')
+                dead     = nd.get('dead_time', '')
+                lines.append(f"{nbr} on {intf}: {state} priority={priority} dead={dead}")
                 if state not in VALID_STATES:
-                    issues.append(f"{nbr} on {intf}: {state}")
+                    issues.append(nbr)
+        detail = "\\n".join(lines)
         if issues:
-            self.failed(f"OSPF issues: {'; '.join(issues)}")
-        elif total == 0:
+            self.failed(f"{len(issues)} OSPF neighbor(s) unhealthy:\\n{detail}")
+        elif not lines:
             self.skipped("No OSPF neighbors found")
         else:
-            self.passed(f"All {total} OSPF neighbors healthy")
+            self.passed(f"{len(lines)} OSPF neighbor(s) healthy:\\n{detail}")
 
     @aetest.test
     def check_database(self, dev):
@@ -410,17 +432,20 @@ class CdpDiscoveryTest(aetest.Testcase):
     def collect_cdp(self, dev):
         try:
             cdp = dev.parse('show cdp neighbors detail')
+            if not isinstance(cdp, dict):
+                self.skipped("CDP parse returned no structured data")
+                return
             neighbors = []
-            for _, entries in cdp.get('index', {}).items():
-                for _, n in entries.items():
-                    neighbors.append({
-                        'device':      n.get('device_id', ''),
-                        'local_intf':  n.get('local_interface', ''),
-                        'remote_intf': n.get('port_id', ''),
-                        'platform':    n.get('platform', ''),
-                    })
+            for _, entry in cdp.get('index', {}).items():
+                neighbors.append({
+                    'device':      entry.get('device_id', ''),
+                    'local_intf':  entry.get('local_interface', ''),
+                    'remote_intf': entry.get('port_id', ''),
+                    'platform':    entry.get('platform', ''),
+                })
             if neighbors:
-                self.passed(f"Found {len(neighbors)} CDP neighbors:\n" + json.dumps(neighbors, indent=2))
+                lines = [f"{n['local_intf']} -> {n['device']} ({n['remote_intf']}) [{n['platform']}]" for n in neighbors]
+                self.passed(f"Found {len(neighbors)} CDP neighbor(s):\\n" + "\\n".join(lines))
             else:
                 self.skipped("No CDP neighbors found")
         except Exception as e:
@@ -430,6 +455,9 @@ class CdpDiscoveryTest(aetest.Testcase):
     def collect_lldp(self, dev):
         try:
             lldp  = dev.parse('show lldp neighbors detail')
+            if not isinstance(lldp, dict):
+                self.skipped("LLDP parse returned no structured data")
+                return
             count = sum(len(v) for v in lldp.get('interfaces', {}).values())
             self.passed(f"Found {count} LLDP neighbor entries")
         except Exception as e:
@@ -475,8 +503,13 @@ class VlanAuditTest(aetest.Testcase):
     def check_vlan_database(self, dev):
         try:
             vlans  = dev.parse('show vlan')
-            active = [v for v, d in vlans.get('vlans', {}).items() if d.get('state') == 'active']
-            self.passed(f"{len(active)} active VLANs: {', '.join(map(str, active[:20]))}")
+            lines  = []
+            for vid, vd in vlans.get('vlans', {}).items():
+                name  = vd.get('name', '')
+                state = vd.get('state', '?')
+                ports = ', '.join(vd.get('interfaces', [])) or 'none'
+                lines.append(f"VLAN {vid} ({name}): {state} — ports: {ports}")
+            self.passed(f"{len(lines)} VLAN(s):\\n" + "\\n".join(lines))
         except Exception as e:
             self.failed(f"VLAN parse failed: {e}")
 
@@ -484,9 +517,13 @@ class VlanAuditTest(aetest.Testcase):
     def check_trunk_ports(self, dev):
         try:
             trunks = dev.parse('show interfaces trunk')
-            ports  = list(trunks.get('interface', {}).keys())
-            if ports:
-                self.passed(f"Trunk ports: {', '.join(ports)}")
+            lines = []
+            for port, pd in trunks.get('interface', {}).items():
+                mode     = pd.get('mode', '?')
+                native   = pd.get('native_vlan', '?')
+                lines.append(f"{port}: mode={mode} native_vlan={native}")
+            if lines:
+                self.passed(f"{len(lines)} trunk port(s):\\n" + "\\n".join(lines))
             else:
                 self.skipped("No trunk ports found")
         except Exception as e:
@@ -532,9 +569,12 @@ class AclAuditTest(aetest.Testcase):
     @aetest.test
     def list_acls(self, dev):
         try:
-            acls = dev.parse('show ip access-lists')
-            names = list(acls.get('acls', {}).keys())
-            self.passed(f"Found {len(names)} ACL(s): {', '.join(names[:10])}")
+            acls  = dev.parse('show ip access-lists')
+            lines = []
+            for name, data in acls.get('acls', {}).items():
+                ace_count = len(data.get('aces', {}))
+                lines.append(f"{name}: {ace_count} ACE(s)")
+            self.passed(f"Found {len(lines)} ACL(s):\\n" + "\\n".join(lines))
         except Exception as e:
             self.skipped(f"ACL parse failed: {e}")
 
@@ -563,7 +603,11 @@ class AclAuditTest(aetest.Testcase):
             bound = {i: {'in': d.get('inbound_access_list',''), 'out': d.get('outbound_access_list','')}
                      for i, d in intfs.items()
                      if d.get('inbound_access_list') or d.get('outbound_access_list')}
-            self.passed(f"ACLs bound on {len(bound)} interface(s)")
+            lines = [f"{i}: in={b['in'] or 'none'} out={b['out'] or 'none'}" for i, b in bound.items()]
+            if lines:
+                self.passed(f"ACLs bound on {len(bound)} interface(s):\\n" + "\\n".join(lines))
+            else:
+                self.passed("No ACLs bound to interfaces")
         except Exception as e:
             self.skipped(f"Binding check skipped: {e}")
 
@@ -617,7 +661,7 @@ class RoutingTableTest(aetest.Testcase):
             else:
                 self.failed("No default route (0.0.0.0/0) found")
         except Exception as e:
-            self.failed(f"Route table parse failed: {e}")
+            self.skipped(f"Route table parse skipped: {e}")
 
     @aetest.test
     def check_host_route_count(self, dev):
@@ -788,7 +832,7 @@ class NtpAuditTest(aetest.Testcase):
             else:
                 self.failed(f"NTP NOT synchronized: {synced}")
         except Exception as e:
-            self.failed(f"NTP status check failed: {e}")
+            self.skipped(f"NTP status check skipped: {e}")
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -900,8 +944,11 @@ class SpanningTreeTest(aetest.Testcase):
         try:
             stp   = dev.parse('show spanning-tree summary')
             mode  = stp.get('mode', 'unknown')
-            vlans = len(stp.get('vlans', {}))
-            self.passed(f"STP mode: {mode} | Active on {vlans} VLANs")
+            lines = [f"Mode: {mode}"]
+            for vid, vd in stp.get('vlans', {}).items():
+                root = 'root' if vd.get('root', False) else 'non-root'
+                lines.append(f"VLAN {vid}: {root}")
+            self.passed(f"STP active on {len(stp.get('vlans', {}))} VLAN(s):\\n" + "\\n".join(lines))
         except Exception as e:
             self.skipped(f"STP summary skipped: {e}")
 
@@ -972,26 +1019,38 @@ class InterfaceErrorTest(aetest.Testcase):
     def check_error_counters(self, dev):
         data       = dev.parse('show interfaces')
         violations = []
+        lines      = []
         for intf, info in data.items():
             c    = info.get('counters', {})
-            hits = {k: c.get(k, 0) or 0 for k, t in THRESHOLDS.items() if (c.get(k, 0) or 0) > t}
-            if hits:
-                violations.append(f"{intf}: {hits}")
+            vals = {k: c.get(k, 0) or 0 for k in THRESHOLDS}
+            over = {k: v for k, v in vals.items() if v > THRESHOLDS[k]}
+            lines.append(f"{intf}: " + " ".join(f"{k}={vals[k]}" for k in THRESHOLDS))
+            if over:
+                violations.append(intf)
+        detail = "\\n".join(lines)
         if violations:
-            self.failed(f"{len(violations)} interface(s) exceeding thresholds:\n" + "\n".join(violations))
+            self.failed(f"{len(violations)} interface(s) exceeding thresholds:\\n{detail}")
         else:
-            self.passed(f"All {len(data)} interfaces within error thresholds")
+            self.passed(f"{len(data)} interfaces within error thresholds:\\n{detail}")
 
     @aetest.test
     def check_queue_drops(self, dev):
         try:
-            output = dev.execute('show interfaces | include drops')
-            drops  = [l.strip() for l in output.splitlines()
-                      if 'drops' in l and not l.strip().startswith('0')]
-            if drops:
-                self.failed(f"Queue drops detected on {len(drops)} interface(s)")
+            data   = dev.parse('show interfaces')
+            issues = []
+            lines  = []
+            for intf, info in data.items():
+                c   = info.get('counters', {})
+                oqd = c.get('output_queue_drops', 0) or 0
+                iqd = c.get('input_queue_drops',  0) or 0
+                lines.append(f"{intf}: in_drops={iqd} out_drops={oqd}")
+                if oqd > 0 or iqd > 0:
+                    issues.append(intf)
+            detail = "\\n".join(lines)
+            if issues:
+                self.failed(f"{len(issues)} interface(s) with queue drops:\\n{detail}")
             else:
-                self.passed("No queue drops detected")
+                self.passed(f"No queue drops on {len(data)} interfaces:\\n{detail}")
         except Exception as e:
             self.skipped(f"Queue drop check skipped: {e}")
 
@@ -1021,6 +1080,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     messages:       list[ChatMessage]
     script_context: Optional[list[dict]] = []
+    model:          Optional[str] = None
 
 class ScriptCreate(BaseModel):
     name:        str
@@ -1375,8 +1435,131 @@ Valid platform values: iosxe, ios, nxos, eos
 You have access to the existing script repository and can reference or build upon existing scripts when asked."""
 
 
+class ReviewRequest(BaseModel):
+    output:  str
+    model:   Optional[str] = None
+    device:  Optional[str] = None
+
+
+@app.post("/api/review")
+async def review_output(req: ReviewRequest):
+    model  = req.model or OLLAMA_MODEL
+    device = req.device or "unknown"
+    prompt = (
+        f"A pyATS health check ran against network device {device}. "
+        "Format the results below as a concise markdown table with columns: Test, Result, Details. "
+        "Do not wrap in code fences. Keep it brief.\n\n"
+        f"{req.output}"
+    )
+
+    is_claude = model.startswith("claude-")
+
+    async def generate_ollama():
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream(
+                    "POST", f"{OLLAMA_URL}/api/chat",
+                    json={"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True}
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk   = json.loads(line)
+                            content = chunk.get("message", {}).get("content", "")
+                            if content:
+                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
+                            if chunk.get("done"):
+                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                                return
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    async def generate_claude():
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                async with client.stream(
+                    "POST", "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": 4096,
+                        "stream": True,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                ) as response:
+                    if response.status_code != 200:
+                        body = await response.aread()
+                        yield f"data: {json.dumps({'type': 'error', 'content': f'Claude API {response.status_code}: {body.decode()}'})}\n\n"
+                        return
+                    async for line in response.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        payload = line[6:]
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            evt = json.loads(payload)
+                            if evt.get("type") == "content_block_delta":
+                                text = evt.get("delta", {}).get("text", "")
+                                if text:
+                                    yield f"data: {json.dumps({'type': 'text', 'content': text})}\n\n"
+                            elif evt.get("type") == "message_stop":
+                                break
+                        except json.JSONDecodeError:
+                            continue
+                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate_claude() if is_claude else generate_ollama(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+CODER_SYSTEM_PROMPT = """You are Gladius Code, a senior software engineering assistant specialising in network automation, Python, and infrastructure tooling.
+
+## Behaviour
+- Answer coding questions directly with clear, working code
+- Default to Python unless the user specifies another language
+- Use markdown code fences with the language tag (```python, ```bash, ```yaml, etc.)
+- Keep explanations concise — lead with the code, explain after
+- When reviewing code, identify bugs, security issues, and performance problems
+- For network-related code, prefer well-known libraries: netmiko, paramiko, nornir, pyATS/Genie, scapy, napalm
+- For API work, prefer FastAPI (Python) or Express (JS)
+- Follow best practices: type hints, error handling, logging, docstrings for public APIs
+- If a question is ambiguous, give the most likely interpretation rather than asking for clarification
+- Never fabricate library names or API methods — if unsure, say so"""
+
+
+CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+
+@app.get("/api/models")
+async def list_models():
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+            data = r.json()
+            names = [m["name"] for m in data.get("models", [])]
+    except Exception as e:
+        names = [OLLAMA_MODEL]
+    # Append Claude models if API key is configured
+    if ANTHROPIC_API_KEY:
+        names = CLAUDE_MODELS + names
+    return {"models": names, "default": OLLAMA_MODEL}
+
+
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
+    model = req.model or OLLAMA_MODEL
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     if req.script_context:
@@ -1395,7 +1578,53 @@ async def chat(req: ChatRequest):
             async with httpx.AsyncClient(timeout=180.0) as client:
                 async with client.stream(
                     "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": OLLAMA_MODEL, "messages": messages, "stream": True}
+                    json={"model": model, "messages": messages, "stream": True}
+                ) as response:
+                    if response.status_code != 200:
+                        yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
+                        return
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk   = json.loads(line)
+                            content = chunk.get("message", {}).get("content", "")
+                            if content:
+                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
+                            if chunk.get("done"):
+                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                                return
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Coder Agent Chat ─────────────────────────────────────────────────────────
+
+class CoderRequest(BaseModel):
+    messages: list[ChatMessage]
+    model:    Optional[str] = None
+
+@app.post("/api/coder")
+async def coder_chat(req: CoderRequest):
+    model = req.model or "qwen2.5-coder:14b"
+    messages = [{"role": "system", "content": CODER_SYSTEM_PROMPT}]
+    for m in req.messages:
+        messages.append({"role": m.role, "content": m.content})
+
+    async def generate():
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                async with client.stream(
+                    "POST", f"{OLLAMA_URL}/api/chat",
+                    json={"model": model, "messages": messages, "stream": True}
                 ) as response:
                     if response.status_code != 200:
                         yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"

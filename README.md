@@ -44,8 +44,13 @@ Tell Gladius an IP address. It handles everything else — no scripts to run, no
 | **Templated HTML Reports** | Standalone HTML reports with compliance gauge, category scorecard, remediation plan with copyable CLI commands, and pre-deployment checklist. |
 | **Email Delivery** | Reports emailed as HTML attachments via SMTP. Ask in chat or click the email button — both produce the same templated output. |
 | **Audit History** | Last 10 audits stored in the browser. Reports tab shows history across devices with one-click export. |
+| **NMAP Scanner** | Agentic nmap scanning with formatted results — headers, tables, highlighted findings. Profiles: quick, service, full port, OS detection, vuln scripts, custom. |
+| **Scapy Packet Forge** | Craft and send packets — ICMP ping, ARP scan, traceroute, TCP SYN, Xmas scan, banner grab, DNS query, OS fingerprint, VLAN hop, and more. |
+| **pyATS Factory** | LLM-driven pyATS/Genie script generation and execution. 13 built-in templates, Ollama-powered script generation, deterministic or agent analysis output modes. |
+| **Gladius Code** | Conversational coding assistant powered by Ollama or Claude. Syntax-highlighted code blocks with copy buttons. |
 | **Slack — Audit Bot** | Chat with Gladius directly from Slack — DMs or @mentions. Audit results surface as formatted score cards inline. |
 | **Slack — AI Overseer** | Separate Claude agent over Slack with direct access to project files, Docker, and git. Read code, make changes, restart containers, commit — all from Slack. Persistent conversation history across restarts. |
+| **Cross-Agent Notifications** | Topbar chips show running tasks across all agents. Toast notifications + nav pulse when jobs complete while on another page. |
 | **9 Colour Themes** | Named after Roman gladius variants. Because aesthetics matter. |
 
 ---
@@ -82,6 +87,8 @@ chroma-db  (ChromaDB :8000)
 | `gladius-api` | FastAPI — Claude agent, SSE stream, REST API | 8080 |
 | `network-audit-mcp` | MCP server — all tools (SSH, KB, NVD, email) | stdio |
 | `chroma-db` | ChromaDB vector store — NIST/CIS knowledge base | 8000 |
+| `gladius-pyats` | pyATS Factory — script generation, execution, coder agent | 8090 |
+| `gladius-snmp` | SNMP polling service for device inventory | 8000 |
 | `gladius-slack` | Slack audit bot — forwards messages to gladius-api | — |
 | `gladius-overseer` | Slack AI overseer — Claude with direct project + Docker access | — |
 
@@ -127,6 +134,7 @@ chroma-db  (ChromaDB :8000)
 | `save_audit_results` | POST findings and scores to the dashboard — called automatically |
 | `send_email` | Send report via SMTP as an HTML attachment |
 | `run_nmap_scan` | Run nmap against a host with configurable profiles |
+| `run_scapy` | Craft and send packets via Scapy with multiple modes |
 
 ---
 
@@ -233,6 +241,9 @@ docker restart gladius-slack
 
 # After changing gladius-overseer/app.py
 docker restart gladius-overseer
+
+# After changing gladius-pyats/app.py (volume mounted — no cp needed)
+docker restart gladius-pyats
 ```
 
 ---
@@ -257,6 +268,11 @@ gladius/
 │   └── .env
 ├── gladius-slack/
 │   ├── app.py             # Slack audit bot — forwards to gladius-api
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── .env
+├── gladius-pyats/
+│   ├── app.py             # pyATS Factory — script gen, execution, coder agent
 │   ├── Dockerfile
 │   ├── docker-compose.yml
 │   └── .env
@@ -285,6 +301,12 @@ gladius/
 | `GET` | `/api/health` | Basic health check |
 | `GET` | `/api/health/full` | Full component health check |
 | `GET` | `/api/kb/stats` | ChromaDB vector count |
+| `GET` | `/api/automation/models` | List available Ollama + Claude models |
+| `POST` | `/api/automation/chat` | pyATS Factory chat (SSE stream via Ollama) |
+| `POST` | `/api/automation/coder` | Gladius Code chat (SSE stream via Ollama/Claude) |
+| `POST` | `/api/automation/review` | Agent Analysis — stream raw output through LLM |
+| `GET` | `/api/automation/scripts` | List saved pyATS scripts |
+| `POST` | `/api/automation/scripts/{id}/run` | Execute a saved pyATS script against a device |
 
 ---
 
