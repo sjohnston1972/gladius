@@ -1,0 +1,21 @@
+services:
+  gladius-pyats:
+    container_name: gladius-pyats
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - ./app.py:/app/app.py
+      - ./data:/data
+    env_file:
+      - .env
+      - ../network-audit-mcp/.env
+    ports:
+      - "8097:8090"
+
+networks:
+  net_core:
+    external: true
