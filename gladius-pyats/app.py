@@ -1126,8 +1126,9 @@ Your purpose is to generate production-quality pyATS/Genie scripts that can be s
 - Prefer device.learn('<feature>') for full feature snapshots when available
 - Include meaningful pass/fail criteria with thresholds
 - Handle exceptions gracefully: wrap every device.parse() and device.learn() in try/except and call self.skipped('reason') if the parser raises — Genie parsers can fail with SchemaMissingKeyError on older IOS versions
-- NEVER use aetest.errlog — it does not exist. For logging use: import logging; log = logging.getLogger(__name__); then log.info()/log.warning()/log.error()
+- NEVER use aetest.errlog — it does not exist. For logging always include these two lines after imports: logging.basicConfig(level=logging.INFO) and log = logging.getLogger(__name__)
 - In except blocks use self.skipped(), self.failed(), or log.warning() — never aetest.anything except aetest.main()
+- For data-gathering scripts always call self.passed() with a summary of what was collected — log.info() output is only visible if logging.basicConfig(level=logging.INFO) is set
 - Testbed device is always referenced as 'DUT' (testbed.devices['DUT'])
 - End every script with: if __name__ == '__main__': import sys; aetest.main(testbed=load(sys.argv[1]))
 - Wrap complete scripts in ```python ... ``` code blocks
@@ -1282,6 +1283,7 @@ import logging
 from pyats import aetest
 from genie.testbed import load
 
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 class CommonSetup(aetest.CommonSetup):
@@ -1321,6 +1323,7 @@ import logging
 from pyats import aetest
 from genie.testbed import load
 
+logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 ERROR_THRESHOLD = 100
 
