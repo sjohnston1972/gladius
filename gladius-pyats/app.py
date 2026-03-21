@@ -126,8 +126,24 @@ class CommonCleanup(aetest.CommonCleanup):
             except Exception: pass
 """
 
+def _pyats_passed(output: str) -> bool:
+    """Return True only if the pyATS output contains no real failures.
+    The summary table always prints 'Number of FAILED/ERRORED/BLOCKED' lines
+    even when the count is 0, so we can't just search for the word."""
+    for line in output.splitlines():
+        # Real failure: 'result of ... is => FAILED/ERRORED/BLOCKED'
+        if re.search(r'is =>\s+(FAILED|ERRORED|BLOCKED)', line):
+            return False
+        # Summary table: 'Number of FAILED   N' where N > 0
+        m = re.search(r'Number of (FAILED|ERRORED|BLOCKED)\s+(\d+)', line)
+        if m and int(m.group(2)) > 0:
+            return False
+    return True
+
+
 def sanitize_script(script: str) -> str:
-    """Replace LLM-generated CommonSetup/CommonCleanup with correct boilerplate."""
+    """Replace LLM-generated CommonSetup/CommonCleanup with correct boilerplate,
+    and fix common hallucinated API patterns."""
     script = re.sub(
         r'class CommonSetup\(aetest\.CommonSetup\):.*?(?=\nclass |\Z)',
         _SETUP_BOILERPLATE + '\n',
@@ -138,6 +154,11 @@ def sanitize_script(script: str) -> str:
         _CLEANUP_BOILERPLATE + '\n',
         script, flags=re.DOTALL
     )
+    # Fix hallucinated aetest.errlog.* → log.*
+    script = re.sub(r'\baetest\.errlog\.(error|warning|info|debug)\b', r'log.\1', script)
+    # Ensure 'import logging' and logger are present if log.* is used
+    if 'log.' in script and 'import logging' not in script:
+        script = 'import logging\nlog = logging.getLogger(__name__)\n' + script
     return script
 
 
@@ -1104,7 +1125,9 @@ Your purpose is to generate production-quality pyATS/Genie scripts that can be s
 - Use Genie parsers (device.parse('show ...')) for structured data — see parser reference below
 - Prefer device.learn('<feature>') for full feature snapshots when available
 - Include meaningful pass/fail criteria with thresholds
-- Handle exceptions gracefully with self.skipped() for features not always present
+- Handle exceptions gracefully: wrap every device.parse() and device.learn() in try/except and call self.skipped('reason') if the parser raises — Genie parsers can fail with SchemaMissingKeyError on older IOS versions
+- NEVER use aetest.errlog — it does not exist. For logging use: import logging; log = logging.getLogger(__name__); then log.info()/log.warning()/log.error()
+- In except blocks use self.skipped(), self.failed(), or log.warning() — never aetest.anything except aetest.main()
 - Testbed device is always referenced as 'DUT' (testbed.devices['DUT'])
 - End every script with: if __name__ == '__main__': import sys; aetest.main(testbed=load(sys.argv[1]))
 - Wrap complete scripts in ```python ... ``` code blocks
@@ -1419,9 +1442,7 @@ async def validate_script(script_id: str, body: ValidateRequest):
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             output = stdout.decode() + stderr.decode()
-            passed = proc.returncode == 0 and not any(
-                x in output for x in ("ERRORED", "BLOCKED", "FAILED")
-            )
+            passed = proc.returncode == 0 and _pyats_passed(output)
             now    = datetime.now(timezone.utc).isoformat()
             with get_db() as conn:
                 conn.execute(
@@ -1469,9 +1490,7 @@ async def run_script(script_id: str, body: RunRequest):
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
             output = stdout.decode() + stderr.decode()
-            passed = proc.returncode == 0 and not any(
-                x in output for x in ("ERRORED", "BLOCKED", "FAILED")
-            )
+            passed = proc.returncode == 0 and _pyats_passed(output)
             status = "PASS" if passed else "FAIL"
             now    = datetime.now(timezone.utc).isoformat()
             with get_db() as conn:
