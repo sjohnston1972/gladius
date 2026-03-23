@@ -98,8 +98,8 @@ _pending_audit: dict | None = None
 
 _SEQUENTIAL_DEVICE_TOOLS = {"connect_to_device", "disconnect_device", "run_show_command", "push_config"}
 _CONTINUATION_MSG = (
-    "Continue. Proceed immediately to the next device using tool calls only. "
-    "Do not write any text until all devices in the list are complete."
+    "If there are more devices remaining in the batch, proceed to the next one now. "
+    "If the task is complete, go ahead and summarise."
 )
 
 def _last_tool_in_history(msgs: list) -> str | None:
@@ -442,6 +442,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[Message]
+    model: str | None = None
 
 class EmailRequest(BaseModel):
     subject: str
@@ -976,8 +977,9 @@ async def chat(request: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    use_model = request.model or MODEL
     return StreamingResponse(
-        stream_response(messages),
+        stream_response(messages, model=use_model),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -988,15 +990,17 @@ async def tshoot(request: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    use_model = request.model or MODEL
     return StreamingResponse(
-        stream_tshoot(messages),
+        stream_tshoot(messages, model=use_model),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-async def stream_tshoot(messages: list) -> AsyncIterator[str]:
+async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]:
     """Tshoot agent — filtered tool set, diagnostics-focused system prompt."""
+    model = model or MODEL
     tools = [t for t in cached_tools if t["name"] in TSHOOT_TOOLS]
     _TRUNCATE_TOOLS = {"run_show_command", "run_nmap_scan"}
     _TOOL_MAX_CHARS  = 20000
@@ -1011,7 +1015,7 @@ async def stream_tshoot(messages: list) -> AsyncIterator[str]:
         while loop_count < MAX_LOOPS:
             loop_count += 1
             api_kwargs = dict(
-                model=MODEL, max_tokens=4096, system=TSHOOT_SYSTEM_PROMPT,
+                model=model, max_tokens=16384, system=TSHOOT_SYSTEM_PROMPT,
                 messages=loop_messages, tools=tools,
             )
             if _force_tools:
@@ -1037,14 +1041,24 @@ async def stream_tshoot(messages: list) -> AsyncIterator[str]:
                     yield f"data: {json.dumps({'type': 'tool_start', 'tool': block.name, 'input': slim})}\n\n"
 
             if not tool_calls:
-                # Claude returned text-only. If it just finished a device, force it back on track.
-                if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
-                    _text_breaks += 1
-                    _force_tools = True
-                    log.info(f"[Tshoot] Text-only after disconnect_device (break #{_text_breaks}) — forcing tool call")
+                # Response was truncated — continue where Claude left off
+                if response.stop_reason == "max_tokens":
+                    log.info(f"[Tshoot] max_tokens hit on text-only response (loop {loop_count}) — continuing")
                     loop_messages.append({"role": "assistant", "content": assistant_content})
-                    loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
+                    loop_messages.append({"role": "user", "content": [{"type": "text", "text": "Your response was cut off. Continue exactly where you left off."}]})
                     continue
+                # Claude returned text-only after disconnect. Nudge it if it looks mid-batch.
+                if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
+                    # Check if the text looks like a final summary (not mid-batch)
+                    resp_text = " ".join(b.get("text", "") for b in assistant_content if b.get("type") == "text").lower()
+                    looks_done = any(w in resp_text for w in ['all devices', 'all done', 'complete', 'summary', 'finished', 'fully achieved', 'what would you like', 'what next', 'that covers'])
+                    if not looks_done:
+                        _text_breaks += 1
+                        _force_tools = True
+                        log.info(f"[Tshoot] Text-only after disconnect_device (break #{_text_breaks}) — nudging")
+                        loop_messages.append({"role": "assistant", "content": assistant_content})
+                        loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
+                        continue
                 global _last_claude_success
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -1085,6 +1099,11 @@ async def stream_tshoot(messages: list) -> AsyncIterator[str]:
             if tool_results:
                 loop_messages.append({"role": "user", "content": tool_results})
 
+            if response.stop_reason == "max_tokens":
+                log.info(f"[Tshoot] max_tokens hit after tool calls (loop {loop_count}) — continuing")
+                loop_messages.append({"role": "user", "content": [{"type": "text", "text": "Your response was cut off. Continue exactly where you left off."}]})
+                continue
+
             if response.stop_reason != "tool_use":
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -1099,11 +1118,12 @@ async def stream_tshoot(messages: list) -> AsyncIterator[str]:
         log.error(f"[Tshoot] stream error: {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_response(messages: list) -> AsyncIterator[str]:
+async def stream_response(messages: list, model: str = None) -> AsyncIterator[str]:
     """
     Uses the persistent MCP session — no subprocess spin-up per request.
     Tool calls are serialised through the MCPManager lock.
     """
+    model = model or MODEL
     # Exclude legacy/internal tools that should never be called by the main agent
     _BLOCKED_TOOLS = {"stream_finding"}
     tools = [t for t in cached_tools if t["name"] not in _BLOCKED_TOOLS]
@@ -1129,7 +1149,7 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
         while loop_count < MAX_LOOPS:
             loop_count += 1
             api_kwargs = dict(
-                model=MODEL, max_tokens=8192, system=SYSTEM_PROMPT,
+                model=model, max_tokens=8192, system=SYSTEM_PROMPT,
                 messages=loop_messages, tools=tools,
             )
             if _force_tools:
@@ -1170,12 +1190,15 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
             if not tool_calls:
                 if response.stop_reason != "tool_use":
                     if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
-                        _text_breaks += 1
-                        _force_tools = True
-                        log.info(f"[Chat] Text-only after disconnect_device (break #{_text_breaks}) — forcing tool call")
-                        loop_messages.append({"role": "assistant", "content": assistant_content})
-                        loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
-                        continue
+                        resp_text = " ".join(b.get("text", "") for b in assistant_content if b.get("type") == "text").lower()
+                        looks_done = any(w in resp_text for w in ['all devices', 'all done', 'complete', 'summary', 'finished', 'fully achieved', 'what would you like', 'what next', 'that covers'])
+                        if not looks_done:
+                            _text_breaks += 1
+                            _force_tools = True
+                            log.info(f"[Chat] Text-only after disconnect_device (break #{_text_breaks}) — nudging")
+                            loop_messages.append({"role": "assistant", "content": assistant_content})
+                            loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
+                            continue
                     global _last_claude_success
                     _last_claude_success = time.monotonic()
                     yield f"data: {json.dumps({'type': 'done'})}\n\n"

@@ -2763,7 +2763,7 @@
   .auto-chat-tile .chat-messages      { flex:1; overflow-y:auto; }
   .auto-chat-tile .quick-cmds         { flex-shrink:0; }
   .auto-chat-tile .chat-input-area    { flex-shrink:0; }
-  .auto-right-col                     { flex:1; display:flex; flex-direction:column; gap:12px; min-width:0; overflow:hidden; }
+  .auto-right-col                     { flex:1; display:flex; flex-direction:column; gap:12px; min-width:0; overflow-y:auto; overflow-x:hidden; }
   .auto-panel-tile                    { background:var(--bg-card); border:1px solid var(--border); border-radius:8px; overflow:hidden; flex-shrink:0; }
   .auto-panel-hdr                     { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--bg-panel); font-family:var(--font-mono); flex-shrink:0; }
   .auto-panel-title                   { font-size:11px; color:var(--accent); letter-spacing:0.1em; }
@@ -2807,6 +2807,48 @@
   .auto-multirun-name                 { font-family:var(--font-mono); font-size:11px; color:var(--text-primary); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .auto-multirun-meta                 { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); white-space:nowrap; }
   @media (max-width:860px) { .auto-body { flex-direction:column; } .auto-chat-tile { flex:none; height:45vh; min-width:0; } .auto-viewer-tile { min-height:200px; } }
+
+  /* ── Vertical divider (viewer ↔ learn) ── */
+  .auto-vdivider                        { flex:0 0 9px; cursor:row-resize; display:flex; align-items:center; justify-content:center; z-index:10; user-select:none; }
+  .auto-vdivider::after                 { content:''; display:block; height:3px; width:48px; border-radius:2px; background:var(--border); transition:background 0.15s; }
+  .auto-vdivider:hover::after,
+  .auto-vdivider.dragging::after        { background:var(--accent); }
+
+  /* ── Learn & Diff panel ── */
+  .learn-panel                          { flex:1; display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+  .learn-panel-body                     { padding:0; display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+  .learn-top-half                       { flex:1; display:flex; flex-direction:column; gap:10px; padding:12px 16px; overflow-y:auto; min-height:0; }
+  .learn-bottom-half                    { flex:1; display:flex; flex-direction:column; gap:10px; padding:12px 16px; overflow-y:auto; min-height:0; }
+  .learn-feature-grid                   { display:flex; flex-wrap:wrap; gap:6px; }
+  .learn-chip                           { font-family:var(--font-mono); font-size:10px; padding:4px 10px; border-radius:4px; border:1px solid var(--border); color:var(--text-secondary); background:transparent; cursor:pointer; transition:all 0.15s; user-select:none; }
+  .learn-chip:hover                     { border-color:var(--accent); color:var(--accent); }
+  .learn-chip.selected                  { border-color:var(--accent); color:var(--accent); background:var(--accent-dim); }
+  .learn-device-list                    { max-height:420px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; }
+  .learn-device-row                     { display:flex; align-items:center; gap:8px; padding:5px 10px; border-bottom:1px solid var(--border); font-family:var(--font-mono); font-size:11px; }
+  .learn-device-row:last-child          { border-bottom:none; }
+  .learn-device-row input[type=checkbox]{ accent-color:var(--accent); width:13px; height:13px; cursor:pointer; }
+  .learn-device-name                    { color:var(--text-primary); flex:1; }
+  .learn-device-ip                      { color:var(--text-dim); font-size:10px; }
+  .learn-snap-list                      { max-height:360px; overflow-y:auto; border:1px solid var(--border); border-radius:6px; }
+  .learn-snap-row                       { display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid var(--border); font-family:var(--font-mono); font-size:10px; cursor:pointer; transition:background 0.15s; }
+  .learn-snap-row:last-child            { border-bottom:none; }
+  .learn-snap-row:hover                 { background:var(--accent-dim); }
+  .learn-snap-row.selected              { background:var(--accent-dim); border-left:2px solid var(--accent); }
+  .learn-snap-row input[type=checkbox]  { accent-color:var(--accent); width:13px; height:13px; cursor:pointer; }
+  .learn-snap-device                    { color:var(--text-primary); min-width:70px; }
+  .learn-snap-feature                   { color:var(--accent); min-width:70px; }
+  .learn-snap-time                      { color:var(--text-dim); flex:1; text-align:right; }
+  .learn-diff-add                       { color:#00cc66; }
+  .learn-diff-del                       { color:#ff4444; }
+  .learn-diff-path                      { color:var(--accent); }
+  .learn-status                         { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); padding:4px 0; }
+  .learn-diff-side                      { flex:1; overflow:auto; margin:0; padding:0; font-family:var(--font-mono); font-size:11px; background:var(--bg); white-space:pre; line-height:1.7; counter-reset:diffline; }
+  .learn-diff-side .dl                  { display:block; padding:0 12px 0 40px; position:relative; min-height:1.7em; }
+  .learn-diff-side .dl::before          { counter-increment:diffline; content:counter(diffline); position:absolute; left:0; width:32px; text-align:right; padding-right:6px; color:var(--text-dim); font-size:10px; opacity:0.5; }
+  .learn-diff-side .dl.added            { background:rgba(0,204,102,0.08); color:#00cc66; }
+  .learn-diff-side .dl.removed          { background:rgba(255,68,68,0.08); color:#ff4444; }
+  .learn-diff-side .dl.changed          { background:rgba(255,170,0,0.08); color:#ffaa00; }
+  .learn-diff-side .dl.unchanged        { color:var(--text-dim); }
 
   /* ── Coder Agent layout ── */
   #page-coder                         { display:none; flex-direction:column; overflow:hidden; }
@@ -3318,6 +3360,17 @@
           <label class="form-label">Custom Args</label>
           <input type="text" class="form-input" placeholder="-sS -T4 --open" id="nmap-args" style="width:160px">
         </div>
+        <div class="form-group">
+          <label class="form-label">AI Model</label>
+          <select class="form-select" id="nmap-model-select">
+            <optgroup label="Claude (Anthropic)">
+              <option value="claude:claude-sonnet-4-6" selected>sonnet 4.6</option>
+              <option value="claude:claude-haiku-4-5-20251001">haiku 4.5</option>
+              <option value="claude:claude-opus-4-6">opus 4.6</option>
+            </optgroup>
+            <optgroup label="Ollama (Local)" id="nmap-ollama-models"></optgroup>
+          </select>
+        </div>
         <button class="btn btn-primary" id="nmap-launch-btn" onclick="launchNmapScan()">▶ LAUNCH SCAN</button>
       </div>
 
@@ -3394,6 +3447,17 @@
         <div class="form-group" id="scapy-vlan2-grp" style="display:none">
           <label class="form-label">Inner VLAN</label>
           <input type="number" class="form-input" placeholder="2" id="scapy-vlan2" style="width:80px" min="1" max="4094">
+        </div>
+        <div class="form-group">
+          <label class="form-label">AI Model</label>
+          <select class="form-select" id="scapy-model-select">
+            <optgroup label="Claude (Anthropic)">
+              <option value="claude:claude-sonnet-4-6" selected>sonnet 4.6</option>
+              <option value="claude:claude-haiku-4-5-20251001">haiku 4.5</option>
+              <option value="claude:claude-opus-4-6">opus 4.6</option>
+            </optgroup>
+            <optgroup label="Ollama (Local)" id="scapy-ollama-models"></optgroup>
+          </select>
         </div>
         <button class="btn btn-primary" id="scapy-launch-btn" onclick="launchScapyScan()">▶ FORGE PACKET</button>
       </div>
@@ -4056,7 +4120,7 @@
             <div class="msg agent">
               <div class="msg-avatar agent">F</div>
               <div>
-                <div class="msg-bubble">Automation Factory online. I generate production-ready pyATS/Genie scripts for Cisco network devices. Ask me to write a test script, modify an existing one, or use the quick commands below to get started.</div>
+                <div class="msg-bubble">Automation Factory online. Generate pyATS/Genie scripts, snapshot device state with <strong>Learn</strong>, compare snapshots with <strong>Diff</strong>, and get AI-powered change analysis. Use the quick commands below or the panels on the right to get started.</div>
                 <div class="msg-meta">AUTOMATION FACTORY · READY</div>
               </div>
             </div>
@@ -4116,6 +4180,70 @@
             <div class="auto-viewer-body">
               <div id="auto-viewer-meta" class="auto-viewer-meta"></div>
               <pre id="auto-viewer-code" class="auto-viewer-code">Select a script from the repository above to view its contents.</pre>
+            </div>
+          </div>
+
+          <!-- Vertical divider between viewer and learn -->
+          <div class="auto-vdivider" id="auto-vdivider"></div>
+
+          <!-- Learn & Diff panel -->
+          <div class="auto-panel-tile learn-panel" id="learn-panel-tile">
+            <div id="learn-panel-body" class="learn-panel-body">
+
+              <!-- LEARN section -->
+              <div class="learn-top-half" id="learn-top-half">
+                <div class="auto-panel-hdr">
+                  <span class="auto-panel-title">LEARN</span>
+                  <span id="learn-status" class="learn-status"></span>
+                  <div style="flex:1"></div>
+                  <label style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);cursor:pointer;margin-right:8px">
+                    <input type="checkbox" id="learn-select-all" onchange="learnToggleAll(this.checked)" style="accent-color:var(--accent);width:12px;height:12px;cursor:pointer"> all devices
+                  </label>
+                  <button class="auto-tbtn" id="learn-run-btn" onclick="learnRun()" style="padding:3px 12px;font-size:10px">&#9654; Learn</button>
+                </div>
+                <div style="padding:12px 16px;display:flex;flex-direction:column;gap:10px;flex:1;min-height:0;overflow-y:auto">
+                  <!-- Feature selector -->
+                  <div>
+                    <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;font-family:var(--font-mono);letter-spacing:0.05em">SELECT FEATURES</div>
+                    <div id="learn-feature-grid" class="learn-feature-grid"></div>
+                  </div>
+                  <!-- Device selector -->
+                  <div style="display:flex;flex-direction:column;flex:1;min-height:0">
+                    <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;font-family:var(--font-mono);letter-spacing:0.05em">SELECT DEVICES</div>
+                    <div id="learn-device-list" class="learn-device-list" style="flex:1;min-height:0">
+                      <div style="padding:10px;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)">Loading devices…</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Horizontal divider -->
+              <div class="auto-vdivider" id="learn-hdivider"></div>
+
+              <!-- DIFF section -->
+              <div class="learn-bottom-half" id="learn-bottom-half">
+                <div class="auto-panel-hdr">
+                  <span class="auto-panel-title">DIFF</span>
+                  <span id="learn-snap-count" class="auto-repo-count">0 snapshots</span>
+                  <span style="font-size:10px;color:var(--text-dim);font-family:var(--font-mono)">(select 2 to diff)</span>
+                  <div style="flex:1"></div>
+                  <div id="learn-diff-actions" style="display:none;gap:5px;align-items:center">
+                    <button class="auto-tbtn" onclick="learnDiff()" style="font-size:10px">&#8644; Diff</button>
+                    <button class="auto-tbtn" id="learn-view-diff-btn" onclick="learnViewDiffModal()" style="display:none;font-size:10px">&#128065; View</button>
+                    <button class="auto-tbtn" id="learn-analyze-btn" onclick="learnAnalyze()" style="display:none;font-size:10px">&#9881; AI Analyze</button>
+                    <select id="learn-analyze-model" style="display:none;background:var(--surface);color:var(--text-secondary);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:10px;font-family:var(--font-mono);cursor:pointer">
+                      <option value="">loading…</option>
+                    </select>
+                    <button class="auto-tbtn del" onclick="learnDeleteSelected()" style="font-size:10px">&#10005;</button>
+                  </div>
+                </div>
+                <div style="padding:12px 16px;display:flex;flex-direction:column;flex:1;min-height:0;overflow-y:auto">
+                  <div id="learn-snap-list" class="learn-snap-list" style="flex:1;min-height:0">
+                    <div style="padding:10px;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)">No snapshots yet. Run a Learn operation above.</div>
+                  </div>
+                </div>
+              </div>
+
             </div>
           </div>
 
@@ -4303,6 +4431,36 @@
     </div>
     <div style="padding:6px 16px 8px;font-family:var(--font-mono);font-size:10px;color:var(--text-dim)" id="auto-codeview-meta"></div>
     <pre id="auto-codeview-code" style="flex:1;overflow-y:auto;margin:0;padding:16px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);background:var(--bg);border-top:1px solid var(--border);white-space:pre;line-height:1.6"></pre>
+  </div>
+</div>
+
+<!-- Diff Viewer -->
+<div class="auto-overlay" id="learn-diff-modal">
+  <div class="auto-modal" style="max-width:95vw;width:1200px;display:flex;flex-direction:column;max-height:90vh">
+    <div class="auto-modal-hdr">
+      <span class="auto-modal-title" id="learn-diff-modal-title">DIFF VIEWER</span>
+      <div style="flex:1"></div>
+      <button class="auto-modal-close" onclick="document.getElementById('learn-diff-modal').classList.remove('open')">&#10005;</button>
+    </div>
+    <div id="learn-diff-modal-meta" style="padding:4px 16px 10px;font-family:var(--font-mono);font-size:10px;color:var(--text-dim);display:flex;gap:16px;flex-wrap:wrap"></div>
+    <div style="flex:1;display:flex;gap:0;overflow:hidden;border-top:1px solid var(--border);min-height:0">
+      <!-- Side A -->
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border)">
+        <div style="display:flex;align-items:center;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--border)">
+          <span id="learn-diff-label-a" style="font-family:var(--font-mono);font-size:10px;color:var(--accent);flex:1">Snapshot A</span>
+          <button class="auto-tbtn" style="font-size:9px;padding:2px 8px" onclick="learnCopyDiffSide('a')">&#10697; Copy</button>
+        </div>
+        <pre id="learn-diff-side-a" class="learn-diff-side"></pre>
+      </div>
+      <!-- Side B -->
+      <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+        <div style="display:flex;align-items:center;padding:6px 12px;background:var(--surface);border-bottom:1px solid var(--border)">
+          <span id="learn-diff-label-b" style="font-family:var(--font-mono);font-size:10px;color:var(--accent);flex:1">Snapshot B</span>
+          <button class="auto-tbtn" style="font-size:9px;padding:2px 8px" onclick="learnCopyDiffSide('b')">&#10697; Copy</button>
+        </div>
+        <pre id="learn-diff-side-b" class="learn-diff-side"></pre>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -4560,6 +4718,7 @@
     if (name === 'psirt'   && !_psirtLoaded) loadLatestPSIRT();
     if (name === 'ingest')     loadCollectionStats();
     if (name === 'automation') initAutomationPage();
+    if (name === 'nmap' || name === 'scapy') _autoLoadModels();
     if (name === 'coder')      initCoderPage();
     if (name === 'settings') { refreshSettingsHealth(); renderActivityLog(); const cb = document.getElementById('toggle-3d'); if (cb) cb.checked = localStorage.getItem('gladius_view') === '3d'; }
     if (name === 'snmp') {
@@ -6360,10 +6519,16 @@ ${cves.length ? `<!-- CVE TAB -->
     spawnTopbarChip(nmapChipId, 'NMAP ' + target, 'nmap');
 
     try {
-      const resp = await fetch('/api/chat', {
+      const nmapModelRaw = document.getElementById('nmap-model-select')?.value || 'claude:claude-sonnet-4-6';
+      const [nmapProvider, nmapModel] = nmapModelRaw.split(':');
+      const nmapEndpoint = nmapProvider === 'ollama' ? '/api/automation/chat' : '/api/chat';
+      const nmapBody = nmapProvider === 'ollama'
+        ? { messages: [{ role: 'user', content: prompt }], model: nmapModel }
+        : { messages: [{ role: 'user', content: prompt }], model: nmapModel };
+      const resp = await fetch(nmapEndpoint, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
+        body:    JSON.stringify(nmapBody),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -6520,10 +6685,16 @@ ${cves.length ? `<!-- CVE TAB -->
     spawnTopbarChip(scapyChipId, 'SCAPY ' + target, 'scapy');
 
     try {
-      const resp = await fetch('/api/chat', {
+      const scapyModelRaw = document.getElementById('scapy-model-select')?.value || 'claude:claude-sonnet-4-6';
+      const [scapyProvider, scapyModel] = scapyModelRaw.split(':');
+      const scapyEndpoint = scapyProvider === 'ollama' ? '/api/automation/chat' : '/api/chat';
+      const scapyBody = scapyProvider === 'ollama'
+        ? { messages: [{ role: 'user', content: prompt }], model: scapyModel }
+        : { messages: [{ role: 'user', content: prompt }], model: scapyModel };
+      const resp = await fetch(scapyEndpoint, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ messages: [{ role: 'user', content: prompt }] }),
+        body:    JSON.stringify(scapyBody),
       });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
@@ -10034,6 +10205,7 @@ ${cves.length ? `<!-- CVE TAB -->
     _autoInitialized = true;
     _autoInitDivider();
     await Promise.all([_autoLoadScripts(), _autoLoadDevices(), _autoLoadModels()]);
+    initLearnPanel();
   }
 
   function _autoInitDivider() {
@@ -10041,6 +10213,11 @@ ${cves.length ? `<!-- CVE TAB -->
     const chatTile = divider?.previousElementSibling;
     const body     = divider?.parentElement;
     if (!divider || !chatTile || !body) return;
+
+    // Restore saved horizontal width
+    const savedW = localStorage.getItem('gladius-auto-chat-width');
+    if (savedW) chatTile.style.flex = `0 0 ${savedW}px`;
+
     let dragging = false, startX = 0, startW = 0;
     divider.addEventListener('mousedown', e => {
       dragging = true;
@@ -10063,6 +10240,80 @@ ${cves.length ? `<!-- CVE TAB -->
       divider.classList.remove('dragging');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
+      localStorage.setItem('gladius-auto-chat-width', Math.round(chatTile.getBoundingClientRect().width));
+    });
+
+    // Vertical divider between Script Viewer and Learn & Diff
+    const vdiv    = document.getElementById('auto-vdivider');
+    const viewer  = document.querySelector('.auto-viewer-tile');
+    const learnP  = document.getElementById('learn-panel-tile');
+    const rightCol = document.querySelector('.auto-right-col');
+    if (!vdiv || !viewer || !learnP || !rightCol) return;
+
+    // Restore saved vertical height
+    const savedH = localStorage.getItem('gladius-auto-viewer-height');
+    if (savedH) { viewer.style.flex = `0 0 ${savedH}px`; learnP.style.flex = '1'; }
+
+    let vDragging = false, startY = 0, startH = 0;
+    vdiv.addEventListener('mousedown', e => {
+      vDragging = true;
+      startY    = e.clientY;
+      startH    = viewer.getBoundingClientRect().height;
+      vdiv.classList.add('dragging');
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!vDragging) return;
+      const colH = rightCol.getBoundingClientRect().height;
+      const newH = Math.min(Math.max(startH + (e.clientY - startY), 80), colH - 120 - 9);
+      viewer.style.flex = `0 0 ${newH}px`;
+      learnP.style.flex = '1';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!vDragging) return;
+      vDragging = false;
+      vdiv.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('gladius-auto-viewer-height', Math.round(viewer.getBoundingClientRect().height));
+    });
+
+    // Horizontal divider inside Learn panel (snapshots ↔ diff)
+    const hdiv     = document.getElementById('learn-hdivider');
+    const topHalf  = document.getElementById('learn-top-half');
+    const btmHalf  = document.getElementById('learn-bottom-half');
+    const learnBody = document.getElementById('learn-panel-body');
+    if (!hdiv || !topHalf || !btmHalf || !learnBody) return;
+
+    const savedLH = localStorage.getItem('gladius-learn-top-height');
+    if (savedLH) { topHalf.style.flex = `0 0 ${savedLH}px`; btmHalf.style.flex = '1'; }
+
+    let hDragging = false, hStartY = 0, hStartH = 0;
+    hdiv.addEventListener('mousedown', e => {
+      hDragging = true;
+      hStartY   = e.clientY;
+      hStartH   = topHalf.getBoundingClientRect().height;
+      hdiv.classList.add('dragging');
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!hDragging) return;
+      const bodyH = learnBody.getBoundingClientRect().height;
+      const newH  = Math.min(Math.max(hStartH + (e.clientY - hStartY), 60), bodyH - 60 - 9);
+      topHalf.style.flex = `0 0 ${newH}px`;
+      btmHalf.style.flex = '1';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!hDragging) return;
+      hDragging = false;
+      hdiv.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      localStorage.setItem('gladius-learn-top-height', Math.round(topHalf.getBoundingClientRect().height));
     });
   }
 
@@ -10076,9 +10327,17 @@ ${cves.length ? `<!-- CVE TAB -->
       const chat     = document.getElementById('auto-model-select');
       const run      = document.getElementById('auto-run-model-select');
       const multirun = document.getElementById('auto-multirun-model');
+      const learnMdl = document.getElementById('learn-analyze-model');
       if (chat)     chat.innerHTML     = opts;
       if (run)      run.innerHTML      = opts;
       if (multirun) multirun.innerHTML = opts;
+      if (learnMdl) learnMdl.innerHTML = opts;
+      // Populate Ollama models into NMAP and Scapy selectors
+      const ollamaOpts = data.models.map(m => `<option value="ollama:${m}">${m}</option>`).join('');
+      const nmapOllama  = document.getElementById('nmap-ollama-models');
+      const scapyOllama = document.getElementById('scapy-ollama-models');
+      if (nmapOllama)  nmapOllama.innerHTML  = ollamaOpts;
+      if (scapyOllama) scapyOllama.innerHTML = ollamaOpts;
     } catch(e) {
       console.error('Auto models:', e);
     }
@@ -10421,28 +10680,20 @@ ${cves.length ? `<!-- CVE TAB -->
         return;
       }
 
-      const aetestHtml = _autoRenderAetestResults(stripped, runResult.device, scriptName);
-      if (aetestHtml) { _autoInjectAgentMessage(aetestHtml); return; }
-
-      let parsed = null;
-      for (const line of stripped) {
-        if ((line.startsWith('{') || line.startsWith('[')) && line.length > 10) {
-          parsed = _autoPyToJs(line); if (parsed) break;
-        }
-      }
-      if (parsed) {
-        const title    = `${scriptName||'Script'} — ${_autoEsc(runResult.device||'')}`;
-        const tableHtml = _autoRenderDataTable(parsed, title);
-        if (tableHtml) { _autoInjectAgentMessage(statusBar + tableHtml); return; }
+      // Extract GLADIUS_DATA sections from output
+      const parsedSections = _autoExtractGladiusData(stripped);
+      if (parsedSections.length > 0) {
+        let allHtml = statusBar;
+        parsedSections.forEach(s => {
+          const tableHtml = _autoRenderDataTable(s.data, s.label);
+          if (tableHtml) allHtml += `<div style="margin-bottom:14px">${tableHtml}</div>`;
+        });
+        _autoInjectAgentMessage(allHtml);
+        return;
       }
 
-      const reasonIdx   = stripped.findIndex(l => /^(passed|failed) reason:/i.test(l));
-      const displayLines = reasonIdx >= 0 ? stripped.slice(reasonIdx) : stripped.filter(l => l.length > 0);
-
-      const ifaceHtml = _autoRenderInterfaceBlocks(displayLines);
-      if (ifaceHtml) { _autoInjectAgentMessage(statusBar + ifaceHtml); return; }
-
-      const cleanText = displayLines.join('\n').trim();
+      // Fallback — raw text
+      const cleanText = stripped.filter(l => l.length > 0).join('\n').trim();
       if (reviewModel) {
         await _autoStreamReview(statusBar, cleanText, reviewModel, runResult.device);
       } else {
@@ -10551,36 +10802,58 @@ ${cves.length ? `<!-- CVE TAB -->
     document.getElementById('auto-run-modal').classList.add('open');
   }
 
-  // Convert a Python literal dict/list string to a JS object (best-effort)
-  function _autoPyToJs(s) {
-    try {
-      return JSON.parse(
-        s.replace(/'/g, '"')
-         .replace(/\bTrue\b/g, 'true')
-         .replace(/\bFalse\b/g, 'false')
-         .replace(/\bNone\b/g, 'null')
-      );
-    } catch(_) { return null; }
+  // Extract GLADIUS_DATA JSON sections from script output
+  function _autoExtractGladiusData(stripped) {
+    const sections = [];
+    for (const line of stripped) {
+      if (line.startsWith('GLADIUS_DATA:')) {
+        try { sections.push(JSON.parse(line.slice(13))); } catch(_) {}
+      }
+    }
+    return sections;
   }
 
   // Render a JS object as an HTML table for the chat bubble
   function _autoRenderDataTable(data, title) {
     const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    // Recursively unwrap nested Genie output until we reach a dict-of-dicts table
+    // e.g. {bgp_id:..., vrf:{default:{neighbor:{10.0.0.1:{state:...}}}}} → {10.0.0.1:{state:...}}
+    let maxDepth = 8;
+    while (maxDepth-- > 0 && typeof data === 'object' && !Array.isArray(data)) {
+      const keys = Object.keys(data);
+      const objKeys = keys.filter(k => typeof data[k] === 'object' && data[k] !== null && !Array.isArray(data[k]));
+      // 2+ keys where ALL values are dicts → dict-of-dicts table, stop
+      if (keys.length >= 2 && objKeys.length === keys.length) break;
+      // Single key whose value is a dict — drill down
+      if (keys.length === 1 && objKeys.length === 1) { data = data[keys[0]]; continue; }
+      // Mixed leaf + object keys with exactly one object — drill into it (e.g. bgp_id + vrf)
+      if (objKeys.length === 1) { data = data[objKeys[0]]; continue; }
+      // 2+ keys with some leaves — flat dict table, stop
+      break;
+    }
+    const _cellVal = v => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'object') return JSON.stringify(v);
+      return String(v);
+    };
     // dict of dicts → rows are keys, columns are sub-keys
     if (typeof data === 'object' && !Array.isArray(data)) {
       const firstVal = Object.values(data)[0];
       if (typeof firstVal === 'object' && firstVal !== null && !Array.isArray(firstVal)) {
-        const cols = Object.keys(firstVal);
+        // Collect all unique sub-keys across all entries
+        const colSet = new Set();
+        Object.values(data).forEach(v => { if (typeof v === 'object' && v) Object.keys(v).forEach(k => colSet.add(k)); });
+        const cols = [...colSet];
         let html = `<div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-bottom:8px">${esc(title)}</div>`;
         html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--font-mono)">`;
-        html += `<thead><tr><th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Interface</th>`;
+        html += `<thead><tr><th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Name</th>`;
         cols.forEach(c => { html += `<th style="text-align:right;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">${esc(c)}</th>`; });
         html += `</tr></thead><tbody>`;
         Object.entries(data).forEach(([k, v], i) => {
           const bg = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.03)';
           html += `<tr style="background:${bg}"><td style="padding:4px 10px;color:var(--text-primary)">${esc(k)}</td>`;
           cols.forEach(c => {
-            const val = v[c] ?? '';
+            const val = _cellVal(v[c]);
             const isErr = (c.includes('error') || c.includes('err')) && Number(val) > 0;
             const isActive = (c.includes('rate')) && Number(val) > 0;
             const color = isErr ? '#ff4444' : isActive ? 'var(--accent)' : 'var(--text-secondary)';
@@ -10653,34 +10926,22 @@ ${cves.length ? `<!-- CVE TAB -->
         return;
       }
 
-      // 1. Try to find a Python dict/list on a single line
-      let parsed = null;
-      for (const line of stripped) {
-        if ((line.startsWith('{') || line.startsWith('[')) && line.length > 10) {
-          parsed = _autoPyToJs(line);
-          if (parsed) break;
-        }
+      // Extract GLADIUS_DATA sections from output
+      const parsedSections = _autoExtractGladiusData(stripped);
+      if (parsedSections.length > 0) {
+        const device = _autoEsc(runResult.device || '');
+        const ts = runResult.run_at ? new Date(runResult.run_at).toLocaleString() : '';
+        let allHtml = statusBar + `<div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">Script results — ${device} @ ${ts}</div>`;
+        parsedSections.forEach(s => {
+          const tableHtml = _autoRenderDataTable(s.data, s.label);
+          if (tableHtml) allHtml += `<div style="margin-bottom:14px">${tableHtml}</div>`;
+        });
+        _autoInjectAgentMessage(allHtml);
+        return;
       }
-      if (parsed) {
-        const title    = `Script results — ${_autoEsc(runResult.device || '')} @ ${runResult.run_at ? new Date(runResult.run_at).toLocaleString() : ''}`;
-        const tableHtml = _autoRenderDataTable(parsed, title);
-        if (tableHtml) { _autoInjectAgentMessage(statusBar + tableHtml); return; }
-      }
 
-      // 2. Try aetest multi-section results table (multi-testcase scripts)
-      const aetestHtml = _autoRenderAetestResults(stripped, runResult.device, scriptName);
-      if (aetestHtml) { _autoInjectAgentMessage(aetestHtml); return; }
-
-      // 3. Find display lines — start from "Passed/Failed reason:" if present, else all non-empty
-      const reasonIdx  = stripped.findIndex(l => /^(passed|failed) reason:/i.test(l));
-      const displayLines = reasonIdx >= 0 ? stripped.slice(reasonIdx) : stripped.filter(l => l.length > 0);
-
-      // 4. Try "Interface: X … end" block table
-      const ifaceHtml = _autoRenderInterfaceBlocks(displayLines);
-      if (ifaceHtml) { _autoInjectAgentMessage(statusBar + ifaceHtml); return; }
-
-      // 5. If a review model is selected, stream through Ollama; otherwise pre-formatted text
-      const cleanText = displayLines.join('\n').trim();
+      // Fallback — raw text
+      const cleanText = stripped.filter(l => l.length > 0).join('\n').trim();
       if (reviewModel) {
         await _autoStreamReview(statusBar, cleanText, reviewModel, runResult.device);
       } else {
@@ -10690,119 +10951,6 @@ ${cves.length ? `<!-- CVE TAB -->
       _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">Agent review error: ${_autoEsc(e.message)}</div>`);
     }
     notify('automation', 'PYATS', `${scriptName || 'Script'} run complete`);
-  }
-
-  // Parse aetest multi-section output into a summary table
-  // Detects "Starting testcase X", "Starting section X", "Passed/Failed/Skipped reason: ..."
-  // Returns HTML string or null if fewer than 2 testcases found
-  function _autoRenderAetestResults(lines, device, scriptName) {
-    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    const isStructural = l => /^(Starting |The result of |\+[-+]+\+$)/i.test(l);
-    const rows = [];
-    let curTestcase = null, curSection = null;
-    for (let idx = 0; idx < lines.length; idx++) {
-      const l = lines[idx];
-      let m;
-      if ((m = l.match(/^Starting testcase\s+(.+)/i)))   { curTestcase = m[1].trim(); curSection = null; }
-      else if ((m = l.match(/^Starting section\s+(.+)/i))) { curSection = m[1].trim(); }
-      else if ((m = l.match(/^(passed|failed|skipped) reason:\s*(.*)/i))) {
-        const summary = m[2].trim();
-        const detail = [];
-        // Collect subsequent detail lines until next structural line
-        for (let j = idx + 1; j < lines.length; j++) {
-          const dl = lines[j];
-          if (!dl.trim() || isStructural(dl) || /^(passed|failed|skipped) reason:/i.test(dl)) break;
-          detail.push(dl.trim());
-        }
-        rows.push({ testcase: curTestcase || '—', section: curSection || '—', result: m[1].toUpperCase(), reason: summary, detail });
-      }
-    }
-    if (rows.length < 2) return null;
-
-    const passed  = rows.filter(r => r.result === 'PASSED').length;
-    const failed  = rows.filter(r => r.result === 'FAILED').length;
-    const skipped = rows.filter(r => r.result === 'SKIPPED').length;
-    const parts   = [];
-    if (passed)  parts.push(`<span style="color:#00cc66">${passed} passed</span>`);
-    if (failed)  parts.push(`<span style="color:#ff4444">${failed} failed</span>`);
-    if (skipped) parts.push(`<span style="color:var(--text-dim)">${skipped} skipped</span>`);
-    const summary = parts.join(' <span style="color:var(--border)">·</span> ');
-
-    const COLOR = { PASSED: '#00cc66', FAILED: '#ff4444', SKIPPED: 'var(--text-dim)' };
-    const nameStr = scriptName ? `${esc(scriptName)} — ` : '';
-    let html = `<div style="font-family:var(--font-mono);font-size:11px;margin-bottom:8px">
-      <span style="color:var(--accent)">${nameStr}</span><span style="color:var(--text-secondary)">${esc(device||'')} &nbsp;</span>${summary}
-    </div>`;
-    html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--font-mono)">`;
-    html += `<thead><tr>
-      <th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Test</th>
-      <th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Result</th>
-      <th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Details</th>
-    </tr></thead><tbody>`;
-    rows.forEach(({testcase, result, reason, detail}, i) => {
-      const bg    = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.03)';
-      const color = COLOR[result] || 'var(--text-secondary)';
-      let detailHtml;
-      if (detail.length > 0) {
-        const uid = 'aedet-' + i + '-' + Date.now();
-        const detailLines = detail.map(d => `<div style="padding:1px 0;color:var(--text-dim)">${esc(d)}</div>`).join('');
-        detailHtml = `<div>${esc(reason)}</div>` +
-          `<div style="margin-top:3px"><a href="#" onclick="event.preventDefault();var el=document.getElementById('${uid}');el.style.display=el.style.display==='none'?'block':'none';this.textContent=el.style.display==='none'?'▸ show ${detail.length} items':'▾ hide'" style="color:var(--accent);text-decoration:none;font-size:10px">▸ show ${detail.length} items</a>` +
-          `<div id="${uid}" style="display:none;margin-top:4px;padding:4px 8px;border-left:2px solid var(--accent-dim);max-height:none">${detailLines}</div></div>`;
-      } else {
-        detailHtml = esc(reason);
-      }
-      html += `<tr style="background:${bg}">
-        <td style="padding:4px 10px;color:var(--text-primary)">${esc(testcase)}</td>
-        <td style="padding:4px 10px;color:${color};font-weight:600">${esc(result)}</td>
-        <td style="padding:4px 10px;color:var(--text-secondary)">${detailHtml}</td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-    return html;
-  }
-
-  // Parse repeated "Interface: X … end" blocks from free-text aetest output
-  // Returns an HTML table string, or null if pattern not found
-  function _autoRenderInterfaceBlocks(lines) {
-    // Need at least one "Interface: X" line to proceed
-    if (!lines.some(l => /^interface:/i.test(l))) return null;
-    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    // Boilerplate lines to skip inside a block (prefix match, not exact)
-    const SKIP = /^(building configuration|current configuration[\s:]|!$|end$|interface \S+$)/i;
-    // Collect blocks: { name, config[] }
-    const blocks = [];
-    let cur = null;
-    for (const l of lines) {
-      const m = l.match(/^interface:\s*(.+)/i);
-      if (m) {
-        if (cur) blocks.push(cur);
-        cur = { name: m[1].trim(), config: [] };
-      } else if (cur) {
-        if (!SKIP.test(l) && l.length > 0) cur.config.push(l);
-      }
-    }
-    if (cur) blocks.push(cur);
-    if (blocks.length === 0) return null;
-
-    let html = `<div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-bottom:8px">Interface Configuration (${blocks.length} interfaces)</div>`;
-    html += `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--font-mono)">`;
-    html += `<thead><tr>
-      <th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Interface</th>
-      <th style="text-align:left;padding:5px 10px;border-bottom:1px solid var(--accent);color:var(--accent)">Configuration</th>
-    </tr></thead><tbody>`;
-    blocks.forEach(({name, config}, i) => {
-      const bg = i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.03)';
-      const cfgHtml = config.length > 0
-        ? config.map(c => `<span style="color:var(--accent)">${esc(c)}</span>`).join('<br>')
-        : `<span style="color:rgba(255,255,255,0.25)">—</span>`;
-      html += `<tr style="background:${bg}">
-        <td style="padding:4px 10px;color:var(--text-primary);white-space:nowrap">${esc(name)}</td>
-        <td style="padding:4px 10px">${cfgHtml}</td>
-      </tr>`;
-    });
-    html += `</tbody></table></div>`;
-    return html;
   }
 
   function _autoInjectAgentMessage(html) {
@@ -11125,6 +11273,435 @@ ${cves.length ? `<!-- CVE TAB -->
       await _autoRenderDeviceTable();
       await _autoLoadDevices();
     } catch(e) { el.textContent = 'Failed: ' + e.message; }
+  }
+
+
+  // ── LEARN & DIFF ──────────────────────────────────────────────────────────────
+  let _learnFeatures  = [];
+  let _learnSnapshots = [];
+  let _learnInitDone  = false;
+  let _learnLastDiff  = null;   // stash for analyze
+
+  async function initLearnPanel() {
+    if (_learnInitDone) return;
+    _learnInitDone = true;
+    await Promise.all([_learnLoadFeatures(), _learnLoadDevices(), _learnLoadSnapshots()]);
+  }
+
+  async function _learnLoadFeatures() {
+    try {
+      const r = await fetch('/api/automation/learn/features');
+      const d = await r.json();
+      _learnFeatures = d.features || [];
+      const grid = document.getElementById('learn-feature-grid');
+      grid.innerHTML = _learnFeatures.map(f =>
+        `<span class="learn-chip" data-feature="${f.id}" onclick="this.classList.toggle('selected')" title="${_autoEsc(f.description)}">${_autoEsc(f.name)}</span>`
+      ).join('');
+    } catch(e) { console.error('Learn features:', e); }
+  }
+
+  async function _learnLoadDevices() {
+    try {
+      const r = await fetch('/api/automation/devices');
+      const d = await r.json();
+      const list = document.getElementById('learn-device-list');
+      if (!d.devices || d.devices.length === 0) {
+        list.innerHTML = '<div style="padding:10px;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)">No devices. Sync SNMP or add via Testbed.</div>';
+        return;
+      }
+      list.innerHTML = d.devices.map(dev =>
+        `<div class="learn-device-row">
+          <input type="checkbox" class="learn-dev-cb" value="${dev.id}">
+          <span class="learn-device-name">${_autoEsc(dev.hostname)}</span>
+          <span class="learn-device-ip">${_autoEsc(dev.ip)}</span>
+        </div>`
+      ).join('');
+    } catch(e) { console.error('Learn devices:', e); }
+  }
+
+  function learnToggleAll(checked) {
+    document.querySelectorAll('.learn-dev-cb').forEach(cb => { cb.checked = checked; });
+  }
+
+  async function _learnLoadSnapshots() {
+    try {
+      const r = await fetch('/api/automation/learn/snapshots');
+      const d = await r.json();
+      _learnSnapshots = d.snapshots || [];
+      _learnRenderSnapshots();
+    } catch(e) { console.error('Learn snapshots:', e); }
+  }
+
+  function _learnRenderSnapshots() {
+    const list = document.getElementById('learn-snap-list');
+    const countEl = document.getElementById('learn-snap-count');
+    countEl.textContent = `${_learnSnapshots.length} snapshot${_learnSnapshots.length !== 1 ? 's' : ''}`;
+    if (_learnSnapshots.length === 0) {
+      list.innerHTML = '<div style="padding:10px;color:var(--text-dim);font-size:11px;font-family:var(--font-mono)">No snapshots yet. Run a Learn operation above.</div>';
+      document.getElementById('learn-diff-actions').style.display = 'none';
+      return;
+    }
+    list.innerHTML = _learnSnapshots.map(s => {
+      const ts = new Date(s.created_at).toLocaleString();
+      return `<div class="learn-snap-row" data-id="${s.id}">
+        <input type="checkbox" class="learn-snap-cb" value="${s.id}" onchange="learnSnapSelectionChanged()">
+        <span class="learn-snap-device">${_autoEsc(s.device_name)}</span>
+        <span class="learn-snap-feature">${_autoEsc(s.feature)}</span>
+        <span class="learn-snap-time">${ts}</span>
+      </div>`;
+    }).join('');
+  }
+
+  function learnSnapSelectionChanged() {
+    const checked = document.querySelectorAll('.learn-snap-cb:checked');
+    const actions = document.getElementById('learn-diff-actions');
+    actions.style.display = checked.length >= 1 ? 'flex' : 'none';
+    // Only show diff when exactly 2 are selected
+    const diffBtn = actions.querySelector('button');
+    if (checked.length === 2) {
+      diffBtn.style.opacity = '1';
+      diffBtn.disabled = false;
+    } else {
+      diffBtn.style.opacity = '0.4';
+      diffBtn.disabled = true;
+    }
+  }
+
+  async function learnRun() {
+    const features = [...document.querySelectorAll('.learn-chip.selected')].map(el => el.dataset.feature);
+    const deviceIds = [...document.querySelectorAll('.learn-dev-cb:checked')].map(cb => cb.value);
+    if (features.length === 0) { alert('Select at least one feature'); return; }
+    if (deviceIds.length === 0) { alert('Select at least one device'); return; }
+
+    const btn = document.getElementById('learn-run-btn');
+    const status = document.getElementById('learn-status');
+    btn.disabled = true;
+    btn.textContent = '⏳ Learning…';
+    status.textContent = `Learning ${features.length} feature(s) on ${deviceIds.length} device(s)…`;
+
+    const chipId = 'learn-' + Date.now();
+    spawnTopbarChip(chipId, 'Learning…', 'automation');
+
+    try {
+      const r = await fetch('/api/automation/learn', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({device_ids: deviceIds, features})
+      });
+      const data = await r.json();
+      const ok = (data.results || []).filter(r => r.success).length;
+      const fail = (data.results || []).filter(r => !r.success).length;
+      status.textContent = `Done: ${ok} succeeded, ${fail} failed`;
+      setTopbarChipDone(chipId);
+      setTimeout(() => removeTopbarChip(chipId), 5000);
+
+      // Show failures in chat
+      (data.results || []).filter(r => !r.success).forEach(r => {
+        _autoInjectAgentMessage(
+          `<div style="font-size:11px;color:#ff4444;font-weight:700">Learn ${_autoEsc(r.feature)} on ${_autoEsc(r.device)} failed: ${_autoEsc(r.error)}</div>`
+        );
+      });
+
+      // Show successes
+      if (ok > 0) {
+        const successList = (data.results || []).filter(r => r.success)
+          .map(r => `${_autoEsc(r.device)} / ${_autoEsc(r.feature)}`)
+          .join(', ');
+        _autoInjectAgentMessage(
+          `<div style="font-size:11px;color:var(--accent);font-weight:700">&#10003; Learned: ${successList}</div>`
+        );
+      }
+
+      await _learnLoadSnapshots();
+    } catch(e) {
+      status.textContent = `Error: ${e.message}`;
+      removeTopbarChip(chipId);
+    }
+    btn.disabled = false;
+    btn.innerHTML = '&#9654; Learn';
+  }
+
+  async function learnDiff() {
+    const checked = [...document.querySelectorAll('.learn-snap-cb:checked')].map(cb => cb.value);
+    if (checked.length !== 2) { alert('Select exactly 2 snapshots to diff'); return; }
+
+    // Always send older snapshot as A (before), newer as B (after)
+    const snapA = _learnSnapshots.find(s => s.id === checked[0]);
+    const snapB = _learnSnapshots.find(s => s.id === checked[1]);
+    let idA = checked[0], idB = checked[1];
+    if (snapA && snapB && new Date(snapA.created_at) > new Date(snapB.created_at)) {
+      idA = checked[1]; idB = checked[0];
+    }
+
+    try {
+      const r = await fetch('/api/automation/learn/diff', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({snapshot_a: idA, snapshot_b: idB})
+      });
+      const data = await r.json();
+      _learnLastDiff = data;
+
+      // Show view/analyze buttons + model selector if there are changes
+      const showAnalyze = data.has_changes ? 'inline-block' : 'none';
+      document.getElementById('learn-view-diff-btn').style.display = showAnalyze;
+      document.getElementById('learn-analyze-btn').style.display = showAnalyze;
+      document.getElementById('learn-analyze-model').style.display = showAnalyze;
+
+      const diffLines = data.diff.split('\n');
+      const addCt = diffLines.filter(l => l.startsWith('+')).length;
+      const delCt = diffLines.filter(l => l.startsWith('-')).length;
+      if (data.has_changes) {
+        _autoInjectAgentMessage(
+          `<div style="font-size:11px;color:var(--accent);font-weight:700">&#8644; Diff computed: <span style="color:#00cc66">+${addCt} added</span> <span style="color:#ff4444">-${delCt} removed</span> — use View Diff or Analyze with AI</div>`
+        );
+      } else {
+        _autoInjectAgentMessage(
+          `<div style="font-size:11px;color:var(--accent)">&#10003; No differences found between the two snapshots.</div>`
+        );
+      }
+    } catch(e) {
+      _autoInjectAgentMessage(
+        `<div style="font-size:11px;color:#ff4444;font-weight:700">Diff failed: ${_autoEsc(e.message)}</div>`
+      );
+    }
+  }
+
+  async function learnAnalyze() {
+    if (!_learnLastDiff || !_learnLastDiff.has_changes) return;
+    const model   = document.getElementById('learn-analyze-model')?.value || '';
+    const feature = _learnLastDiff.snapshot_a?.feature || 'unknown';
+    const device  = _learnLastDiff.snapshot_a?.device || 'unknown';
+    const deviceB = _learnLastDiff.snapshot_b?.device || device;
+    const tsA     = _learnLastDiff.snapshot_a?.created_at ? new Date(_learnLastDiff.snapshot_a.created_at).toLocaleString() : '';
+    const tsB     = _learnLastDiff.snapshot_b?.created_at ? new Date(_learnLastDiff.snapshot_b.created_at).toLocaleString() : '';
+
+    // Inject user message into chat
+    const messages = document.getElementById('auto-messages');
+    const userWrap = document.createElement('div');
+    userWrap.className = 'msg user';
+    const userText = `Analyze this ${feature.toUpperCase()} diff between ${device} (${tsA}) and ${deviceB} (${tsB})`;
+    userWrap.innerHTML = `
+      <div>
+        <div class="msg-bubble">${_autoEsc(userText)}</div>
+        <div class="msg-meta">${new Date().toLocaleTimeString()} · YOU</div>
+      </div>`;
+    messages.appendChild(userWrap);
+    messages.scrollTop = messages.scrollHeight;
+
+    // Create agent response bubble with typing indicator
+    const agentWrap = document.createElement('div');
+    agentWrap.className = 'msg agent';
+    const bubbleId = 'learn-analyze-b-' + Date.now();
+    const headerHtml = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:0.05em;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px">` +
+      `&#9881; DIFF ANALYSIS &mdash; ${_autoEsc(feature.toUpperCase())} &mdash; ${_autoEsc(device)}` +
+      `</div>`;
+    agentWrap.innerHTML = `
+      <div class="msg-avatar agent">F</div>
+      <div>
+        <div class="msg-bubble" id="${bubbleId}">${headerHtml}<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>
+        <div class="msg-meta">${new Date().toLocaleTimeString()} · ${_autoEsc(model || 'OLLAMA')}</div>
+      </div>`;
+    messages.appendChild(agentWrap);
+    messages.scrollTop = messages.scrollHeight;
+
+    const bubble = document.getElementById(bubbleId);
+    const chipId = 'analyze-' + Date.now();
+    spawnTopbarChip(chipId, 'Analyzing diff…', 'automation');
+
+    try {
+      const r = await fetch('/api/automation/learn/analyze', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          diff_text: _learnLastDiff.diff,
+          feature, device,
+          device_b: _learnLastDiff.snapshot_b?.device || device,
+          before_ts: _learnLastDiff.snapshot_a?.created_at || '',
+          after_ts: _learnLastDiff.snapshot_b?.created_at || '',
+          model: model || undefined
+        })
+      });
+      if (!r.ok) {
+        const errText = await r.text().catch(() => r.statusText);
+        throw new Error(`HTTP ${r.status}: ${errText}`);
+      }
+      const data = await r.json();
+      const analysis = data.analysis || 'No analysis returned.';
+
+      // Build formatted response with diff summary + analysis
+      const diffLines = _learnLastDiff.diff.split('\n');
+      const addCount  = diffLines.filter(l => l.startsWith('+')).length;
+      const delCount  = diffLines.filter(l => l.startsWith('-')).length;
+
+      let html = headerHtml;
+      // Summary bar
+      html += `<div style="display:flex;gap:12px;font-family:var(--font-mono);font-size:10px;margin-bottom:10px;padding:6px 10px;background:var(--surface);border-radius:4px;border:1px solid var(--border)">`;
+      html += `<span style="color:var(--text-dim)">Snapshots compared</span>`;
+      html += `<span style="color:#00cc66">+${addCount} added</span>`;
+      html += `<span style="color:#ff4444">-${delCount} removed</span>`;
+      html += `</div>`;
+      // Collapsed diff
+      const diffId = 'diff-collapse-' + Date.now();
+      const diffHtml = diffLines.map(line => {
+        if (line.startsWith('+')) return `<span style="color:#00cc66">${_autoEsc(line)}</span>`;
+        if (line.startsWith('-')) return `<span style="color:#ff4444">${_autoEsc(line)}</span>`;
+        if (line.startsWith('  ') && line.includes(':')) {
+          const [path, ...rest] = line.split(':');
+          return `<span style="color:var(--accent)">${_autoEsc(path)}:</span>${_autoEsc(rest.join(':'))}`;
+        }
+        return _autoEsc(line);
+      }).join('\n');
+      html += `<div style="margin-bottom:10px"><a href="#" onclick="event.preventDefault();var el=document.getElementById('${diffId}');el.style.display=el.style.display==='none'?'block':'none';this.textContent=el.style.display==='none'?'▸ Show raw diff':'▾ Hide raw diff'" style="color:var(--accent);text-decoration:none;font-size:10px;font-family:var(--font-mono)">▸ Show raw diff</a>`;
+      html += `<pre id="${diffId}" style="display:none;margin:6px 0 0;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:10px;line-height:1.5;white-space:pre-wrap;max-height:200px;overflow-y:auto">${diffHtml}</pre></div>`;
+      // Analysis text with markdown-style formatting
+      html += `<div style="font-size:12px;line-height:1.7;color:var(--text-secondary)">${formatMessage(analysis)}</div>`;
+
+      bubble.innerHTML = html;
+      messages.scrollTop = messages.scrollHeight;
+      _coderAddCopyBtns(bubble);
+      setTopbarChipDone(chipId);
+      setTimeout(() => removeTopbarChip(chipId), 5000);
+      _autoHistory.push({role: 'assistant', content: analysis});
+      notify('automation', 'LEARN', `${feature} diff analysis complete`);
+    } catch(e) {
+      bubble.innerHTML = headerHtml + `<div style="font-size:11px;color:#ff4444">Analysis failed: ${_autoEsc(e.message)}</div>`;
+      removeTopbarChip(chipId);
+    }
+  }
+
+  async function learnDeleteSelected() {
+    const checked = [...document.querySelectorAll('.learn-snap-cb:checked')].map(cb => cb.value);
+    if (checked.length === 0) return;
+    if (!confirm(`Delete ${checked.length} snapshot(s)?`)) return;
+    for (const id of checked) {
+      try {
+        await fetch(`/api/automation/learn/snapshots/${id}`, {method: 'DELETE'});
+      } catch(e) { console.error('Delete snapshot:', e); }
+    }
+    await _learnLoadSnapshots();
+    document.getElementById('learn-diff-actions').style.display = 'none';
+  }
+
+
+  // ── Diff Viewer Modal ────────────────────────────────────────────────────────
+  let _learnDiffRawA = null;
+  let _learnDiffRawB = null;
+
+  async function learnViewDiffModal() {
+    if (!_learnLastDiff) return;
+    const modal = document.getElementById('learn-diff-modal');
+    const sideA = document.getElementById('learn-diff-side-a');
+    const sideB = document.getElementById('learn-diff-side-b');
+    sideA.innerHTML = '<span class="dl" style="color:var(--text-dim)">Loading…</span>';
+    sideB.innerHTML = '<span class="dl" style="color:var(--text-dim)">Loading…</span>';
+    modal.classList.add('open');
+
+    const infoA = _learnLastDiff.snapshot_a;
+    const infoB = _learnLastDiff.snapshot_b;
+    const tsA = infoA.created_at ? new Date(infoA.created_at).toLocaleString() : '';
+    const tsB = infoB.created_at ? new Date(infoB.created_at).toLocaleString() : '';
+
+    document.getElementById('learn-diff-modal-title').textContent =
+      `DIFF VIEWER — ${(infoA.feature || '').toUpperCase()}`;
+    const diffLines = _learnLastDiff.diff.split('\n');
+    const addCt = diffLines.filter(l => l.startsWith('+')).length;
+    const delCt = diffLines.filter(l => l.startsWith('-')).length;
+    document.getElementById('learn-diff-modal-meta').innerHTML =
+      `<span><strong style="color:var(--accent)">A:</strong> ${_autoEsc(infoA.device)} @ ${tsA}</span>` +
+      `<span><strong style="color:var(--accent)">B:</strong> ${_autoEsc(infoB.device)} @ ${tsB}</span>` +
+      `<span style="color:#00cc66">+${addCt} added</span>` +
+      `<span style="color:#ff4444">-${delCt} removed</span>`;
+
+    document.getElementById('learn-diff-label-a').textContent =
+      `${infoA.device} — ${tsA}`;
+    document.getElementById('learn-diff-label-b').textContent =
+      `${infoB.device} — ${tsB}`;
+
+    // Fetch both full snapshots
+    try {
+      const [rA, rB] = await Promise.all([
+        fetch(`/api/automation/learn/snapshots/${infoA.id}`).then(r => r.json()),
+        fetch(`/api/automation/learn/snapshots/${infoB.id}`).then(r => r.json())
+      ]);
+      _learnDiffRawA = rA.data;
+      _learnDiffRawB = rB.data;
+
+      // Flatten both to key-value lines
+      const flatA = _learnFlattenObj(rA.data);
+      const flatB = _learnFlattenObj(rB.data);
+      const allKeys = [...new Set([...Object.keys(flatA), ...Object.keys(flatB)])].sort();
+
+      // Build side-by-side with highlighting
+      let htmlA = '', htmlB = '';
+      for (const key of allKeys) {
+        const valA = flatA[key];
+        const valB = flatB[key];
+        const hasA = key in flatA;
+        const hasB = key in flatB;
+
+        if (hasA && hasB && valA === valB) {
+          // Unchanged
+          htmlA += `<span class="dl unchanged">${_autoEsc(key)}: ${_autoEsc(valA)}</span>`;
+          htmlB += `<span class="dl unchanged">${_autoEsc(key)}: ${_autoEsc(valB)}</span>`;
+        } else if (hasA && hasB) {
+          // Changed
+          htmlA += `<span class="dl changed">${_autoEsc(key)}: ${_autoEsc(valA)}</span>`;
+          htmlB += `<span class="dl changed">${_autoEsc(key)}: ${_autoEsc(valB)}</span>`;
+        } else if (hasA && !hasB) {
+          // Removed in B
+          htmlA += `<span class="dl removed">${_autoEsc(key)}: ${_autoEsc(valA)}</span>`;
+          htmlB += `<span class="dl"></span>`;
+        } else {
+          // Added in B
+          htmlA += `<span class="dl"></span>`;
+          htmlB += `<span class="dl added">${_autoEsc(key)}: ${_autoEsc(valB)}</span>`;
+        }
+      }
+      sideA.innerHTML = htmlA || '<span class="dl" style="color:var(--text-dim)">Empty snapshot</span>';
+      sideB.innerHTML = htmlB || '<span class="dl" style="color:var(--text-dim)">Empty snapshot</span>';
+
+      // Sync scrolling
+      sideA.onscroll = () => { sideB.scrollTop = sideA.scrollTop; sideB.scrollLeft = sideA.scrollLeft; };
+      sideB.onscroll = () => { sideA.scrollTop = sideB.scrollTop; sideA.scrollLeft = sideB.scrollLeft; };
+    } catch(e) {
+      sideA.innerHTML = `<span class="dl" style="color:#ff4444">Failed to load: ${_autoEsc(e.message)}</span>`;
+      sideB.innerHTML = '';
+    }
+  }
+
+  function _learnFlattenObj(obj, prefix) {
+    const result = {};
+    prefix = prefix || '';
+    if (obj === null || obj === undefined) return result;
+    if (typeof obj !== 'object') {
+      result[prefix || '(value)'] = String(obj);
+      return result;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach((v, i) => Object.assign(result, _learnFlattenObj(v, prefix ? `${prefix}[${i}]` : `[${i}]`)));
+      return result;
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      if (v !== null && typeof v === 'object') {
+        Object.assign(result, _learnFlattenObj(v, path));
+      } else {
+        result[path] = v === null ? 'null' : v === undefined ? '' : String(v);
+      }
+    }
+    return result;
+  }
+
+  function learnCopyDiffSide(side) {
+    const raw = side === 'a' ? _learnDiffRawA : _learnDiffRawB;
+    if (!raw) return;
+    const text = JSON.stringify(raw, null, 2);
+    navigator.clipboard.writeText(text).then(() => {
+      const info = _learnLastDiff ? (side === 'a' ? _learnLastDiff.snapshot_a : _learnLastDiff.snapshot_b) : null;
+      const label = info ? `${info.device} snapshot` : `Side ${side.toUpperCase()}`;
+      _autoInjectAgentMessage(`<div style="font-size:11px;color:var(--accent)">&#10003; ${_autoEsc(label)} copied to clipboard</div>`);
+    });
   }
 
 
