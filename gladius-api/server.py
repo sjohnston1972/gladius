@@ -418,7 +418,7 @@ async def _background_mcp_init():
     except Exception as e:
         log.warning(f"Design: embed model pre-warm failed (non-fatal): {e}")
     try:
-        await _cache_design_collection_id()
+        await _cache_design_collection_ids()
     except Exception as e:
         log.warning(f"Design: collection ID cache failed (non-fatal): {e}")
 
@@ -576,7 +576,19 @@ async def health_full():
     except Exception:
         results["gladius_snmp"] = {"status": "error", "detail": "Container unreachable"}
 
-    # ── 7. Gladius Slack ──────────────────────────────────────────────────────
+    # ── 7. Gladius Automation Factory ────────────────────────────────────────
+    try:
+        t0 = time.monotonic()
+        r  = http_requests.get(f"{AUTOMATION_URL}/health", timeout=3)
+        ms = int((time.monotonic() - t0) * 1000)
+        if r.status_code == 200:
+            results["gladius_pyats"] = {"status": "ok", "detail": f"Running ({ms}ms)"}
+        else:
+            results["gladius_pyats"] = {"status": "error", "detail": f"HTTP {r.status_code}"}
+    except Exception:
+        results["gladius_pyats"] = {"status": "error", "detail": "Container unreachable"}
+
+    # ── 8. Gladius Slack ──────────────────────────────────────────────────────
     try:
         t0 = time.monotonic()
         r  = http_requests.get("http://gladius-slack:9090/health", timeout=3)
@@ -987,12 +999,12 @@ async def stream_tshoot(messages: list) -> AsyncIterator[str]:
     """Tshoot agent — filtered tool set, diagnostics-focused system prompt."""
     tools = [t for t in cached_tools if t["name"] in TSHOOT_TOOLS]
     _TRUNCATE_TOOLS = {"run_show_command", "run_nmap_scan"}
-    _TOOL_MAX_CHARS  = 6000
+    _TOOL_MAX_CHARS  = 20000
 
     try:
         loop_messages  = list(messages)
         loop_count     = 0
-        MAX_LOOPS      = 20   # sequential multi-device ops need 1 loop per device
+        MAX_LOOPS      = 60   # sequential multi-device ops need ~3 loops per device
         _force_tools   = False  # set after disconnect_device to force next call to use tools
         _text_breaks   = 0    # consecutive text-only responses after disconnect — cap at 2
 
@@ -1060,7 +1072,7 @@ async def stream_tshoot(messages: list) -> AsyncIterator[str]:
 
                 # Inject directive into disconnect_device result so Claude sees it immediately
                 if tool_name == "disconnect_device":
-                    context_text += "\n\n[SYSTEM DIRECTIVE: Device complete. Your next response MUST be connect_to_device for the next device — zero text output until all devices are done.]"
+                    context_text += "\n\n[Note: Device disconnected. If more devices remain in the batch, proceed directly to connect_to_device for the next one without summarising.]"
 
                 tool_results.append({
                     "type": "tool_result", "tool_use_id": tool_use_id,
@@ -1104,13 +1116,13 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
 
     # Tool outputs that balloon in size — truncate before adding to Claude context
     _TRUNCATE_TOOLS = {"query_nvd", "query_psirt", "run_show_command", "query_knowledge_base"}
-    _TOOL_MAX_CHARS = 6000
+    _TOOL_MAX_CHARS = 20000
     _audit_saved = False  # break loop immediately after save_audit_results
 
     try:
         loop_messages = list(messages)
         loop_count    = 0
-        MAX_LOOPS     = 20  # sequential multi-device ops need 1 loop per device; audits exit early via _audit_saved
+        MAX_LOOPS     = 60  # sequential multi-device ops need ~3 loops per device; audits exit early via _audit_saved
         _force_tools  = False
         _text_breaks  = 0
 
@@ -1225,7 +1237,7 @@ async def stream_response(messages: list) -> AsyncIterator[str]:
 
                 # Directive injected into disconnect_device result — seen by Claude before next response
                 if tool_name == "disconnect_device":
-                    context_text += "\n\n[SYSTEM DIRECTIVE: Device complete. Your next response MUST be connect_to_device for the next device — zero text output until all devices are done.]"
+                    context_text += "\n\n[Note: Device disconnected. If more devices remain in the batch, proceed directly to connect_to_device for the next one without summarising.]"
 
                 tool_results.append({
                     "type":        "tool_result",
@@ -1292,7 +1304,7 @@ COLLECTIONS = [
     "network_security_guidelines",
     "design-guidelines",
     "network-topologies",
-    "compliance-frameworks",
+    "hardware-datasheets",
 ]
 
 def _get_chroma_collection(name: str):
@@ -1530,7 +1542,8 @@ async def ingest_collections():
     return {"collections": counts}
 
 
-SNMP_URL           = os.getenv("SNMP_SERVICE_URL", "http://gladius-snmp:8000")
+SNMP_URL           = os.getenv("SNMP_SERVICE_URL",        "http://gladius-snmp:8000")
+AUTOMATION_URL     = os.getenv("AUTOMATION_SERVICE_URL", "http://gladius-pyats:8090")
 SLACK_BOT_TOKEN  = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_ALERT_CHANNEL = os.getenv("SLACK_ALERT_CHANNEL", "")  # channel ID or user ID to post alerts to
 
@@ -1725,6 +1738,12 @@ async def snmp_delete_device(dev_id: str):
     r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.delete(f"{SNMP_URL}/devices/{dev_id}", timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
+@app.patch("/api/snmp/devices/{dev_id}")
+async def snmp_patch_device(dev_id: str, request: Request):
+    body = await request.body()
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.patch(f"{SNMP_URL}/devices/{dev_id}", data=body, headers={"Content-Type": "application/json"}, timeout=10))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
 @app.post("/api/snmp/devices/{dev_id}/poll")
 async def snmp_poll_device(dev_id: str):
     r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/{dev_id}/poll", timeout=30))
@@ -1735,6 +1754,42 @@ async def snmp_poll(request: Request):
     body = await request.body()
     r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/poll", data=body, headers={"Content-Type": "application/json"}, timeout=30))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+
+# ── AUTOMATION FACTORY PROXY ──────────────────────────────────────────────────
+
+@app.api_route("/api/automation/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def automation_proxy(path: str, request: Request):
+    """Proxy all /api/automation/* requests to the gladius-pyats container.
+    Chat endpoint streams SSE; all other endpoints return JSON."""
+    body = await request.body()
+    ct   = request.headers.get("Content-Type", "application/json")
+    url  = f"{AUTOMATION_URL}/api/{path}"
+
+    if path in ("chat", "coder", "review"):
+        import httpx as _hx
+        async def _stream():
+            async with _hx.AsyncClient(timeout=180.0) as c:
+                async with c.stream("POST", url, content=body, headers={"Content-Type": ct}) as r:
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
+        return StreamingResponse(
+            _stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    r = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: http_requests.request(
+            request.method, url, data=body,
+            headers={"Content-Type": ct}, timeout=300
+        )
+    )
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get("content-type", "application/json"),
+    )
 
 
 # ── PARALLEL AUDIT ENGINE ─────────────────────────────────────────────────────
@@ -2207,12 +2262,14 @@ async def parallel_audit(request: ParallelAuditRequest):
 
 # ── DESIGN AGENT ──────────────────────────────────────────────────────────────
 
-# Cached Chroma collection ID for design-guidelines — populated at startup.
+# Cached Chroma collection IDs for Design Agent collections — populated at startup.
 _design_col_id: str | None = None
+_hw_col_id:     str | None = None
 
-async def _cache_design_collection_id():
-    """Fetch and cache the design-guidelines Chroma collection ID once at startup."""
-    global _design_col_id
+
+async def _cache_design_collection_ids():
+    """Fetch and cache collection IDs for design-guidelines and hardware-datasheets."""
+    global _design_col_id, _hw_col_id
     try:
         base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
         r = await asyncio.to_thread(
@@ -2220,14 +2277,49 @@ async def _cache_design_collection_id():
         )
         if r.status_code == 200:
             cols = r.json() if isinstance(r.json(), list) else []
-            col = next((c for c in cols if c["name"] == "design-guidelines"), None)
-            if col:
-                _design_col_id = col["id"]
-                log.info(f"Design: collection ID cached ({_design_col_id[:8]}...)")
+            col_map = {c["name"]: c["id"] for c in cols}
+            if "design-guidelines" in col_map:
+                _design_col_id = col_map["design-guidelines"]
+                log.info(f"Design: design-guidelines ID cached ({_design_col_id[:8]}...)")
             else:
                 log.warning("Design: design-guidelines collection not found in Chroma")
+            if "hardware-datasheets" in col_map:
+                _hw_col_id = col_map["hardware-datasheets"]
+                log.info(f"Design: hardware-datasheets ID cached ({_hw_col_id[:8]}...)")
+            else:
+                log.info("Design: hardware-datasheets collection not yet in Chroma (will query when available)")
     except Exception as e:
         log.warning(f"Design: collection ID cache failed: {e}")
+
+
+def _rag_query_collections(query_text: str, col_ids: dict[str, str], n_per_col: int = 4) -> str:
+    """
+    Query one or more Chroma collections and return a combined context string.
+    col_ids: dict of {label: collection_id}  e.g. {"Design Guidelines": "abc123", "Hardware Data Sheets": "def456"}
+    """
+    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
+    emb  = get_embed_model().encode(query_text).tolist()
+    sections = []
+    for label, col_id in col_ids.items():
+        try:
+            r = http_requests.post(
+                f"{base}/collections/{col_id}/query",
+                json={
+                    "query_embeddings": [emb],
+                    "n_results": n_per_col,
+                    "include": ["documents", "metadatas"],
+                },
+                timeout=10,
+            )
+            if r.status_code == 200:
+                docs = r.json().get("documents", [[]])[0]
+                if docs:
+                    sections.append(
+                        f"\n\n---\nRelevant context from {label}:\n" + "\n---\n".join(docs)
+                    )
+        except Exception as e:
+            log.warning(f"Design RAG: query failed for '{label}': {e}")
+    return "".join(sections)
 
 
 DESIGN_SYSTEM_PROMPT = """You are the Gladius Design Agent — a specialist in enterprise network design, Cisco Validated Designs (CVDs), and infrastructure architecture best practices.
@@ -2236,7 +2328,11 @@ Your knowledge base contains curated network design documentation including Cisc
 
 Your role is to help Gladius users make informed, well-grounded network design decisions — whether planning a greenfield campus, designing a WAN architecture, or validating an existing topology against CVD recommendations.
 
-You have access to a RAG knowledge base (design-guidelines collection) containing uploaded CVD and design documents. Always query it when answering design questions — ground your answers in those documents and cite them where relevant.
+You have access to two RAG knowledge bases that are automatically queried on every request:
+- **Design Guidelines** (`design-guidelines`) — CVD and solution design specifications: topology blueprints, routing design patterns, IP addressing schemes, high-availability frameworks.
+- **Hardware Data Sheets** (`hardware-datasheets`) — vendor hardware specifications, datasheet extracts, device capability profiles, interface counts, performance ratings, and hardware constraints.
+
+Always ground your answers in retrieved context from these collections and reference the source where relevant. When hardware constraints or device specifications are relevant to a design decision, draw on the Hardware Data Sheets collection.
 
 ## Personality
 - Precise and opinionated — give clear architectural recommendations with rationale
@@ -2292,31 +2388,15 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
         )
         log.info(f"Design: request received, col_id={'set' if _design_col_id else 'MISSING'}")
 
-        if last_user_msg and _design_col_id:
+        if last_user_msg and (_design_col_id or _hw_col_id):
             try:
-                col_id_snapshot = _design_col_id  # avoid race with re-cache
-
-                def _rag_lookup():
-                    base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
-                    emb = get_embed_model().encode(last_user_msg).tolist()
-                    r = http_requests.post(
-                        f"{base}/collections/{col_id_snapshot}/query",
-                        json={
-                            "query_embeddings": [emb],
-                            "n_results": 5,
-                            "include": ["documents", "metadatas"],
-                        },
-                        timeout=10,
-                    )
-                    if r.status_code == 200:
-                        docs = r.json().get("documents", [[]])[0]
-                        if docs:
-                            return "\n\n---\nRelevant design guidelines from knowledge base:\n" + "\n---\n".join(docs[:5])
-                    return ""
+                col_ids = {}
+                if _design_col_id: col_ids["Design Guidelines"]    = _design_col_id
+                if _hw_col_id:     col_ids["Hardware Data Sheets"] = _hw_col_id
 
                 t_rag = time.monotonic()
-                log.info(f"Design RAG: starting (t+{(t_rag-t_req)*1000:.0f}ms from request)")
-                rag_context = await asyncio.to_thread(_rag_lookup)
+                log.info(f"Design RAG: querying {list(col_ids.keys())} (t+{(t_rag-t_req)*1000:.0f}ms)")
+                rag_context = await asyncio.to_thread(_rag_query_collections, last_user_msg, col_ids)
                 log.info(f"Design RAG: done in {(time.monotonic()-t_rag)*1000:.0f}ms, context={'yes' if rag_context else 'none'}")
             except Exception as e:
                 log.warning(f"Design RAG lookup failed (non-fatal): {e}")
@@ -2358,6 +2438,270 @@ async def stream_design_response(messages: list) -> AsyncIterator[str]:
 
     except Exception as e:
         log.error(f"Design stream error: {type(e).__name__}: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+
+
+# ── Design Critique Loop ─────────────────────────────────────────────────────
+
+# Per-intensity critic configuration — 9 levels (1 = Go Easy, 9 = Both Barrels)
+_CRITIC_INTENSITY = {
+    1: dict(
+        name="Go Easy",
+        tone=(
+            "Be gentle and encouraging. Surface only showstopper flaws — issues that would cause "
+            "outright failure. Overlook minor gaps and stylistic choices. Frame any issues constructively."
+        ),
+        count="1–2",
+        threshold=(
+            "Approve readily. If the design is fundamentally reasonable and would work in production, "
+            "output DESIGN_APPROVED."
+        ),
+    ),
+    2: dict(
+        name="Gentle",
+        tone=(
+            "Be constructive and supportive. Identify significant issues that would cause operational "
+            "problems, but frame them positively and focus on the most impactful ones."
+        ),
+        count="2–3",
+        threshold=(
+            "Approve if the major design decisions are correct, even if minor details could be improved."
+        ),
+    ),
+    3: dict(
+        name="Considerate",
+        tone=(
+            "Be balanced but lean towards encouragement. Call out issues that would cause real operational "
+            "problems or violate important best practices, but acknowledge what the design does well."
+        ),
+        count="2–4",
+        threshold="Approve when the design addresses core requirements adequately.",
+    ),
+    4: dict(
+        name="Measured",
+        tone=(
+            "Provide balanced critique. Identify real issues without being harsh. Give credit for good "
+            "design decisions."
+        ),
+        count="3–5",
+        threshold="Approve when major issues are resolved and the design is solid in its key dimensions.",
+    ),
+    5: dict(
+        name="Balanced",
+        tone=(
+            "Be objective and thorough. Apply standard enterprise design review criteria. Neither lenient "
+            "nor harsh — call it as it is."
+        ),
+        count="3–6",
+        threshold="Approve when the design is solid across all major dimensions with no significant gaps.",
+    ),
+    6: dict(
+        name="Thorough",
+        tone=(
+            "Be rigorous. Surface issues that experienced senior engineers would flag in a formal design "
+            "review. Don't overlook gaps in HA, security, or scalability."
+        ),
+        count="4–7",
+        threshold="Approve only when the design is genuinely strong with no significant gaps.",
+    ),
+    7: dict(
+        name="Rigorous",
+        tone=(
+            "Be demanding. Apply the standards of a senior network architect. Every major design decision "
+            "must be justified. Identify all issues that could cause problems in a production environment."
+        ),
+        count="5–8",
+        threshold=(
+            "Approve only when the design is comprehensive, production-ready, and free of architectural debt."
+        ),
+    ),
+    8: dict(
+        name="Unsparing",
+        tone=(
+            "Be uncompromising. Apply the exacting standards of a Cisco Distinguished Engineer. Challenge "
+            "every architectural decision. Assume the design will run in a large enterprise with zero "
+            "tolerance for downtime."
+        ),
+        count="6–9",
+        threshold=(
+            "Approve only when the design is excellent across every evaluated dimension — no hand-waving, "
+            "no 'good enough'."
+        ),
+    ),
+    9: dict(
+        name="Both Barrels",
+        tone=(
+            "Be absolutely ruthless. Leave nothing on the table. Challenge every design decision, "
+            "assumption, omission, and implicit trade-off. Apply the most exacting enterprise standards "
+            "imaginable. This design must survive the harshest possible scrutiny from the most demanding "
+            "architect in the room."
+        ),
+        count="7–12",
+        threshold=(
+            "Approve ONLY if the design is truly exceptional — production-ready, fully resilient, "
+            "secure, scalable, CVD-compliant, and operationally sound in every respect. "
+            "Reject anything that falls short of outstanding."
+        ),
+    ),
+}
+
+
+def _build_critic_system_prompt(intensity: int) -> str:
+    cfg = _CRITIC_INTENSITY.get(intensity, _CRITIC_INTENSITY[5])
+    return f"""You are the Gladius Critic Agent — a network design reviewer operating at intensity level {intensity}/9 ({cfg['name']}).
+
+## Your Tone
+{cfg['tone']}
+
+## Analysis Checklist
+For every design proposal, evaluate these dimensions:
+- **Redundancy & HA** — are failure domains isolated? Single-point-of-failure risk?
+- **Scalability** — will this design handle growth? Are there architectural ceilings?
+- **Security posture** — segmentation, access control, management plane protection
+- **Routing correctness** — protocol selection, summarisation, convergence, redistribution risks
+- **IP addressing** — subnetting correctness, room for growth, VLSM/CIDR accuracy
+- **CVD alignment** — does this follow Cisco Validated Design principles?
+- **Operational concerns** — manageability, monitoring hooks, change risk
+- **Missing elements** — what has the design omitted that a production deployment requires?
+
+## Output Format
+List each flaw as a numbered issue:
+1. **[Concise Title]** — Technical explanation of the flaw and its consequence
+2. **[Concise Title]** — ...
+
+Aim for {cfg['count']} issues per iteration.
+
+## Approval Criterion
+{cfg['threshold']}
+
+When approving, end your response with this exact token on its own line:
+`DESIGN_APPROVED`"""
+
+
+class DesignCritiqueRequest(BaseModel):
+    question: str
+    max_iterations: int = 4
+    critique_intensity: int = 5
+
+
+@app.post("/api/chat/design/critique")
+async def design_critique_chat(request: DesignCritiqueRequest):
+    """Design critique loop — iterates between Design Agent and Critic Agent."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    iterations = max(1, min(request.max_iterations, 6))
+    intensity  = max(1, min(request.critique_intensity, 9))
+    return StreamingResponse(
+        stream_design_critique(request.question, iterations, intensity),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def stream_design_critique(user_question: str, max_iterations: int, intensity: int = 5) -> AsyncIterator[str]:
+    """
+    Iterative design critique loop:
+      1. Design Agent drafts a design.
+      2. Critic Agent reviews it (at the requested intensity level).
+      3. If DESIGN_APPROVED or max_iterations reached → emit approved + done.
+      4. Else Design Agent revises → go to 2.
+    """
+    critic_system_prompt = _build_critic_system_prompt(intensity)
+    log.info(f"Design critique: intensity={intensity} ({_CRITIC_INTENSITY.get(intensity, {}).get('name', '?')}), max_iter={max_iterations}")
+    try:
+        yield f"data: {json.dumps({'type': 'critique_start', 'max_iterations': max_iterations})}\n\n"
+
+        # RAG lookup — run once against the original question, query all Design Agent collections
+        rag_context = ""
+        if (_design_col_id or _hw_col_id) and user_question:
+            try:
+                col_ids = {}
+                if _design_col_id: col_ids["Design Guidelines"]    = _design_col_id
+                if _hw_col_id:     col_ids["Hardware Data Sheets"] = _hw_col_id
+                rag_context = await asyncio.to_thread(_rag_query_collections, user_question, col_ids)
+                log.info(f"Design critique RAG: queried {list(col_ids.keys())}, context={'yes' if rag_context else 'none'}")
+            except Exception as e:
+                log.warning(f"Design critique RAG lookup failed (non-fatal): {e}")
+
+        current_design = ""
+        critique = ""
+
+        for iteration in range(1, max_iterations + 1):
+            # ── Design Agent phase ────────────────────────────────────────────
+            if iteration == 1:
+                label = "Drafting initial design…"
+                design_prompt = user_question
+                if rag_context:
+                    design_prompt += rag_context
+            else:
+                label = f"Revising design (iteration {iteration})…"
+                design_prompt = (
+                    f"Original design question: {user_question}\n\n"
+                    f"Your previous design:\n{current_design}\n\n"
+                    f"Critic's review:\n{critique}\n\n"
+                    f"Revise your design to address every concern raised by the critic "
+                    f"while preserving what was already strong. "
+                    f"Produce a complete, updated design."
+                )
+                if rag_context:
+                    design_prompt += rag_context
+
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'design', 'iteration': iteration, 'label': label})}\n\n"
+
+            current_design = ""
+            try:
+                async with client.messages.stream(
+                    model=MODEL,
+                    max_tokens=8192,
+                    system=DESIGN_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": design_prompt}],
+                ) as stream:
+                    async for text in stream.text_stream:
+                        current_design += text
+                        yield f"data: {json.dumps({'type': 'text', 'content': text, 'agent': 'design'})}\n\n"
+            except Exception as e:
+                log.error(f"Design critique — design agent stream error (iter {iteration}): {e}")
+                yield f"data: {json.dumps({'type': 'error', 'content': f'Design agent error: {e}'})}\n\n"
+                return
+
+            # ── Critic Agent phase ────────────────────────────────────────────
+            yield f"data: {json.dumps({'type': 'phase', 'phase': 'critic', 'iteration': iteration, 'label': 'Critical analysis underway…'})}\n\n"
+
+            critic_prompt = (
+                f"Original design question: {user_question}\n\n"
+                f"Design proposal to review (iteration {iteration}):\n{current_design}"
+            )
+            critique = ""
+            try:
+                async with client.messages.stream(
+                    model=MODEL,
+                    max_tokens=4096,
+                    system=critic_system_prompt,
+                    messages=[{"role": "user", "content": critic_prompt}],
+                ) as stream:
+                    async for text in stream.text_stream:
+                        critique += text
+                        yield f"data: {json.dumps({'type': 'text', 'content': text, 'agent': 'critic'})}\n\n"
+            except Exception as e:
+                log.error(f"Design critique — critic agent stream error (iter {iteration}): {e}")
+                yield f"data: {json.dumps({'type': 'error', 'content': f'Critic agent error: {e}'})}\n\n"
+                return
+
+            approved = "DESIGN_APPROVED" in critique
+            log.info(f"Design critique iteration {iteration}: approved={approved}")
+
+            if approved or iteration >= max_iterations:
+                reason = "approved" if approved else "max_iterations"
+                yield f"data: {json.dumps({'type': 'approved', 'iterations': iteration, 'reason': reason})}\n\n"
+                break
+
+        global _last_claude_success
+        _last_claude_success = time.monotonic()
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+
+    except Exception as e:
+        log.error(f"Design critique stream error: {type(e).__name__}: {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
 

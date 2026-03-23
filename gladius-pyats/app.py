@@ -1782,6 +1782,65 @@ async def validate_script(script_id: str, body: ValidateRequest):
 
 # ── Script Execution ──────────────────────────────────────────────────────────
 
+MAX_AUTOFIX_RETRIES = 2
+
+async def _autofix_script(script: str, error: str, model: str | None = None) -> str | None:
+    """Send broken script + error to Ollama, return fixed script or None."""
+    fix_model = model or OLLAMA_MODEL
+    prompt = (
+        "The following pyATS/Genie test script has an error. "
+        "Fix the script and return ONLY the complete corrected Python script inside a single ```python code fence. "
+        "Do not explain, do not add commentary outside the code fence.\n\n"
+        f"ERROR:\n{error}\n\n"
+        f"SCRIPT:\n```python\n{script}\n```"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={"model": fix_model, "messages": [{"role": "user", "content": prompt}], "stream": False},
+            )
+            if r.status_code != 200:
+                return None
+            content = r.json().get("message", {}).get("content", "")
+            # Extract code from ```python ... ``` fence
+            m = re.search(r'```python\s*\n(.*?)```', content, re.DOTALL)
+            if m:
+                return m.group(1).strip()
+            # Fallback: try ``` ... ```
+            m = re.search(r'```\s*\n(.*?)```', content, re.DOTALL)
+            if m:
+                return m.group(1).strip()
+    except Exception as e:
+        log.warning("Autofix request failed: %s", e)
+    return None
+
+
+async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int = 300):
+    """Run a pyATS script, return (passed, output)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        script_path  = os.path.join(tmpdir, "test_script.py")
+        testbed_path = os.path.join(tmpdir, "testbed.yaml")
+        with open(script_path,  "w") as f:
+            f.write(script_content)
+        with open(testbed_path, "w") as f:
+            f.write(testbed_yaml)
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, script_path, testbed_path,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=tmpdir
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        output = stdout.decode() + stderr.decode()
+        passed = proc.returncode == 0 and _pyats_passed(output)
+        return passed, output
+
+
+def _is_script_error(output: str) -> bool:
+    """Return True if the output indicates a script-level error (syntax, import, attribute)."""
+    return bool(re.search(r'(SyntaxError|IndentationError|NameError|ImportError|AttributeError|TypeError):', output))
+
+
 @app.post("/api/scripts/{script_id}/run")
 async def run_script(script_id: str, body: RunRequest):
     with get_db() as conn:
@@ -1797,36 +1856,62 @@ async def run_script(script_id: str, body: RunRequest):
     display_name = dev_info["hostname"]
     testbed_yaml = build_testbed_yaml([dev_info])
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        script_path  = os.path.join(tmpdir, "test_script.py")
-        testbed_path = os.path.join(tmpdir, "testbed.yaml")
-        with open(script_path,  "w") as f:
-            f.write(sanitize_script(script_row["script"]))
-        with open(testbed_path, "w") as f:
-            f.write(testbed_yaml)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, script_path, testbed_path,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                cwd=tmpdir
+    script_content = sanitize_script(script_row["script"])
+    autofix_log = []
+
+    try:
+        passed, output = await _run_script_once(script_content, testbed_yaml)
+
+        # Auto-fix loop: if the script has a code error, ask LLM to fix and re-run
+        retries = 0
+        while not passed and _is_script_error(output) and retries < MAX_AUTOFIX_RETRIES:
+            retries += 1
+            log.info("Auto-fix attempt %d/%d for script %s", retries, MAX_AUTOFIX_RETRIES, script_id)
+            autofix_log.append(f"--- AUTO-FIX ATTEMPT {retries}/{MAX_AUTOFIX_RETRIES} ---")
+
+            # Extract just the error portion for the LLM (last 60 lines)
+            error_lines = output.strip().split("\n")
+            error_tail = "\n".join(error_lines[-60:])
+            autofix_log.append(f"Error detected:\n{error_tail}")
+
+            fixed = await _autofix_script(script_content, error_tail)
+            if not fixed:
+                autofix_log.append("LLM could not produce a fix. Stopping.")
+                break
+
+            script_content = sanitize_script(fixed)
+            autofix_log.append("LLM returned fixed script. Re-running...")
+            passed, output = await _run_script_once(script_content, testbed_yaml)
+
+            if passed:
+                autofix_log.append("Fixed script PASSED. Saving corrected version to database.")
+                # Save the working fixed script back to DB
+                with get_db() as conn:
+                    conn.execute("UPDATE scripts SET script=?, updated_at=? WHERE id=?",
+                                 (script_content, datetime.now(timezone.utc).isoformat(), script_id))
+            else:
+                autofix_log.append("Fixed script still failing.")
+
+        status = "PASS" if passed else "FAIL"
+        now    = datetime.now(timezone.utc).isoformat()
+
+        # Prepend autofix log to output if any fix attempts were made
+        full_output = output
+        if autofix_log:
+            full_output = "\n".join(autofix_log) + "\n\n--- FINAL RUN OUTPUT ---\n" + output
+
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE scripts SET last_run_at=?, last_run_status=?, last_run_output=? WHERE id=?",
+                (now, status, full_output[:10000], script_id)
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=300)
-            output = stdout.decode() + stderr.decode()
-            passed = proc.returncode == 0 and _pyats_passed(output)
-            status = "PASS" if passed else "FAIL"
-            now    = datetime.now(timezone.utc).isoformat()
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE scripts SET last_run_at=?, last_run_status=?, last_run_output=? WHERE id=?",
-                    (now, status, output[:10000], script_id)
-                )
-            return {"passed": passed, "status": status, "device": display_name,
-                    "output": output[:8000], "run_at": now}
-        except asyncio.TimeoutError:
-            proc.kill()
-            return {"passed": False, "status": "FAIL", "error": "Timed out (300s)", "output": ""}
-        except Exception as e:
-            return {"passed": False, "status": "FAIL", "error": str(e), "output": ""}
+        return {"passed": passed, "status": status, "device": display_name,
+                "output": full_output[:8000], "run_at": now,
+                "autofix_applied": len(autofix_log) > 0}
+    except asyncio.TimeoutError:
+        return {"passed": False, "status": "FAIL", "error": "Timed out (300s)", "output": ""}
+    except Exception as e:
+        return {"passed": False, "status": "FAIL", "error": str(e), "output": ""}
 
 
 # ── Template Library ──────────────────────────────────────────────────────────

@@ -358,6 +358,55 @@
 
   .sidebar-spacer { flex: 1; }
 
+  /* ── COLLAPSIBLE SIDEBAR SECTIONS ── */
+  .sidebar-section.collapsible .sidebar-label {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+  }
+  .sidebar-section.collapsible .sidebar-label::after {
+    content: '▸';
+    margin-left: 3px;
+    font-size: 8px;
+    transition: transform 0.2s;
+    display: inline-block;
+  }
+  .sidebar-section.collapsible.open .sidebar-label::after {
+    transform: rotate(90deg);
+  }
+  .sidebar-section.collapsible.has-active .sidebar-label {
+    color: var(--accent);
+    opacity: 1;
+    text-shadow: 0 0 12px var(--accent-glow), 0 0 4px var(--accent);
+  }
+  .sidebar-section.collapsible .nav-items-group {
+    display: none;
+  }
+  .sidebar-section.collapsible.open .nav-items-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    position: fixed;
+    left: 64px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border-bright);
+    border-radius: 8px;
+    padding: 6px;
+    z-index: 200;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    min-width: 54px;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+  .sidebar-section.collapsible.open .nav-items-group::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sidebar-section.collapsible.open .nav-items-group::-webkit-scrollbar-thumb {
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
   .status-dot {
     width: 8px;
     height: 8px;
@@ -471,6 +520,20 @@
     content: '';
     position: absolute;
     top: 7px; right: 8px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 7px var(--accent);
+  }
+  .sidebar-label.agent-done {
+    animation: navItemPulse 1.4s ease-in-out infinite;
+    position: relative;
+  }
+  .sidebar-label.agent-done::after {
+    content: '';
+    position: absolute;
+    top: 50%; right: 2px;
+    transform: translateY(-50%);
     width: 6px; height: 6px;
     border-radius: 50%;
     background: var(--accent);
@@ -795,24 +858,32 @@
   }
 
   /* Dashboard inventory table */
-  #inv-table { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:11px; }
+  #inv-table { width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:11px; table-layout:fixed; }
   #inv-table thead tr { border-bottom:1px solid var(--border); }
-  #inv-table th {
+  #inv-table th { position:relative;
     padding:4px 8px; text-align:left; font-size:9px; font-weight:500;
     color:var(--text-dim); letter-spacing:0.08em; text-transform:uppercase;
     white-space:nowrap;
   }
-  #inv-table td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; }
+  #inv-table td { padding:6px 8px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align:middle; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #inv-table tbody tr:last-child td { border-bottom:none; }
   #inv-table tbody tr { cursor:pointer; transition:background 0.12s; }
   #inv-table tbody tr:hover { background:var(--bg-card); }
   #inv-col-status { width:28px; }
   #inv-col-device { width:110px; }
+  #inv-col-group  { width:80px; }
   #inv-col-host   { width:100px; }
   #inv-col-desc   { }
   #inv-col-uptime { width:90px; }
   #inv-col-rtt    { width:52px; }
   #inv-col-poll   { width:76px; }
+  #inv-table th .inv-resize {
+    position:absolute; right:0; top:0; bottom:0; width:5px; cursor:col-resize;
+    border-right:1px solid transparent; transition:border-color 0.15s;
+  }
+  #inv-table th .inv-resize:hover, #inv-table th .inv-resize.dragging {
+    border-right-color:var(--accent);
+  }
 
   .finding-text {
     font-size: 15px;
@@ -1750,6 +1821,13 @@
     font-weight: 600; color: var(--text-primary);
   }
   .snmp-if-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; }
+  .snmp-sortable { cursor: pointer; user-select: none; position: relative; transition: color 0.15s; }
+  .snmp-sortable:hover { color: var(--accent) !important; }
+  .snmp-sortable.asc::after, .snmp-sortable.desc::after {
+    content: ''; display: inline-block; margin-left: 4px; border: 4px solid transparent; vertical-align: middle;
+  }
+  .snmp-sortable.asc::after { border-bottom-color: var(--accent); border-top: 0; }
+  .snmp-sortable.desc::after { border-top-color: var(--accent); border-bottom: 0; }
   .snmp-if-table th {
     padding: 6px 10px; text-align: left; color: var(--text-dim);
     font-size: 10px; letter-spacing: 1px; border-bottom: 1px solid var(--border);
@@ -2632,6 +2710,28 @@
   }
   .alert-tshoot-btn:hover { box-shadow:0 0 10px var(--danger); background:rgba(255,68,68,0.12); }
 
+  /* Protocol event cards */
+  .evt-card {
+    padding:8px 10px; border:1px solid var(--border); border-radius:6px;
+    background:var(--surface); position:relative;
+  }
+  .evt-card + .evt-card { margin-top:6px; }
+  .evt-card.evt-critical { border-color:rgba(255,68,68,0.5); }
+  .evt-card.evt-warning  { border-color:rgba(255,160,0,0.5); }
+  .evt-card.evt-info     { border-color:rgba(0,200,100,0.5); }
+  .evt-header { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+  .evt-icon { font-size:13px; flex-shrink:0; }
+  .evt-device { font-family:var(--font-ui); font-size:11px; font-weight:700; color:var(--text); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .evt-badge {
+    font-family:var(--font-mono); font-size:8px; font-weight:700; padding:1px 5px;
+    border-radius:3px; text-transform:uppercase; letter-spacing:0.04em; flex-shrink:0;
+  }
+  .evt-badge.eb-critical { background:rgba(255,68,68,0.18); color:#ff4444; }
+  .evt-badge.eb-warning  { background:rgba(255,160,0,0.18); color:#ffa000; }
+  .evt-badge.eb-info     { background:rgba(0,200,100,0.18); color:#00c864; }
+  .evt-detail { font-family:var(--font-mono); font-size:10px; color:var(--text-dim); }
+  .evt-time   { font-family:var(--font-mono); font-size:9px; color:var(--text-dim); opacity:0.7; margin-top:2px; }
+
   /* Topbar persistent agent status chips */
   #agent-status-chips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
   .topbar-agent-chip {
@@ -2765,66 +2865,72 @@
   </div>
 
   <!-- Agents Nav -->
-  <div class="sidebar-section">
-    <div class="sidebar-label">Agents</div>
-    <div class="nav-item" onclick="showPage('chat', this)" title="Audit Agent — Network security auditor">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span>Audit</span>
-    </div>
-    <div class="nav-item" onclick="showPage('design', this)" title="Design Agent — Network design advisor">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4"/></svg>
-      <span>Design</span>
-    </div>
-    <div class="nav-item" onclick="showPage('tshoot', this)" title="Tshoot Agent — Network diagnostics &amp; troubleshooting">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
-      <span>Tshoot</span>
-    </div>
-    <div class="nav-item" onclick="showPage('automation', this)" title="pyATS — script generator and executor">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-      <span>pyATS</span>
-    </div>
-    <div class="nav-item" onclick="showPage('coder', this)" title="Code — coding assistant">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
-      <span>Code</span>
+  <div class="sidebar-section collapsible" style="position:relative;">
+    <div class="sidebar-label" onclick="toggleSidebarSection(this)">Agent</div>
+    <div class="nav-items-group">
+      <div class="nav-item" onclick="showPage('chat', this); closeSidebarSections();" title="Audit Agent — Network security auditor">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>Audit</span>
+      </div>
+      <div class="nav-item" onclick="showPage('design', this); closeSidebarSections();" title="Design Agent — Network design advisor">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12h20M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4"/></svg>
+        <span>Design</span>
+      </div>
+      <div class="nav-item" onclick="showPage('tshoot', this); closeSidebarSections();" title="Tshoot Agent — Network diagnostics &amp; troubleshooting">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14M12 2v2M12 20v2M2 12h2M20 12h2"/></svg>
+        <span>Tshoot</span>
+      </div>
+      <div class="nav-item" onclick="showPage('automation', this); closeSidebarSections();" title="pyATS — script generator and executor">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        <span>pyATS</span>
+      </div>
+      <div class="nav-item" onclick="showPage('coder', this); closeSidebarSections();" title="Code — coding assistant">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
+        <span>Code</span>
+      </div>
     </div>
   </div>
 
   <!-- NMAP Nav -->
-  <div class="sidebar-section">
-    <div class="sidebar-label">Network</div>
-    <div class="nav-item" onclick="showPage('nmap', this)" title="NMAP Scanner">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-      <span>NMAP</span>
-    </div>
-    <div class="nav-item" onclick="showPage('scapy', this)" title="Scapy Packet Forge">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      <span>Scapy</span>
+  <div class="sidebar-section collapsible" style="position:relative;">
+    <div class="sidebar-label" onclick="toggleSidebarSection(this)">Tools</div>
+    <div class="nav-items-group">
+      <div class="nav-item" onclick="showPage('nmap', this); closeSidebarSections();" title="NMAP Scanner">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        <span>NMAP</span>
+      </div>
+      <div class="nav-item" onclick="showPage('scapy', this); closeSidebarSections();" title="Scapy Packet Forge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span>Scapy</span>
+      </div>
     </div>
   </div>
 
   <!-- Intel Nav -->
-  <div class="sidebar-section">
-    <div class="sidebar-label">Intel</div>
-    <div class="nav-item" onclick="showPage('reports', this)" title="Reports">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-      <span>Reports</span>
-      <div class="nav-badge" id="badge-reports" style="display:none"></div>
-    </div>
-    <div class="nav-item" onclick="showPage('cve', this)" title="CVE Lookup">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      <span>CVE</span>
-    </div>
-    <div class="nav-item" onclick="showPage('psirt', this)" title="Cisco PSIRT">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span>PSIRT</span>
-    </div>
-    <div class="nav-item" onclick="showPage('eox', this)" title="Cisco EOX — End of Life">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-      <span>EOX</span>
-    </div>
-    <div class="nav-item" onclick="showPage('snmp', this)" title="SNMP Poller">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-      <span>SNMP</span>
+  <div class="sidebar-section collapsible" style="position:relative;">
+    <div class="sidebar-label" onclick="toggleSidebarSection(this)">Intel</div>
+    <div class="nav-items-group">
+      <div class="nav-item" onclick="showPage('reports', this); closeSidebarSections();" title="Reports">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>Reports</span>
+        <div class="nav-badge" id="badge-reports" style="display:none"></div>
+      </div>
+      <div class="nav-item" onclick="showPage('cve', this); closeSidebarSections();" title="CVE Lookup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>CVE</span>
+      </div>
+      <div class="nav-item" onclick="showPage('psirt', this); closeSidebarSections();" title="Cisco PSIRT">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span>PSIRT</span>
+      </div>
+      <div class="nav-item" onclick="showPage('eox', this); closeSidebarSections();" title="Cisco EOX — End of Life">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <span>EOX</span>
+      </div>
+      <div class="nav-item" onclick="showPage('snmp', this); closeSidebarSections();" title="SNMP Poller">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span>SNMP</span>
+      </div>
     </div>
   </div>
 
@@ -2932,16 +3038,17 @@
                 <thead>
                   <tr>
                     <th id="inv-col-status"></th>
-                    <th id="inv-col-device">Device</th>
-                    <th id="inv-col-host">Host</th>
-                    <th id="inv-col-desc">Description</th>
-                    <th id="inv-col-uptime">Uptime</th>
-                    <th id="inv-col-rtt">RTT</th>
+                    <th id="inv-col-device">Device<div class="inv-resize"></div></th>
+                    <th id="inv-col-group">Group<div class="inv-resize"></div></th>
+                    <th id="inv-col-host">Host<div class="inv-resize"></div></th>
+                    <th id="inv-col-desc">Description<div class="inv-resize"></div></th>
+                    <th id="inv-col-uptime">Uptime<div class="inv-resize"></div></th>
+                    <th id="inv-col-rtt">RTT<div class="inv-resize"></div></th>
                     <th id="inv-col-poll">Last Poll</th>
                   </tr>
                 </thead>
                 <tbody id="inv-table-body">
-                  <tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-dim)">// Loading devices…</td></tr>
+                  <tr><td colspan="8" style="padding:20px;text-align:center;color:var(--text-dim)">// Loading devices…</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2988,6 +3095,34 @@
             </div>
           </div>
 
+          <!-- Protocol Events -->
+          <div class="panel" id="events-panel">
+            <div class="panel-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              <div class="panel-title">Protocol Events</div>
+              <span id="events-count" style="font-family:var(--font-mono);font-size:11px;color:var(--accent)"></span>
+              <div style="margin-left:auto;display:flex;gap:4px;align-items:center">
+                <select id="events-filter" onchange="renderProtocolEvents()" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:4px;font-family:var(--font-mono);font-size:10px;padding:2px 4px;cursor:pointer">
+                  <option value="">ALL</option>
+                  <option value="interface_down">IF DOWN</option>
+                  <option value="interface_up">IF UP</option>
+                  <option value="bgp_down">BGP DOWN</option>
+                  <option value="bgp_up">BGP UP</option>
+                  <option value="bgp_change">BGP CHG</option>
+                  <option value="ospf_down">OSPF DOWN</option>
+                  <option value="ospf_up">OSPF UP</option>
+                  <option value="ospf_change">OSPF CHG</option>
+                  <option value="device_down">DEV DOWN</option>
+                  <option value="device_up">DEV UP</option>
+                </select>
+                <button onclick="clearProtocolEvents()" title="Clear events" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-dim);font-family:var(--font-mono);font-size:9px;padding:2px 6px;cursor:pointer">CLR</button>
+              </div>
+            </div>
+            <div class="panel-body" id="events-body" style="max-height:340px;overflow-y:auto">
+              <div style="padding:12px 0;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// No protocol events</div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
@@ -3004,6 +3139,7 @@
             </div>
           </div>
           <div style="flex:1"></div>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="exportChat('chat-messages','AUDIT AGENT')">Export</button>
         </div>
         <!-- Dynamic per-device agent cards injected here by JS -->
         <div class="subagent-panel" id="subagent-panel" style="display:none"></div>
@@ -3045,6 +3181,7 @@
             </div>
           </div>
           <div style="flex:1"></div>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="exportChat('tshoot-messages','TSHOOT AGENT')">Export</button>
         </div>
 
         <div class="chat-messages" id="tshoot-messages">
@@ -3086,6 +3223,7 @@
             <div style="width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 6px var(--accent);animation:pulse 2s ease-in-out infinite"></div>
             DESIGN KB ACTIVE
           </div>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;margin-left:8px" onclick="exportChat('design-messages','DESIGN AGENT')">Export</button>
         </div>
 
         <!-- Critique Loop Panel — hidden until critique mode is active -->
@@ -3424,6 +3562,10 @@
         <div class="panel-body">
           <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
             <div class="form-group">
+              <label class="form-label">Group / Site</label>
+              <input type="text" class="form-input" placeholder="SITE-A" id="snmp-add-group" style="width:110px">
+            </div>
+            <div class="form-group">
               <label class="form-label">Name / Label</label>
               <input type="text" class="form-input" placeholder="SW-CORE-01" id="snmp-add-name" style="width:140px">
             </div>
@@ -3474,6 +3616,15 @@
               </div>
             </div>
             <button class="btn btn-primary" id="snmp-add-btn" onclick="snmpAddDevice()">+ ADD</button>
+            <button class="btn btn-primary" style="background:transparent;border:1px solid var(--accent);color:var(--accent)" onclick="snmpToggleBulk()">+ BULK ADD</button>
+          </div>
+          <div id="snmp-bulk-panel" style="display:none;margin-top:10px">
+            <label class="form-label">IPs — one per line or comma-separated</label>
+            <textarea id="snmp-bulk-input" class="form-input" rows="4" placeholder="192.168.1.1&#10;192.168.1.2, 192.168.1.3&#10;10.0.0.0/24" style="width:100%;resize:vertical;font-family:var(--font-mono);font-size:12px"></textarea>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+              <button class="btn btn-primary" id="snmp-bulk-btn" onclick="snmpBulkAdd()">ADD ALL</button>
+              <span id="snmp-bulk-status" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)"></span>
+            </div>
           </div>
           <div id="snmp-add-error" style="font-family:var(--font-mono);font-size:12px;color:var(--danger);margin-top:8px;display:none"></div>
         </div>
@@ -3485,7 +3636,17 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           <div class="panel-title">SNMP MONITOR</div>
           <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:8px" id="snmp-device-count"></span>
-          <div style="margin-left:auto;display:flex;gap:8px">
+          <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <input type="text" id="snmp-search" placeholder="Search…" oninput="snmpRefresh()" style="background:var(--bg-panel);border:1px solid var(--border);color:var(--text-secondary);font-family:var(--font-mono);font-size:10px;padding:3px 8px;border-radius:4px;width:120px">
+            <select id="snmp-status-filter" onchange="snmpRefresh()" style="background:var(--bg-panel);border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 8px;border-radius:4px;cursor:pointer">
+              <option value="">ALL STATUS</option>
+              <option value="ok">OK</option>
+              <option value="warn">WARN</option>
+              <option value="error">ERROR</option>
+            </select>
+            <select id="snmp-group-filter" onchange="snmpFilterGroup()" style="background:var(--bg-panel);border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 8px;border-radius:4px;cursor:pointer">
+              <option value="">ALL GROUPS</option>
+            </select>
             <button onclick="snmpRefresh()" style="background:none;border:1px solid var(--border);color:var(--text-dim);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 10px;border-radius:4px;cursor:pointer" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-dim)'">↻ REFRESH</button>
             <button onclick="snmpToggleAdd()" id="snmp-add-toggle-btn" style="background:var(--accent-dim);border:1px solid var(--accent);color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:1px;padding:3px 10px;border-radius:4px;cursor:pointer">+ ADD DEVICE</button>
           </div>
@@ -3493,16 +3654,16 @@
         <div class="panel-body" style="padding:0;overflow:auto">
           <table style="width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:12px" id="snmp-device-table">
             <thead>
-              <tr style="border-bottom:1px solid var(--border)">
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal;width:36px"></th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Name</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">IP</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Hostname</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Description</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Uptime</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Interfaces</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">RTT</th>
-                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal">Last Poll</th>
+              <tr style="border-bottom:1px solid var(--border)" id="snmp-thead-row">
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal;width:36px" data-sort="status" onclick="snmpSort('status')" class="snmp-sortable">●</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="hostname" onclick="snmpSort('hostname')" class="snmp-sortable">Hostname</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="group" onclick="snmpSort('group')" class="snmp-sortable">Group</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="ip" onclick="snmpSort('ip')" class="snmp-sortable">IP</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="description" onclick="snmpSort('description')" class="snmp-sortable">Description</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="uptime" onclick="snmpSort('uptime')" class="snmp-sortable">Uptime</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="interfaces" onclick="snmpSort('interfaces')" class="snmp-sortable">Interfaces</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="rtt" onclick="snmpSort('rtt')" class="snmp-sortable">RTT</th>
+                <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal" data-sort="lastpoll" onclick="snmpSort('lastpoll')" class="snmp-sortable">Last Poll</th>
                 <th style="padding:10px 14px;text-align:left;color:var(--text-dim);font-weight:normal;width:60px"></th>
               </tr>
             </thead>
@@ -3867,7 +4028,7 @@
     </div>
     <!-- /INGEST PAGE -->
 
-    <!-- PYATS FACTORY PAGE -->
+    <!-- AUTOMATION FACTORY PAGE -->
     <div id="page-automation" class="page">
 
       <!-- Full-width banner -->
@@ -3875,11 +4036,12 @@
         <div class="auto-banner-agent">
           <div class="agent-avatar">F</div>
           <div class="agent-info">
-            <div class="name">PYATS FACTORY</div>
+            <div class="name">AUTOMATION FACTORY</div>
             <div class="sub">PYATS GENERATOR · OLLAMA · <span class="local-model-pill">LOCAL MODEL</span></div>
           </div>
         </div>
         <div style="flex:1"></div>
+        <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="exportChat('auto-messages','AUTOMATION FACTORY')">Export</button>
         <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="autoShowScriptRepo()">Script Repo</button>
         <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="autoShowTemplates()">Templates</button>
         <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="autoShowTestbed()">Testbed</button>
@@ -3895,7 +4057,7 @@
               <div class="msg-avatar agent">F</div>
               <div>
                 <div class="msg-bubble">Automation Factory online. I generate production-ready pyATS/Genie scripts for Cisco network devices. Ask me to write a test script, modify an existing one, or use the quick commands below to get started.</div>
-                <div class="msg-meta">PYATS FACTORY · READY</div>
+                <div class="msg-meta">AUTOMATION FACTORY · READY</div>
               </div>
             </div>
           </div>
@@ -3961,7 +4123,7 @@
       </div><!-- /auto-body -->
 
     </div>
-    <!-- /PYATS FACTORY PAGE -->
+    <!-- /AUTOMATION FACTORY PAGE -->
 
     <!-- CODER AGENT PAGE -->
     <div id="page-coder" class="page">
@@ -3978,6 +4140,7 @@
           <select id="coder-model-select" style="background:var(--surface);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;font-family:var(--font-mono);cursor:pointer" title="Ollama model" onchange="coderUpdateModelLabel()">
             <option value="">loading…</option>
           </select>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="exportChat('coder-messages','GLADIUS CODE')">Export</button>
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="coderClearChat()">Clear Chat</button>
         </div>
 
@@ -4208,6 +4371,81 @@
     flowchart: { curve: 'basis' },
   });
 
+  // ── CHAT EXPORT ──
+  function exportChat(messagesElId, agentName) {
+    const el = document.getElementById(messagesElId);
+    if (!el) return;
+    const msgs = el.querySelectorAll('.msg');
+    if (!msgs.length) return;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00d4ff';
+
+    let rows = '';
+    msgs.forEach(msg => {
+      const isUser = msg.classList.contains('user');
+      const avatar = isUser ? 'U' : agentName.charAt(0);
+      const label  = isUser ? 'USER' : agentName;
+      const bubble = msg.querySelector('.msg-bubble');
+      if (!bubble) return;
+      // Clone to capture rendered HTML including mermaid SVGs
+      const clone = bubble.cloneNode(true);
+      // Remove tool-call divs for cleaner export
+      clone.querySelectorAll('.tool-call').forEach(t => t.remove());
+      const content = clone.innerHTML.trim();
+      if (!content) return;
+      const meta = msg.querySelector('.msg-meta');
+      const time = meta ? meta.textContent.trim() : '';
+      const bgColor = isUser ? 'rgba(255,255,255,0.03)' : 'transparent';
+      const avatarBg = isUser ? '#333' : accent;
+      rows += `
+        <div style="display:flex;gap:12px;padding:16px 20px;background:${bgColor};border-bottom:1px solid rgba(255,255,255,0.05)">
+          <div style="width:32px;height:32px;border-radius:50%;background:${avatarBg};display:flex;align-items:center;justify-content:center;font-family:monospace;font-size:13px;font-weight:700;color:#fff;flex-shrink:0">${avatar}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-family:monospace;font-size:10px;color:${accent};letter-spacing:1px;margin-bottom:6px">${label}${time ? ' · ' + time : ''}</div>
+            <div style="font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.6;color:#c8c8d4">${content}</div>
+          </div>
+        </div>`;
+    });
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${agentName} Chat Export — ${ts}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0a0a1a; color:#c8c8d4; }
+  table { border-collapse:collapse; width:100%; }
+  th, td { padding:8px 12px; text-align:left; border:1px solid rgba(255,255,255,0.1); font-size:13px; }
+  th { background:rgba(255,255,255,0.05); color:${accent}; font-family:monospace; font-size:11px; letter-spacing:1px; }
+  td { color:#c8c8d4; }
+  code { background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:3px; font-family:monospace; font-size:13px; }
+  pre { background:rgba(255,255,255,0.05); padding:12px; border-radius:6px; overflow-x:auto; margin:8px 0; }
+  pre code { background:none; padding:0; }
+  h1,h2,h3 { color:${accent}; margin:12px 0 6px; }
+  ul,ol { margin:4px 0 4px 20px; }
+  hr { border:none; border-top:1px solid rgba(255,255,255,0.1); margin:12px 0; }
+  strong { color:#e8e8f0; }
+  svg { max-width:100%; height:auto; }
+  img { max-width:100%; }
+</style></head><body>
+<div style="max-width:900px;margin:0 auto">
+  <div style="padding:24px 20px;border-bottom:2px solid ${accent}">
+    <div style="font-family:monospace;font-size:22px;font-weight:700;color:${accent};letter-spacing:3px">${agentName}</div>
+    <div style="font-family:monospace;font-size:11px;color:#666;margin-top:4px">Chat Export · ${new Date().toLocaleString()}</div>
+  </div>
+  ${rows}
+  <div style="padding:16px 20px;text-align:center;font-family:monospace;font-size:10px;color:#444;border-top:1px solid rgba(255,255,255,0.05)">
+    GLADIUS · ${agentName} · Exported ${new Date().toLocaleString()}
+  </div>
+</div>
+</body></html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `gladius-${agentName.toLowerCase().replace(/\s+/g, '-')}-${ts}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   async function renderMermaidIn(el) {
     el.querySelectorAll('.mermaid-pending').forEach(async block => {
       const code = block.getAttribute('data-code');
@@ -4231,7 +4469,11 @@
     if (_currentPage === pageName) return;
     // Pulse the nav item
     const navEl = document.querySelector(`.nav-item[onclick*="${pageName}"]`);
-    if (navEl) navEl.classList.add('agent-done');
+    if (navEl) {
+      navEl.classList.add('agent-done');
+      const parentSection = navEl.closest('.sidebar-section.collapsible');
+      if (parentSection) parentSection.querySelector('.sidebar-label').classList.add('agent-done');
+    }
     // Show toast
     const toast   = document.getElementById('agent-toast');
     const toastTx = document.getElementById('agent-toast-text');
@@ -4246,6 +4488,29 @@
     _toastTimer = setTimeout(() => toast.classList.remove('visible'), 5000);
   }
 
+  // ── COLLAPSIBLE SIDEBAR SECTIONS ──
+  function toggleSidebarSection(labelEl) {
+    const section = labelEl.closest('.sidebar-section.collapsible');
+    const wasOpen = section.classList.contains('open');
+    closeSidebarSections();
+    if (!wasOpen) {
+      section.classList.add('open');
+      // Position the popup vertically aligned with the label
+      const group = section.querySelector('.nav-items-group');
+      const rect = labelEl.getBoundingClientRect();
+      group.style.top = rect.top + 'px';
+    }
+  }
+  function closeSidebarSections() {
+    document.querySelectorAll('.sidebar-section.collapsible.open').forEach(s => s.classList.remove('open'));
+  }
+  // Close popups when clicking outside
+  document.addEventListener('click', function(e) {
+    if (!e.target.closest('.sidebar-section.collapsible')) {
+      closeSidebarSections();
+    }
+  });
+
   // ── PAGE NAVIGATION ──
   function showPage(name, el) {
     _currentPage = name;
@@ -4253,14 +4518,27 @@
     clearTopbarChipsForTab(name);
     // Clear completion pulse on the tab we're navigating to
     const targetNav = el || document.querySelector(`.nav-item[onclick*="${name}"]`);
-    if (targetNav) targetNav.classList.remove('agent-done');
+    if (targetNav) {
+      targetNav.classList.remove('agent-done');
+      const parentSection = targetNav.closest('.sidebar-section.collapsible');
+      if (parentSection) {
+        // Only clear parent label if no other items in the section are still pulsing
+        const stillActive = parentSection.querySelectorAll('.nav-item.agent-done');
+        if (stillActive.length === 0) parentSection.querySelector('.sidebar-label').classList.remove('agent-done');
+      }
+    }
     // Dismiss toast if it points to this page
     const toast = document.getElementById('agent-toast');
     if (toast && _currentPage === name) toast.classList.remove('visible');
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.sidebar-section.collapsible').forEach(s => s.classList.remove('has-active'));
     document.getElementById('page-' + name).classList.add('active');
-    if (el) el.classList.add('active');
+    if (el) {
+      el.classList.add('active');
+      const parentSection = el.closest('.sidebar-section.collapsible');
+      if (parentSection) parentSection.classList.add('has-active');
+    }
     const labels = {
       dashboard: 'DASHBOARD',
       chat: 'AGENT CHAT',
@@ -4274,7 +4552,7 @@
       ingest: 'DOCUMENT INGESTION',
       snmp:       'SNMP POLLER',
       tshoot:     'TSHOOT AGENT',
-      automation: 'PYATS FACTORY',
+      automation: 'AUTOMATION FACTORY',
       coder:      'GLADIUS CODE',
     };
     document.getElementById('breadcrumb').textContent = labels[name] || name.toUpperCase();
@@ -4292,9 +4570,9 @@
       clearInterval(_snmpRefreshTimer);
     }
     if (name === 'dashboard') {
-      renderInventory(); renderActiveAlerts();
+      renderInventory(); renderActiveAlerts(); renderProtocolEvents();
       clearInterval(_inventoryRefreshTimer);
-      _inventoryRefreshTimer = setInterval(() => { renderInventory(); renderActiveAlerts(); }, 30000);
+      _inventoryRefreshTimer = setInterval(() => { renderInventory(); renderActiveAlerts(); renderProtocolEvents(); }, 30000);
     } else {
       clearInterval(_inventoryRefreshTimer);
     }
@@ -4781,6 +5059,7 @@
               conversationHistory.push({ role: 'assistant', content: fullText });
               const orbitEl = document.getElementById(orbitId);
               if (orbitEl) orbitEl.classList.remove('active');
+              renderMermaidIn(document.getElementById(bubble.id));
               notify('chat', 'AUDIT AGENT', 'Response ready');
               if (singleChipSpawned) setTopbarChipDone(singleChipId);
             } else if (event.type === 'send_templated_email') {
@@ -6424,6 +6703,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const payload = {
       name:    (document.getElementById('snmp-add-name')?.value || '').trim() || host,
       host,
+      group:   (document.getElementById('snmp-add-group')?.value || '').trim(),
       port:    parseInt(document.getElementById('snmp-add-port')?.value || '161'),
       version,
       community:     version !== '3' ? (document.getElementById('snmp-add-community')?.value || 'public') : 'public',
@@ -6440,7 +6720,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
       // clear form
-      ['snmp-add-name','snmp-add-host','snmp-add-auth-key','snmp-add-priv-key','snmp-add-username'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+      ['snmp-add-name','snmp-add-host','snmp-add-group','snmp-add-auth-key','snmp-add-priv-key','snmp-add-username'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
       document.getElementById('snmp-add-community').value = 'public';
       snmpToggleAdd();
       snmpRefresh();
@@ -6450,6 +6730,52 @@ ${cves.length ? `<!-- CVE TAB -->
     } finally {
       btn.disabled = false; btn.textContent = '+ ADD';
     }
+  }
+
+  function snmpToggleBulk() {
+    const panel = document.getElementById('snmp-bulk-panel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    if (panel.style.display === 'block') document.getElementById('snmp-bulk-input').focus();
+  }
+
+  async function snmpBulkAdd() {
+    const raw = (document.getElementById('snmp-bulk-input')?.value || '').trim();
+    if (!raw) return;
+    const hosts = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    if (!hosts.length) return;
+    const version   = document.getElementById('snmp-add-version').value;
+    const group     = (document.getElementById('snmp-add-group')?.value || '').trim();
+    const port      = parseInt(document.getElementById('snmp-add-port')?.value || '161');
+    const community = version !== '3' ? (document.getElementById('snmp-add-community')?.value || 'public') : 'public';
+    const username      = version === '3' ? (document.getElementById('snmp-add-username')?.value  || '') : '';
+    const auth_key      = version === '3' ? (document.getElementById('snmp-add-auth-key')?.value  || '') : '';
+    const priv_key      = version === '3' ? (document.getElementById('snmp-add-priv-key')?.value  || '') : '';
+    const auth_protocol = version === '3' ? (document.getElementById('snmp-add-auth-proto')?.value || 'SHA') : 'SHA';
+    const priv_protocol = version === '3' ? (document.getElementById('snmp-add-priv-proto')?.value || 'AES') : 'AES';
+
+    const btn    = document.getElementById('snmp-bulk-btn');
+    const status = document.getElementById('snmp-bulk-status');
+    const errEl  = document.getElementById('snmp-add-error');
+    btn.disabled = true;
+    errEl.style.display = 'none';
+    let ok = 0, fail = 0;
+    for (let i = 0; i < hosts.length; i++) {
+      const host = hosts[i];
+      status.textContent = `Adding ${i + 1}/${hosts.length} — ${host}`;
+      try {
+        const resp = await fetch('/api/snmp/devices', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ name: host, host, group: group, port, version, community, username, auth_key, priv_key, auth_protocol, priv_protocol })
+        });
+        if (!resp.ok) { fail++; } else { ok++; }
+      } catch(e) { fail++; }
+    }
+    status.textContent = `Done — ${ok} added` + (fail ? `, ${fail} failed` : '');
+    status.style.color = fail ? 'var(--warn)' : 'var(--success)';
+    btn.disabled = false;
+    document.getElementById('snmp-bulk-input').value = '';
+    snmpRefresh();
+    setTimeout(() => { status.style.color = 'var(--text-dim)'; }, 5000);
   }
 
   async function snmpDeleteDevice(id) {
@@ -6484,14 +6810,17 @@ ${cves.length ? `<!-- CVE TAB -->
         return;
       }
       if (count) count.textContent = `${devs.length} device${devs.length !== 1 ? 's' : ''}`;
-      // Remove placeholder / error rows (no id)
-      tbody.querySelectorAll('tr:not([id])').forEach(r => r.remove());
-      // Update existing rows or rebuild
-      const existingIds = new Set([...tbody.querySelectorAll('tr[id]')].map(r => r.id.replace('snmp-row-','')));
-      const newIds      = new Set(devs.map(d => d.id));
-      // Remove rows for deleted devices
-      existingIds.forEach(id => { if (!newIds.has(id)) { const r = document.getElementById(`snmp-row-${id}`); if(r) r.remove(); } });
-      devs.forEach(d => _snmpRenderRow(d, tbody));
+      // Populate group filter dropdown
+      _snmpUpdateGroupFilter(devs);
+      // Apply search, filters, and sort
+      const filtered = _snmpApplySortAndFilter(devs);
+      // Clear tbody and rebuild in sorted order
+      tbody.innerHTML = '';
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="padding:30px;text-align:center;color:var(--text-dim);font-family:var(--font-mono);font-size:12px">// No matching devices</td></tr>';
+      } else {
+        filtered.forEach(d => _snmpRenderRow(d, tbody));
+      }
     } catch(e) {
       const tbody = document.getElementById('snmp-device-tbody');
       if (tbody) tbody.innerHTML = `<tr><td colspan="10" style="padding:20px;text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px">// SNMP service unreachable: ${e.message}</td></tr>`;
@@ -6516,9 +6845,9 @@ ${cves.length ? `<!-- CVE TAB -->
       <td style="padding:10px 14px">
         <div title="${statusTitle}" style="width:10px;height:10px;border-radius:50%;background:${statusColor};box-shadow:0 0 6px ${statusColor};margin:0 auto"></div>
       </td>
-      <td style="padding:10px 14px;color:var(--text-primary);font-weight:600">${d.name}</td>
+      <td style="padding:10px 14px;color:var(--text-primary);font-weight:600">${d.sysName || d.name || '—'}</td>
+      <td style="padding:10px 14px;color:var(--text-dim);font-size:11px">${d.group || '—'}</td>
       <td style="padding:10px 14px;color:var(--accent)">${d.host}</td>
-      <td style="padding:10px 14px;color:var(--text-secondary)">${d.sysName || '—'}</td>
       <td style="padding:10px 14px;color:var(--text-dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.sysDescr || ''}">${desc}</td>
       <td style="padding:10px 14px;color:var(--text-secondary)">${d.sysUpTime || '—'}</td>
       <td style="padding:10px 14px;color:var(--text-secondary);text-align:center">${d.ifNumber || '—'}</td>
@@ -6596,6 +6925,114 @@ ${cves.length ? `<!-- CVE TAB -->
         _snmpUpdateSparklines(_snmpDpDevId);
       } catch {}
     }, 15000);
+  }
+
+  let _snmpSortCol = '';
+  let _snmpSortDir = 'asc';
+
+  function snmpSort(col) {
+    if (_snmpSortCol === col) {
+      _snmpSortDir = _snmpSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      _snmpSortCol = col;
+      _snmpSortDir = 'asc';
+    }
+    // Update header indicators
+    document.querySelectorAll('.snmp-sortable').forEach(th => { th.classList.remove('asc','desc'); });
+    const active = document.querySelector(`.snmp-sortable[data-sort="${col}"]`);
+    if (active) active.classList.add(_snmpSortDir);
+    snmpRefresh();
+  }
+
+  function _snmpSortVal(d, col) {
+    switch(col) {
+      case 'status':      return d.status === 'error' ? 0 : d.status === 'warn' ? 1 : 2;
+      case 'hostname':    return (d.sysName || d.name || '').toLowerCase();
+      case 'group':       return (d.group || '').toLowerCase();
+      case 'ip':          return (d.host || '').split('.').map(n => n.padStart(3,'0')).join('.');
+      case 'description': return (d.sysDescr || '').toLowerCase();
+      case 'uptime':      return d.sysUpTime || '';
+      case 'interfaces':  return parseInt(d.ifNumber) || 0;
+      case 'rtt':         return d.response_ms != null ? d.response_ms : 99999;
+      case 'lastpoll':    return d.last_poll || '';
+      default: return '';
+    }
+  }
+
+  function _snmpApplySortAndFilter(devs) {
+    let result = devs;
+    // Group filter
+    const filterGroup = document.getElementById('snmp-group-filter')?.value || '';
+    if (filterGroup) result = result.filter(d => (d.group || '') === filterGroup);
+    // Status filter
+    const filterStatus = document.getElementById('snmp-status-filter')?.value || '';
+    if (filterStatus) result = result.filter(d => d.status === filterStatus);
+    // Text search
+    const q = (document.getElementById('snmp-search')?.value || '').trim().toLowerCase();
+    if (q) {
+      result = result.filter(d => {
+        const fields = [d.sysName, d.name, d.host, d.group, d.sysDescr, d.sysLocation, d.sysContact].map(f => (f||'').toLowerCase());
+        return fields.some(f => f.includes(q));
+      });
+    }
+    // Sort
+    if (_snmpSortCol) {
+      result.sort((a, b) => {
+        const va = _snmpSortVal(a, _snmpSortCol);
+        const vb = _snmpSortVal(b, _snmpSortCol);
+        let cmp = 0;
+        if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+        else cmp = String(va).localeCompare(String(vb));
+        return _snmpSortDir === 'desc' ? -cmp : cmp;
+      });
+    }
+    return result;
+  }
+
+  function _snmpUpdateGroupFilter(devs) {
+    const sel = document.getElementById('snmp-group-filter');
+    if (!sel) return;
+    const current = sel.value;
+    const groups = [...new Set(devs.map(d => d.group || '').filter(Boolean))].sort();
+    sel.innerHTML = '<option value="">ALL GROUPS</option>' + groups.map(g => `<option value="${g}"${g===current?' selected':''}>${g}</option>`).join('');
+  }
+  function snmpFilterGroup() { snmpRefresh(); }
+
+  async function snmpEditGroup(devId) {
+    const el = document.getElementById('snmp-dp-group-val');
+    if (!el) return;
+    const current = el.textContent === '—' ? '' : el.textContent;
+    const input = document.createElement('input');
+    input.type = 'text'; input.value = current; input.placeholder = 'SITE-A';
+    input.className = 'form-input';
+    input.style.cssText = 'width:100px;font-size:12px;padding:2px 6px;height:24px';
+    el.replaceWith(input);
+    input.focus();
+    const save = async () => {
+      const val = input.value.trim();
+      try {
+        await fetch(`/api/snmp/devices/${devId}`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ group: val })
+        });
+      } catch(e) {}
+      const span = document.createElement('span');
+      span.id = 'snmp-dp-group-val';
+      span.textContent = val || '—';
+      input.replaceWith(span);
+      // Re-add edit button after span
+      const btn = document.createElement('button');
+      btn.title = 'Edit group';
+      btn.style.cssText = 'background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;padding:0';
+      btn.textContent = '✎';
+      btn.onmouseover = () => btn.style.color = 'var(--accent)';
+      btn.onmouseout = () => btn.style.color = 'var(--text-dim)';
+      btn.onclick = () => snmpEditGroup(devId);
+      span.after(btn);
+      snmpRefresh();
+    };
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') { input.replaceWith(Object.assign(document.createElement('span'), {id:'snmp-dp-group-val', textContent: current||'—'})); } });
+    input.addEventListener('blur', save);
   }
 
   function snmpDetailToggleEdit() {
@@ -6687,6 +7124,13 @@ ${cves.length ? `<!-- CVE TAB -->
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">HOST</div>
             <div class="snmp-stat-val" style="font-size:13px">${dev.host}</div>
+          </div>
+          <div class="snmp-stat-box">
+            <div class="snmp-stat-label">GROUP</div>
+            <div class="snmp-stat-val" style="font-size:13px;display:flex;align-items:center;gap:6px">
+              <span id="snmp-dp-group-val">${dev.group || '—'}</span>
+              <button onclick="snmpEditGroup('${dev.id}')" title="Edit group" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;padding:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-dim)'">✎</button>
+            </div>
           </div>
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">STATUS</div>
@@ -6909,7 +7353,7 @@ ${cves.length ? `<!-- CVE TAB -->
     { key: 'knowledge_base',label: 'KNOWLEDGE BASE',desc: 'chroma-db · network_security_guidelines' },
     { key: 'nist_nvd',      label: 'NIST NVD',      desc: 'services.nvd.nist.gov'            },
     { key: 'claude_api',    label: 'ANTHROPIC',     desc: 'api.anthropic.com · claude-sonnet-4-6' },
-    { key: 'gladius_pyats', label: 'PYATS FACTORY', desc: 'gladius-pyats · port 8090'         },
+    { key: 'gladius_pyats', label: 'AUTOMATION FACTORY', desc: 'gladius-pyats · port 8090'         },
     { key: 'psirt',         label: 'CISCO PSIRT',   desc: 'apix.cisco.com/security/advisories' },
     { key: 'eox',           label: 'CISCO EOX',     desc: 'apix.cisco.com/supporttools/eox'  },
   ];
@@ -7026,8 +7470,9 @@ ${cves.length ? `<!-- CVE TAB -->
     if (!_alertStateLoaded) { _loadAlertState(); _alertStateLoaded = true; }
     renderInventory();
     renderActiveAlerts();
+    renderProtocolEvents();
     clearInterval(_inventoryRefreshTimer);
-    _inventoryRefreshTimer = setInterval(() => { renderInventory(); renderActiveAlerts(); }, 30000);
+    _inventoryRefreshTimer = setInterval(() => { renderInventory(); renderActiveAlerts(); renderProtocolEvents(); }, 30000);
 
     // ── KB vector count ────────────────────────────────────────────────────
     fetchKbCount();
@@ -7100,6 +7545,43 @@ ${cves.length ? `<!-- CVE TAB -->
     }).join('');
   }
 
+  // ── INVENTORY COLUMN RESIZE ──
+  const _INV_WIDTHS_KEY = 'gladius-inv-col-widths';
+  (function initInvResize() {
+    // Restore saved widths
+    try {
+      const saved = JSON.parse(localStorage.getItem(_INV_WIDTHS_KEY) || '{}');
+      for (const [id, w] of Object.entries(saved)) {
+        const th = document.getElementById(id);
+        if (th) th.style.width = w + 'px';
+      }
+    } catch(e) {}
+    document.addEventListener('mousedown', function(e) {
+      const handle = e.target.closest('.inv-resize');
+      if (!handle) return;
+      e.preventDefault();
+      const th = handle.parentElement;
+      const startX = e.clientX;
+      const startW = th.offsetWidth;
+      handle.classList.add('dragging');
+      const onMove = (ev) => {
+        const w = Math.max(30, startW + ev.clientX - startX);
+        th.style.width = w + 'px';
+      };
+      const onUp = () => {
+        handle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        // Save all column widths
+        const widths = {};
+        document.querySelectorAll('#inv-table th[id]').forEach(h => { widths[h.id] = h.offsetWidth; });
+        try { localStorage.setItem(_INV_WIDTHS_KEY, JSON.stringify(widths)); } catch(e) {}
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  })();
+
   async function renderInventory() {
     const tbody = document.getElementById('inv-table-body');
     const count = document.getElementById('dash-inventory-count');
@@ -7110,7 +7592,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const devs = data.devices || [];
       if (count) count.textContent = devs.length ? `${devs.length} device${devs.length !== 1 ? 's' : ''}` : '';
       if (!devs.length) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-dim)">// No SNMP devices — add via Network Monitor</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="padding:20px;text-align:center;color:var(--text-dim)">// No SNMP devices — add via Network Monitor</td></tr>';
         return;
       }
       tbody.innerHTML = devs.map(d => {
@@ -7136,16 +7618,17 @@ ${cves.length ? `<!-- CVE TAB -->
           <td style="text-align:center">
             <div style="width:8px;height:8px;border-radius:50%;background:${col};box-shadow:0 0 5px ${col};display:inline-block" title="${tip}"></div>
           </td>
-          <td style="color:var(--text-primary);font-weight:600;white-space:nowrap">${label}</td>
-          <td style="color:var(--accent);white-space:nowrap">${d.host}</td>
-          <td style="color:var(--text-dim);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${fullDesc}">${desc}</td>
-          <td style="color:var(--text-secondary);white-space:nowrap">${d.sysUpTime || '—'}</td>
-          <td style="color:${rttColor};white-space:nowrap">${rttStr}</td>
-          <td style="color:var(--text-dim);white-space:nowrap">${lastPoll}</td>
+          <td style="color:var(--text-primary);font-weight:600">${label}</td>
+          <td style="color:var(--text-dim);font-size:10px">${d.group || '—'}</td>
+          <td style="color:var(--accent)">${d.host}</td>
+          <td style="color:var(--text-dim)" title="${fullDesc}">${desc}</td>
+          <td style="color:var(--text-secondary)">${d.sysUpTime || '—'}</td>
+          <td style="color:${rttColor}">${rttStr}</td>
+          <td style="color:var(--text-dim)">${lastPoll}</td>
         </tr>`;
       }).join('');
     } catch(e) {
-      if (tbody) tbody.innerHTML = '<tr><td colspan="7" style="padding:12px;text-align:center;color:var(--danger)">// SNMP unreachable</td></tr>';
+      if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="padding:12px;text-align:center;color:var(--danger)">// SNMP unreachable</td></tr>';
     }
   }
 
@@ -7252,8 +7735,15 @@ ${cves.length ? `<!-- CVE TAB -->
       });
 
       // Detect recoveries: was tracked as down, now gone from down list
+      const allDeviceIds = new Set((data.devices || []).map(d => d.id));
       for (const id of Object.keys(_alertDownSince)) {
         if (!currentDownIds.has(id) && !_recoveredCards[id]) {
+          // Device was deleted entirely — just clean up, don't show recovery
+          if (!allDeviceIds.has(id)) {
+            delete _alertDownSince[id];
+            stateChanged = true;
+            continue;
+          }
           const allDevices = data.devices || [];
           const dev = allDevices.find(d => d.id === id) || {};
           const hostname = dev.sysName || dev.name || dev.host || id;
@@ -7270,6 +7760,16 @@ ${cves.length ? `<!-- CVE TAB -->
               _saveAlertState(); renderActiveAlerts();
             }, _GREEN_MS)
           };
+          delete _alertDownSince[id];
+          stateChanged = true;
+        }
+      }
+      // Clean up recovered cards for devices that no longer exist
+      for (const id of Object.keys(_recoveredCards)) {
+        if (!allDeviceIds.has(id)) {
+          clearTimeout(_recoveredCards[id].orangeTimer);
+          clearTimeout(_recoveredCards[id].greenTimer);
+          delete _recoveredCards[id];
           delete _alertDownSince[id];
           stateChanged = true;
         }
@@ -7346,6 +7846,309 @@ ${cves.length ? `<!-- CVE TAB -->
     const prompt = _alertPrompts[deviceId];
     if (!prompt) return;
     sendTshootQuick(prompt);
+  }
+
+  // ── Protocol Events ──────────────────────────────────────────────────────
+  const _EVT_ICONS = {
+    interface_down: '🔴', interface_up: '🟢',
+    bgp_down: '🔴', bgp_up: '🟢', bgp_change: '🟡',
+    ospf_down: '🔴', ospf_up: '🟢', ospf_change: '🟡',
+    device_down: '⛔', device_up: '✅',
+  };
+  const _EVT_LABELS = {
+    interface_down: 'IF DOWN', interface_up: 'IF UP',
+    bgp_down: 'BGP DOWN', bgp_up: 'BGP UP', bgp_change: 'BGP CHG',
+    ospf_down: 'OSPF DOWN', ospf_up: 'OSPF UP', ospf_change: 'OSPF CHG',
+    device_down: 'DEV DOWN', device_up: 'DEV UP',
+  };
+  // "down" event types and their corresponding "up" type
+  const _EVT_DOWN_TYPES = new Set(['interface_down','bgp_down','ospf_down','device_down']);
+  const _EVT_UP_MAP = { interface_up:'interface_down', bgp_up:'bgp_down', ospf_up:'ospf_down', device_up:'device_down' };
+
+  // Client-side tracking for active/recovered protocol alerts
+  const _protoDownSince  = {};  // compositeKey → { since: Date, device, host, detail, type, group }
+  const _protoRecovered  = {};  // compositeKey → { device, host, detail, type, group, recoveredAt: Date, phase, orangeTimer, greenTimer }
+  const _protoPrompts    = {};  // compositeKey → tshoot prompt string
+  let   _protoTickTimer  = null;
+  let   _protoLastSeen   = null; // ISO timestamp of the newest event we processed (dedup)
+  const _PROTO_ORANGE_MS = 15 * 60 * 1000;
+  const _PROTO_GREEN_MS  = _PROTO_ORANGE_MS + 20 * 1000;
+  const _PROTO_STORAGE   = 'gladius-proto-events-v2';
+
+  function _protoSubject(e) {
+    // Extract the meaningful subject — interface name or peer IP
+    if (e.interface) return e.interface;
+    if (e.peer) return e.peer;
+    return (e.detail || '').split(' ')[0];
+  }
+
+  function _protoKey(e) {
+    // Unique key per device+base_type+subject (e.g. device::interface::Gi0/1)
+    // Strip _down/_up/_change suffix so matching is simpler
+    const baseType = e.type.replace(/_(down|up|change)$/, '');
+    return `${e.device_id || e.host}::${baseType}::${_protoSubject(e)}`;
+  }
+
+  function _saveProtoState() {
+    try {
+      const down = {};
+      for (const [k, v] of Object.entries(_protoDownSince))
+        down[k] = { ...v, since: v.since.toISOString() };
+      const rec = {};
+      for (const [k, v] of Object.entries(_protoRecovered))
+        rec[k] = { device: v.device, host: v.host, detail: v.detail, type: v.type, group: v.group,
+                   recoveredAt: v.recoveredAt.toISOString(), phase: v.phase };
+      localStorage.setItem(_PROTO_STORAGE, JSON.stringify({ down, rec, lastSeen: _protoLastSeen }));
+    } catch(e) {}
+  }
+
+  function _loadProtoState() {
+    try {
+      const raw = localStorage.getItem(_PROTO_STORAGE);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      _protoLastSeen = s.lastSeen || null;
+      for (const [k, v] of Object.entries(s.down || {})) {
+        _protoDownSince[k] = { ...v, since: new Date(v.since) };
+      }
+      for (const [k, v] of Object.entries(s.rec || {})) {
+        const elapsed = Date.now() - new Date(v.recoveredAt).getTime();
+        if (elapsed >= _PROTO_GREEN_MS) continue;
+        const phase = elapsed >= _PROTO_ORANGE_MS ? 'green' : (v.phase || 'orange');
+        const orangeRemaining = Math.max(0, _PROTO_ORANGE_MS - elapsed);
+        const greenRemaining  = Math.max(0, _PROTO_GREEN_MS  - elapsed);
+        _protoRecovered[k] = {
+          device: v.device, host: v.host, detail: v.detail, type: v.type, group: v.group,
+          recoveredAt: new Date(v.recoveredAt), phase,
+          orangeTimer: orangeRemaining > 0 ? setTimeout(() => {
+            if (_protoRecovered[k]) { _protoRecovered[k].phase = 'green'; _saveProtoState(); renderProtocolEvents(); }
+          }, orangeRemaining) : null,
+          greenTimer: setTimeout(() => {
+            delete _protoRecovered[k]; delete _protoDownSince[k];
+            _saveProtoState(); renderProtocolEvents();
+          }, greenRemaining),
+        };
+      }
+    } catch(e) { console.warn('Proto state restore failed', e); }
+  }
+  _loadProtoState();
+
+  function _buildProtoPrompt(e) {
+    const dev = e.device || e.host;
+    const ip  = e.host || '';
+    const t   = e.type || '';
+    if (t.startsWith('interface_'))
+      return `Interface ${e.detail || ''} on ${dev} (${ip}) has gone down. Please investigate: check the interface status on ${dev}, check for errors/CRC on the interface, check CDP/LLDP neighbors on that port, check spanning-tree status, and diagnose the root cause.`;
+    if (t.startsWith('bgp_'))
+      return `BGP peer issue on ${dev} (${ip}): ${e.detail || ''}. Please investigate: check BGP summary on ${dev}, check BGP neighbor details for the affected peer, verify the peer's interface status, check route advertisements, and diagnose why the BGP session changed state.`;
+    if (t.startsWith('ospf_'))
+      return `OSPF neighbor issue on ${dev} (${ip}): ${e.detail || ''}. Please investigate: check OSPF neighbor table on ${dev}, check OSPF interface status, verify OSPF area configuration, check for MTU mismatches, and diagnose the root cause.`;
+    return `Device ${dev} (${ip}) reported: ${e.detail || t}. Please investigate connectivity, interface status, and routing protocol state.`;
+  }
+
+  function _tickProtoTimers() {
+    const now = Date.now();
+    for (const [k, v] of Object.entries(_protoDownSince)) {
+      if (_protoRecovered[k]) continue;
+      const el = document.querySelector(`[data-proto-key="${k}"]`);
+      if (el) el.textContent = _fmtElapsed(now - v.since.getTime());
+    }
+  }
+
+  function _startProtoTick() {
+    if (_protoTickTimer) return;
+    _protoTickTimer = setInterval(_tickProtoTimers, 1000);
+  }
+
+  function _processProtoEvents(events) {
+    // Process events newest-last (they come newest-first from API, so reverse)
+    const sorted = [...events].reverse();
+    let changed = false;
+    for (const e of sorted) {
+      // Skip events we already processed
+      if (_protoLastSeen && e.timestamp <= _protoLastSeen) continue;
+      const key = _protoKey(e);
+
+      if (_EVT_DOWN_TYPES.has(e.type)) {
+        // New down event
+        if (!_protoDownSince[key]) {
+          _protoDownSince[key] = { since: new Date(e.timestamp), device: e.device, host: e.host, detail: e.detail, type: e.type, group: e.group || '' };
+          _protoPrompts[key] = _buildProtoPrompt(e);
+          changed = true;
+        }
+        // Cancel any recovery in progress
+        if (_protoRecovered[key]) {
+          clearTimeout(_protoRecovered[key].orangeTimer);
+          clearTimeout(_protoRecovered[key].greenTimer);
+          delete _protoRecovered[key];
+          changed = true;
+        }
+      } else if (_EVT_UP_MAP[e.type]) {
+        // Key is now base-type (no _down/_up suffix), so it matches the down entry directly
+        if (_protoDownSince[key] && !_protoRecovered[key]) {
+          _protoRecovered[key] = {
+            device: e.device, host: e.host, detail: e.detail, type: e.type, group: e.group || '',
+            recoveredAt: new Date(e.timestamp), phase: 'orange',
+            orangeTimer: setTimeout(() => {
+              if (_protoRecovered[key]) { _protoRecovered[key].phase = 'green'; _saveProtoState(); renderProtocolEvents(); }
+            }, _PROTO_ORANGE_MS),
+            greenTimer: setTimeout(() => {
+              delete _protoRecovered[key]; delete _protoDownSince[key];
+              _saveProtoState(); renderProtocolEvents();
+            }, _PROTO_GREEN_MS),
+          };
+          changed = true;
+        } else if (!_protoDownSince[key]) {
+          // Up event with no prior down tracked — show as a short-lived recovery card
+          _protoDownSince[key] = { since: new Date(e.timestamp), device: e.device, host: e.host, detail: e.detail, type: e.type, group: e.group || '' };
+          _protoRecovered[key] = {
+            device: e.device, host: e.host, detail: e.detail, type: e.type, group: e.group || '',
+            recoveredAt: new Date(e.timestamp), phase: 'orange',
+            orangeTimer: setTimeout(() => {
+              if (_protoRecovered[key]) { _protoRecovered[key].phase = 'green'; _saveProtoState(); renderProtocolEvents(); }
+            }, _PROTO_ORANGE_MS),
+            greenTimer: setTimeout(() => {
+              delete _protoRecovered[key]; delete _protoDownSince[key];
+              _saveProtoState(); renderProtocolEvents();
+            }, _PROTO_GREEN_MS),
+          };
+          changed = true;
+        }
+      }
+      // "change" events (bgp_change, ospf_change) just show in the log
+    }
+    if (events.length > 0) {
+      _protoLastSeen = events[0].timestamp; // events[0] is newest
+      changed = true;
+    }
+    if (changed) _saveProtoState();
+  }
+
+  async function renderProtocolEvents() {
+    const body  = document.getElementById('events-body');
+    const count = document.getElementById('events-count');
+    if (!body) return;
+    _startProtoTick();
+    try {
+      const filter = document.getElementById('events-filter')?.value || '';
+      const url = filter ? `/api/snmp/events?limit=100&event_type=${filter}` : '/api/snmp/events?limit=100';
+      const resp = await fetch(url);
+      const data = await resp.json();
+      const events = data.events || [];
+
+      // Process events into active/recovered state
+      _processProtoEvents(events);
+
+      // Count active down alerts
+      const activeDownKeys = Object.keys(_protoDownSince).filter(k => !_protoRecovered[k]);
+      const recoveredKeys  = Object.keys(_protoRecovered);
+
+      if (count) {
+        const parts = [];
+        if (activeDownKeys.length) parts.push(`${activeDownKeys.length} DOWN`);
+        if (recoveredKeys.length)  parts.push(`${recoveredKeys.length} RECOVERED`);
+        count.textContent = parts.join(' · ');
+        count.style.color = activeDownKeys.length ? 'var(--danger)' : recoveredKeys.length ? '#ffa000' : 'var(--accent)';
+      }
+
+      const now = Date.now();
+
+      // ── Active down cards ──────────────────────────────────────────────
+      const downHtml = activeDownKeys.map(k => {
+        const d = _protoDownSince[k];
+        const icon    = _EVT_ICONS[d.type] || '🔴';
+        const label   = _EVT_LABELS[d.type] || d.type.toUpperCase();
+        const sinceStr   = _fmtAlertTime(d.since);
+        const elapsedStr = _fmtElapsed(now - d.since.getTime());
+        const detail     = (d.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const safeKey    = k.replace(/'/g, "\\'");
+        return `<div class="evt-card evt-critical">
+          <div class="evt-header">
+            <span class="evt-icon">${icon}</span>
+            <span class="evt-device">${d.device || d.host}</span>
+            <span class="evt-badge eb-critical">${label}</span>
+          </div>
+          <div class="evt-detail">${detail}</div>
+          <div class="evt-time">↓ down since ${sinceStr}</div>
+          <div class="evt-time">⏱ down for <span data-proto-key="${k}">${elapsedStr}</span></div>
+          ${d.group ? `<div class="evt-time">⚑ ${d.group}</div>` : ''}
+          <button class="alert-tshoot-btn" style="margin-top:6px;border-color:var(--danger);color:var(--danger)" onclick="tshootProtoEvent('${safeKey}')">EXPLORE IN TSHOOT AGENT ▶</button>
+        </div>`;
+      }).join('');
+
+      // ── Recovery cards (orange → green) ────────────────────────────────
+      const recHtml = recoveredKeys.map(k => {
+        const rc    = _protoRecovered[k];
+        const icon  = _EVT_ICONS[rc.type] || '🟢';
+        const cls   = rc.phase === 'green' ? 'evt-info' : 'evt-warning';
+        const phase = rc.phase === 'green' ? 'CLEARING' : 'RECOVERED';
+        const detail = (rc.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<div class="evt-card ${cls}">
+          <div class="evt-header">
+            <span class="evt-icon">${icon}</span>
+            <span class="evt-device">${rc.device || rc.host}</span>
+            <span style="font-family:var(--font-mono);font-size:9px;opacity:0.75;text-transform:uppercase">${phase}</span>
+          </div>
+          <div class="evt-detail">${detail}</div>
+          <div class="evt-time">↑ up since ${_fmtAlertTime(rc.recoveredAt)}</div>
+          ${rc.group ? `<div class="evt-time">⚑ ${rc.group}</div>` : ''}
+        </div>`;
+      }).join('');
+
+      // ── Recent event log (non-active, informational) ───────────────────
+      const logEvents = events.filter(e => {
+        // Show change events and any events not tracked as active/recovered
+        return e.type.endsWith('_change') || e.severity === 'info';
+      }).slice(0, 15);
+
+      const logHtml = logEvents.length ? logEvents.map(e => {
+        const icon  = _EVT_ICONS[e.type] || '⚡';
+        const label = _EVT_LABELS[e.type] || e.type.toUpperCase();
+        const sev   = e.severity || 'info';
+        const ts    = new Date(e.timestamp);
+        const tStr  = ts.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit' });
+        const detail = (e.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        return `<div class="evt-card evt-${sev}" style="opacity:0.7">
+          <div class="evt-header">
+            <span class="evt-icon">${icon}</span>
+            <span class="evt-device">${e.device || e.host}</span>
+            <span class="evt-badge eb-${sev}">${label}</span>
+          </div>
+          <div class="evt-detail">${detail}</div>
+          <div class="evt-time">${tStr}${e.group ? ' · ' + e.group : ''}</div>
+        </div>`;
+      }).join('') : '';
+
+      if (!downHtml && !recHtml && !logHtml) {
+        body.innerHTML = '<div style="padding:12px 0;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// No protocol events</div>';
+        return;
+      }
+
+      body.innerHTML = downHtml + recHtml + (logHtml ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border)"><div style="font-family:var(--font-mono);font-size:9px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.06em">Event Log</div>${logHtml}</div>` : '');
+    } catch(err) {
+      if (body) body.innerHTML = '<div style="padding:12px 0;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--text-dim)">// Events unavailable</div>';
+    }
+  }
+
+  function tshootProtoEvent(key) {
+    const prompt = _protoPrompts[key];
+    if (!prompt) return;
+    sendTshootQuick(prompt);
+  }
+
+  async function clearProtocolEvents() {
+    try { await fetch('/api/snmp/events', { method: 'DELETE' }); } catch(e) {}
+    // Clear client-side state too
+    for (const k of Object.keys(_protoRecovered)) {
+      clearTimeout(_protoRecovered[k].orangeTimer);
+      clearTimeout(_protoRecovered[k].greenTimer);
+      delete _protoRecovered[k];
+    }
+    for (const k of Object.keys(_protoDownSince)) delete _protoDownSince[k];
+    for (const k of Object.keys(_protoPrompts))   delete _protoPrompts[k];
+    _protoLastSeen = null;
+    _saveProtoState();
+    renderProtocolEvents();
   }
 
   function renderActivityLog() {
@@ -9174,6 +9977,7 @@ ${cves.length ? `<!-- CVE TAB -->
               tshootHistory.push({ role: 'assistant', content: fullText });
               const orbitEl = document.getElementById(orbitId);
               if (orbitEl) orbitEl.classList.remove('active');
+              renderMermaidIn(document.getElementById(msgId));
               notify('tshoot', 'TSHOOT AGENT', 'Diagnostics complete');
               setTopbarChipDone(tshootChipId);
             } else if (event.type === 'error') {
@@ -9214,7 +10018,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
 
-  // ── PYATS FACTORY ────────────────────────────────────────────────────
+  // ── AUTOMATION FACTORY ────────────────────────────────────────────────────
   let _autoInitialized   = false;
   let _autoScripts       = [];
   let _autoDevices       = [];
@@ -9312,7 +10116,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <div class="msg-avatar agent">F</div>
         <div>
           <div class="msg-bubble" id="auto-bubble-${Date.now()}">${html}</div>
-          <div class="msg-meta">PYATS FACTORY · ${now}</div>
+          <div class="msg-meta">AUTOMATION FACTORY · ${now}</div>
         </div>`;
     }
     div.dataset.raw = raw || '';
@@ -9355,7 +10159,7 @@ ${cves.length ? `<!-- CVE TAB -->
       </div>
       <div>
         <div class="msg-bubble" id="${bubbleId}"><div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>
-        <div class="msg-meta">PYATS FACTORY · generating…</div>
+        <div class="msg-meta">AUTOMATION FACTORY · generating…</div>
       </div>`;
     AUTO_MSGS().appendChild(agentDiv);
     AUTO_MSGS().scrollTop = AUTO_MSGS().scrollHeight;
@@ -9370,7 +10174,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const orbit = document.getElementById(autoOrbitId);
       if (orbit) orbit.classList.remove('active');
       agentDiv.querySelector('.msg-meta').textContent =
-        'PYATS FACTORY · ' + new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+        'AUTOMATION FACTORY · ' + new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     }
 
     try {
@@ -10010,7 +10814,7 @@ ${cves.length ? `<!-- CVE TAB -->
       <div class="msg-avatar agent">F</div>
       <div>
         <div class="msg-bubble">${html}</div>
-        <div class="msg-meta">${new Date().toLocaleTimeString()} · PYATS FACTORY</div>
+        <div class="msg-meta">${new Date().toLocaleTimeString()} · AUTOMATION FACTORY</div>
       </div>`;
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;

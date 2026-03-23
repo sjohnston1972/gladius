@@ -142,6 +142,190 @@ def _poll_device_sync(dev: dict) -> dict:
         }
 
 
+# ── Protocol state tracking ───────────────────────────────────────────────────
+_proto_state: dict[str, dict] = {}   # dev_id → {"interfaces": {...}, "bgp": {...}, "ospf": {...}}
+_events: list[dict] = []             # recent events (capped at 200)
+_MAX_EVENTS = 200
+
+# BGP state codes → names (RFC 4271)
+_BGP_STATES = {"1": "idle", "2": "connect", "3": "active", "4": "opensent", "5": "openconfirm", "6": "established"}
+# OSPF neighbor states (RFC 2328)
+_OSPF_STATES = {"1": "down", "2": "attempt", "3": "init", "4": "twoway", "5": "exchangestart",
+                "6": "exchange", "7": "loading", "8": "full"}
+
+def _add_event(dev: dict, event_type: str, severity: str, detail: str, extra: dict = None):
+    """Append a protocol event and cap the list."""
+    evt = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "device_id": dev["id"],
+        "device":    dev.get("sysName") or dev.get("name", dev["host"]),
+        "host":      dev["host"],
+        "group":     dev.get("group", ""),
+        "type":      event_type,    # interface_down, interface_up, bgp_down, bgp_up, ospf_down, ospf_up, device_down, device_up
+        "severity":  severity,      # critical, warning, info
+        "detail":    detail,
+        **(extra or {}),
+    }
+    _events.append(evt)
+    if len(_events) > _MAX_EVENTS:
+        _events[:] = _events[-_MAX_EVENTS:]
+    log.info("EVENT [%s] %s %s: %s", severity.upper(), dev.get("name", dev["host"]), event_type, detail)
+    return evt
+
+
+def _poll_protocol_state_sync(dev: dict) -> dict:
+    """Walk interface oper status, BGP peer state, OSPF neighbor state. Returns parsed state dict."""
+    host = dev["host"]
+    port = dev.get("port", 161)
+    state = {"interfaces": {}, "bgp": {}, "ospf": {}}
+    try:
+        from pysnmp.hlapi import nextCmd
+        auth = _auth_data(dev)
+        transport = UdpTransportTarget((host, port), timeout=3, retries=0)
+
+        # Interface oper status: walk ifDescr + ifOperStatus + ifAdminStatus
+        if_descr = {}
+        if_oper = {}
+        if_admin = {}
+        for oid_base, store, max_rows in [
+            ("1.3.6.1.2.1.2.2.1.2", if_descr, 200),   # ifDescr
+            ("1.3.6.1.2.1.2.2.1.7", if_admin, 200),    # ifAdminStatus
+            ("1.3.6.1.2.1.2.2.1.8", if_oper, 200),     # ifOperStatus
+        ]:
+            count = 0
+            for ei, es, _, varBinds in nextCmd(SnmpEngine(), auth,
+                UdpTransportTarget((host, port), timeout=3, retries=0),
+                ContextData(), ObjectType(ObjectIdentity(oid_base)), lexicographicMode=False):
+                if ei or es:
+                    break
+                for var in varBinds:
+                    idx = str(var[0]).split(".")[-1]
+                    store[idx] = var[1].prettyPrint()
+                count += 1
+                if count >= max_rows:
+                    break
+
+        for idx, descr in if_descr.items():
+            admin = if_admin.get(idx, "1")
+            oper = if_oper.get(idx, "1")
+            # Only track interfaces that are admin up (admin=1)
+            if admin == "1":
+                state["interfaces"][descr] = {"oper": oper, "idx": idx}
+
+        # BGP peer state
+        for ei, es, _, varBinds in nextCmd(SnmpEngine(), auth,
+            UdpTransportTarget((host, port), timeout=3, retries=0),
+            ContextData(), ObjectType(ObjectIdentity("1.3.6.1.2.1.15.3.1.2")), lexicographicMode=False):
+            if ei or es:
+                break
+            for var in varBinds:
+                peer_ip = ".".join(str(var[0]).split(".")[-4:])
+                bgp_state = var[1].prettyPrint()
+                state["bgp"][peer_ip] = bgp_state
+            if len(state["bgp"]) >= 50:
+                break
+
+        # OSPF neighbor state
+        for ei, es, _, varBinds in nextCmd(SnmpEngine(), auth,
+            UdpTransportTarget((host, port), timeout=3, retries=0),
+            ContextData(), ObjectType(ObjectIdentity("1.3.6.1.2.1.14.10.1.6")), lexicographicMode=False):
+            if ei or es:
+                break
+            for var in varBinds:
+                nbr_ip = ".".join(str(var[0]).split(".")[-4:])
+                ospf_state = var[1].prettyPrint()
+                state["ospf"][nbr_ip] = ospf_state
+            if len(state["ospf"]) >= 50:
+                break
+
+    except Exception as e:
+        log.debug("Protocol poll failed for %s: %s", host, e)
+    return state
+
+
+def _detect_events(dev: dict, old_state: dict, new_state: dict) -> list[dict]:
+    """Compare old and new protocol state, return list of events."""
+    events = []
+    dev_id = dev["id"]
+
+    # Interface changes (admin-up interfaces only)
+    old_ifs = old_state.get("interfaces", {})
+    new_ifs = new_state.get("interfaces", {})
+    for iface, info in new_ifs.items():
+        old_info = old_ifs.get(iface)
+        if old_info and old_info["oper"] != info["oper"]:
+            if info["oper"] == "2":  # down
+                events.append(_add_event(dev, "interface_down", "critical",
+                    f"{iface} went DOWN", {"interface": iface}))
+            elif info["oper"] == "1" and old_info["oper"] == "2":  # up
+                events.append(_add_event(dev, "interface_up", "info",
+                    f"{iface} came UP", {"interface": iface}))
+
+    # Interfaces that disappeared (were in old, not in new — may indicate removal)
+    for iface in old_ifs:
+        if iface not in new_ifs and old_ifs[iface]["oper"] == "1":
+            events.append(_add_event(dev, "interface_down", "warning",
+                f"{iface} no longer present", {"interface": iface}))
+
+    # BGP peer changes
+    old_bgp = old_state.get("bgp", {})
+    new_bgp = new_state.get("bgp", {})
+    for peer, state_val in new_bgp.items():
+        old_val = old_bgp.get(peer)
+        if old_val and old_val != state_val:
+            state_name = _BGP_STATES.get(state_val, state_val)
+            old_name = _BGP_STATES.get(old_val, old_val)
+            if state_val == "6":  # established
+                events.append(_add_event(dev, "bgp_up", "info",
+                    f"BGP peer {peer} → established (was {old_name})", {"peer": peer, "state": state_name}))
+            elif old_val == "6":  # was established, now isn't
+                events.append(_add_event(dev, "bgp_down", "critical",
+                    f"BGP peer {peer} → {state_name} (was established)", {"peer": peer, "state": state_name}))
+            else:
+                events.append(_add_event(dev, "bgp_change", "warning",
+                    f"BGP peer {peer} {old_name} → {state_name}", {"peer": peer, "state": state_name}))
+    # BGP peers that vanished
+    for peer in old_bgp:
+        if peer not in new_bgp and old_bgp[peer] == "6":
+            events.append(_add_event(dev, "bgp_down", "critical",
+                f"BGP peer {peer} disappeared (was established)", {"peer": peer}))
+    # New BGP peers
+    for peer in new_bgp:
+        if peer not in old_bgp and new_bgp[peer] == "6":
+            events.append(_add_event(dev, "bgp_up", "info",
+                f"BGP peer {peer} newly established", {"peer": peer, "state": "established"}))
+
+    # OSPF neighbor changes
+    old_ospf = old_state.get("ospf", {})
+    new_ospf = new_state.get("ospf", {})
+    for nbr, state_val in new_ospf.items():
+        old_val = old_ospf.get(nbr)
+        if old_val and old_val != state_val:
+            state_name = _OSPF_STATES.get(state_val, state_val)
+            old_name = _OSPF_STATES.get(old_val, old_val)
+            if state_val == "8":  # full
+                events.append(_add_event(dev, "ospf_up", "info",
+                    f"OSPF neighbor {nbr} → full (was {old_name})", {"neighbor": nbr, "state": state_name}))
+            elif old_val == "8":  # was full
+                events.append(_add_event(dev, "ospf_down", "critical",
+                    f"OSPF neighbor {nbr} → {state_name} (was full)", {"neighbor": nbr, "state": state_name}))
+            else:
+                events.append(_add_event(dev, "ospf_change", "warning",
+                    f"OSPF neighbor {nbr} {old_name} → {state_name}", {"neighbor": nbr, "state": state_name}))
+    # OSPF neighbors that vanished
+    for nbr in old_ospf:
+        if nbr not in new_ospf and old_ospf[nbr] == "8":
+            events.append(_add_event(dev, "ospf_down", "critical",
+                f"OSPF neighbor {nbr} disappeared (was full)", {"neighbor": nbr}))
+    # New OSPF neighbors
+    for nbr in new_ospf:
+        if nbr not in old_ospf and new_ospf[nbr] == "8":
+            events.append(_add_event(dev, "ospf_up", "info",
+                f"OSPF neighbor {nbr} newly full", {"neighbor": nbr, "state": "full"}))
+
+    return events
+
+
 # ── Alert helpers ──────────────────────────────────────────────────────────────
 _STATUS_SEVERITY = {"ok": 0, "unknown": 0, "warn": 1, "error": 2}
 
@@ -190,10 +374,26 @@ async def _poll_all():
                 asyncio.create_task(
                     asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result))
                 )
+                # Device went down — generate event
+                if new_status == "error":
+                    _add_event(dev, "device_down", "critical", f"Device unreachable ({result.get('error', 'no response')})")
             elif new_status == "ok" and _last_alerted.get(dev_id, "ok") != "ok":
-                # Device recovered — reset so we alert again if it degrades again
                 _last_alerted[dev_id] = "ok"
+                _add_event(dev, "device_up", "info", "Device recovered")
                 log.info("Device %s recovered → alert state reset", dev.get("name", dev["host"]))
+
+            # Protocol state polling (only if device is reachable)
+            if new_status == "ok":
+                try:
+                    # Enrich dev with sysName for event labels
+                    enriched = {**dev, "sysName": result.get("sysName", "")}
+                    proto_state = await asyncio.to_thread(_poll_protocol_state_sync, enriched)
+                    old_proto = _proto_state.get(dev_id)
+                    if old_proto:
+                        _detect_events(enriched, old_proto, proto_state)
+                    _proto_state[dev_id] = proto_state
+                except Exception as e:
+                    log.debug("Protocol poll error for %s: %s", dev["host"], e)
 
         await asyncio.sleep(POLL_INTERVAL)
 
@@ -222,6 +422,20 @@ class DeviceIn(BaseModel):
     priv_key:      str = ""
     auth_protocol: str = "SHA"
     priv_protocol: str = "AES"
+    group:         str = ""
+
+
+class DevicePatch(BaseModel):
+    name:          str | None = None
+    group:         str | None = None
+    port:          int | None = None
+    version:       str | None = None
+    community:     str | None = None
+    username:      str | None = None
+    auth_key:      str | None = None
+    priv_key:      str | None = None
+    auth_protocol: str | None = None
+    priv_protocol: str | None = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -278,6 +492,7 @@ async def add_device(body: DeviceIn):
         "priv_key":      body.priv_key,
         "auth_protocol": body.auth_protocol,
         "priv_protocol": body.priv_protocol,
+        "group":         body.group,
         "added":         datetime.now(timezone.utc).isoformat(),
     }
     _devices[dev_id] = dev
@@ -294,6 +509,16 @@ def delete_device(dev_id: str):
     _devices.pop(dev_id)
     _status.pop(dev_id, None)
     _save_devices()
+
+
+@app.patch("/devices/{dev_id}")
+def patch_device(dev_id: str, body: DevicePatch):
+    if dev_id not in _devices:
+        raise HTTPException(status_code=404, detail="Device not found")
+    updates = body.model_dump(exclude_none=True)
+    _devices[dev_id].update(updates)
+    _save_devices()
+    return _device_with_status(dev_id)
 
 
 @app.post("/devices/{dev_id}/poll")
@@ -315,6 +540,7 @@ PROFILES = {
     "ip_addresses":   {"mode": "walk", "oids": ["1.3.6.1.2.1.4.20"]},
     "arp":            {"mode": "walk", "oids": ["1.3.6.1.2.1.4.22"]},
     "bgp":            {"mode": "walk", "oids": ["1.3.6.1.2.1.15.3"]},
+    "ospf_neighbors": {"mode": "walk", "oids": ["1.3.6.1.2.1.14.10.1"]},
     "cisco_cpu":      {"mode": "get",  "oids": ["1.3.6.1.4.1.9.2.1.57.0", "1.3.6.1.4.1.9.2.1.58.0"]},
     "cisco_memory":   {"mode": "walk", "oids": ["1.3.6.1.4.1.9.9.48.1.1.1"]},
 }
@@ -330,6 +556,7 @@ OID_LABELS = {
     "1.3.6.1.2.1.4.20.1.1": "ipAdEntAddr",  "1.3.6.1.2.1.4.20.1.3": "ipAdEntNetMask",
     "1.3.6.1.2.1.4.22.1.2": "arpPhysAddr",  "1.3.6.1.2.1.4.22.1.3": "arpNetAddr",
     "1.3.6.1.2.1.15.3.1.2": "bgpPeerState", "1.3.6.1.2.1.15.3.1.9": "bgpPeerRemoteAs",
+    "1.3.6.1.2.1.14.10.1.3": "ospfNbrRtrId", "1.3.6.1.2.1.14.10.1.6": "ospfNbrState",
     "1.3.6.1.4.1.9.2.1.57": "ciscoCpu1min", "1.3.6.1.4.1.9.2.1.58": "ciscoCpu5min",
     "1.3.6.1.4.1.9.9.48.1.1.1.2": "ciscoMemName",
     "1.3.6.1.4.1.9.9.48.1.1.1.5": "ciscoMemUsed",
@@ -398,6 +625,42 @@ class AdHocPollRequest(BaseModel):
     priv_protocol: str    = "AES"
     profile:       str    = "system"
     max_rows:      int    = 200
+
+
+@app.get("/events")
+def get_events(
+    limit: int = 100,
+    event_type: str | None = None,
+    severity: str | None = None,
+    device_id: str | None = None,
+):
+    """Return recent protocol / device events, newest first."""
+    filtered = _events
+    if event_type:
+        filtered = [e for e in filtered if e["type"] == event_type]
+    if severity:
+        filtered = [e for e in filtered if e["severity"] == severity]
+    if device_id:
+        filtered = [e for e in filtered if e["device_id"] == device_id]
+    return {"events": list(reversed(filtered[-limit:]))}
+
+
+@app.delete("/events", status_code=204)
+def clear_events():
+    """Clear all stored events."""
+    _events.clear()
+    return
+
+
+@app.get("/proto_state")
+def get_proto_state(device_id: str | None = None):
+    """Return current protocol state (interfaces, BGP, OSPF) per device."""
+    if device_id:
+        state = _proto_state.get(device_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="No protocol state for device")
+        return {device_id: state}
+    return _proto_state
 
 
 @app.post("/poll")
