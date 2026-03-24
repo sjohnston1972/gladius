@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 import io
 import hashlib
+import httpx
 
 load_dotenv()
 
@@ -70,6 +71,7 @@ log = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 MODEL             = "claude-sonnet-4-6"
+OLLAMA_URL        = os.getenv("OLLAMA_URL", "http://192.168.1.250:11434")
 MCP_COMMAND       = "docker"
 MCP_ARGS          = ["exec", "-i", "network-audit-mcp", "python", "/app/server.py"]
 
@@ -1317,6 +1319,117 @@ async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
 
+# ── OLLAMA-BACKED NMAP / SCAPY ──────────────────────────────────────────────
+# Calls the MCP tool directly, then streams raw output + Ollama analysis.
+
+class OllamaNmapRequest(BaseModel):
+    target: str
+    profile: str = "quick"
+    ports: str | None = None
+    args: str | None = None
+    model: str = "qwen2.5-coder:7b"
+
+class OllamaScapyRequest(BaseModel):
+    mode: str = "ping"
+    target: str
+    port: int | None = None
+    count: int | None = None
+    ttl: int | None = None
+    vlan_id: int | None = None
+    inner_vlan_id: int | None = None
+    model: str = "qwen2.5-coder:7b"
+
+
+@app.post("/api/nmap/ollama")
+async def nmap_ollama(req: OllamaNmapRequest):
+    return StreamingResponse(
+        _ollama_tool_stream("run_nmap_scan", {
+            "target": req.target, "profile": req.profile,
+            **({"ports": req.ports} if req.ports else {}),
+            **({"args": req.args} if req.args else {}),
+        }, req.model, f"nmap {req.profile} scan on {req.target}"),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/api/scapy/ollama")
+async def scapy_ollama(req: OllamaScapyRequest):
+    tool_args = {"mode": req.mode, "target": req.target}
+    if req.port is not None:      tool_args["port"] = req.port
+    if req.count is not None:     tool_args["count"] = req.count
+    if req.ttl is not None:       tool_args["ttl"] = req.ttl
+    if req.vlan_id is not None:   tool_args["vlan_id"] = req.vlan_id
+    if req.inner_vlan_id is not None: tool_args["inner_vlan_id"] = req.inner_vlan_id
+    return StreamingResponse(
+        _ollama_tool_stream("run_scapy", tool_args, req.model,
+                            f"scapy {req.mode} against {req.target}"),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _ollama_tool_stream(tool_name: str, tool_args: dict,
+                               model: str, description: str) -> AsyncIterator[str]:
+    """Call an MCP tool directly, then stream Ollama analysis of the output."""
+    # Phase 1: call the MCP tool
+    yield f"data: {json.dumps({'type': 'tool_start', 'tool': tool_name, 'input': tool_args})}\n\n"
+    try:
+        result = await mcp_manager.call_tool(tool_name, tool_args)
+        raw_output = ""
+        if hasattr(result, "content"):
+            for block in result.content:
+                if hasattr(block, "text"):
+                    raw_output += block.text
+        if not raw_output:
+            raw_output = str(result)
+    except Exception as e:
+        yield f"data: {json.dumps({'type': 'error', 'content': f'MCP tool {tool_name} failed: {e}'})}\n\n"
+        return
+
+    yield f"data: {json.dumps({'type': 'tool_done', 'tool': tool_name})}\n\n"
+
+    # Phase 2: send raw output to Ollama for analysis
+    analysis_prompt = (
+        f"You are a network security analyst. A {description} was just executed.\n"
+        f"Here is the raw output:\n\n```\n{raw_output[:12000]}\n```\n\n"
+        f"Provide a clear, structured analysis:\n"
+        f"- Summarise what was found (open ports, services, OS, responses)\n"
+        f"- Always report latency in milliseconds (ms), not seconds\n"
+        f"- Highlight any security concerns or notable observations\n"
+        f"- Keep it concise but thorough"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as hclient:
+            async with hclient.stream(
+                "POST", f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": analysis_prompt}],
+                    "stream": True,
+                    "options": {"num_ctx": 16384},
+                },
+            ) as response:
+                if response.status_code != 200:
+                    yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
+                    return
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        content = chunk.get("message", {}).get("content", "")
+                        if content:
+                            yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
+                        if chunk.get("done"):
+                            break
+                    except json.JSONDecodeError:
+                        continue
+    except Exception as e:
+        yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama analysis failed: {e}'})}\n\n"
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 # ── DOCUMENT INGESTION ────────────────────────────────────────────────────────

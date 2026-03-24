@@ -525,19 +525,13 @@
     background: var(--accent);
     box-shadow: 0 0 7px var(--accent);
   }
-  .sidebar-label.agent-done {
-    animation: navItemPulse 1.4s ease-in-out infinite;
-    position: relative;
+  @keyframes sidebarLabelPulse {
+    0%, 100% { opacity: 0.85; text-shadow: 0 0 10px var(--accent-glow); color: var(--accent); }
+    50%      { opacity: 1; text-shadow: 0 0 20px var(--accent), 0 0 40px var(--accent-glow); color: #fff; }
   }
-  .sidebar-label.agent-done::after {
-    content: '';
-    position: absolute;
-    top: 50%; right: 2px;
-    transform: translateY(-50%);
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 7px var(--accent);
+  .sidebar-label.agent-done {
+    animation: sidebarLabelPulse 1s ease-in-out infinite;
+    position: relative;
   }
 
   .topbar-status {
@@ -3364,8 +3358,8 @@
           <label class="form-label">AI Model</label>
           <select class="form-select" id="nmap-model-select">
             <optgroup label="Claude (Anthropic)">
-              <option value="claude:claude-sonnet-4-6" selected>sonnet 4.6</option>
-              <option value="claude:claude-haiku-4-5-20251001">haiku 4.5</option>
+              <option value="claude:claude-haiku-4-5-20251001" selected>haiku 4.5</option>
+              <option value="claude:claude-sonnet-4-6">sonnet 4.6</option>
               <option value="claude:claude-opus-4-6">opus 4.6</option>
             </optgroup>
             <optgroup label="Ollama (Local)" id="nmap-ollama-models"></optgroup>
@@ -3452,8 +3446,8 @@
           <label class="form-label">AI Model</label>
           <select class="form-select" id="scapy-model-select">
             <optgroup label="Claude (Anthropic)">
-              <option value="claude:claude-sonnet-4-6" selected>sonnet 4.6</option>
-              <option value="claude:claude-haiku-4-5-20251001">haiku 4.5</option>
+              <option value="claude:claude-haiku-4-5-20251001" selected>haiku 4.5</option>
+              <option value="claude:claude-sonnet-4-6">sonnet 4.6</option>
               <option value="claude:claude-opus-4-6">opus 4.6</option>
             </optgroup>
             <optgroup label="Ollama (Local)" id="scapy-ollama-models"></optgroup>
@@ -6519,12 +6513,19 @@ ${cves.length ? `<!-- CVE TAB -->
     spawnTopbarChip(nmapChipId, 'NMAP ' + target, 'nmap');
 
     try {
-      const nmapModelRaw = document.getElementById('nmap-model-select')?.value || 'claude:claude-sonnet-4-6';
-      const [nmapProvider, nmapModel] = nmapModelRaw.split(':');
-      const nmapEndpoint = nmapProvider === 'ollama' ? '/api/automation/chat' : '/api/chat';
-      const nmapBody = nmapProvider === 'ollama'
-        ? { messages: [{ role: 'user', content: prompt }], model: nmapModel }
-        : { messages: [{ role: 'user', content: prompt }], model: nmapModel };
+      const nmapModelRaw = document.getElementById('nmap-model-select')?.value || 'claude:claude-haiku-4-5-20251001';
+      const [nmapProvider, ...nmapModelParts] = nmapModelRaw.split(':');
+      const nmapModel = nmapModelParts.join(':');
+      let nmapEndpoint, nmapBody;
+      if (nmapProvider === 'ollama') {
+        nmapEndpoint = '/api/nmap/ollama';
+        nmapBody = { target, profile, model: nmapModel };
+        if (ports) nmapBody.ports = ports;
+        if (custom && profile === 'custom') nmapBody.args = custom;
+      } else {
+        nmapEndpoint = '/api/chat';
+        nmapBody = { messages: [{ role: 'user', content: prompt }], model: nmapModel };
+      }
       const resp = await fetch(nmapEndpoint, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -6685,12 +6686,22 @@ ${cves.length ? `<!-- CVE TAB -->
     spawnTopbarChip(scapyChipId, 'SCAPY ' + target, 'scapy');
 
     try {
-      const scapyModelRaw = document.getElementById('scapy-model-select')?.value || 'claude:claude-sonnet-4-6';
-      const [scapyProvider, scapyModel] = scapyModelRaw.split(':');
-      const scapyEndpoint = scapyProvider === 'ollama' ? '/api/automation/chat' : '/api/chat';
-      const scapyBody = scapyProvider === 'ollama'
-        ? { messages: [{ role: 'user', content: prompt }], model: scapyModel }
-        : { messages: [{ role: 'user', content: prompt }], model: scapyModel };
+      const scapyModelRaw = document.getElementById('scapy-model-select')?.value || 'claude:claude-haiku-4-5-20251001';
+      const [scapyProvider, ...scapyModelParts] = scapyModelRaw.split(':');
+      const scapyModel = scapyModelParts.join(':');
+      let scapyEndpoint, scapyBody;
+      if (scapyProvider === 'ollama') {
+        scapyEndpoint = '/api/scapy/ollama';
+        scapyBody = { mode, target, model: scapyModel };
+        if (port)  scapyBody.port = parseInt(port);
+        if (count) scapyBody.count = parseInt(count);
+        if (ttl)   scapyBody.ttl = parseInt(ttl);
+        if (vlan)  scapyBody.vlan_id = parseInt(vlan);
+        if (vlan2) scapyBody.inner_vlan_id = parseInt(vlan2);
+      } else {
+        scapyEndpoint = '/api/chat';
+        scapyBody = { messages: [{ role: 'user', content: prompt }], model: scapyModel };
+      }
       const resp = await fetch(scapyEndpoint, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -10332,12 +10343,18 @@ ${cves.length ? `<!-- CVE TAB -->
       if (run)      run.innerHTML      = opts;
       if (multirun) multirun.innerHTML = opts;
       if (learnMdl) learnMdl.innerHTML = opts;
-      // Populate Ollama models into NMAP and Scapy selectors
-      const ollamaOpts = data.models.map(m => `<option value="ollama:${m}">${m}</option>`).join('');
+      // Populate Ollama models into NMAP and Scapy selectors (exclude Claude models)
+      const ollamaOnly = data.models.filter(m => !m.startsWith('claude-'));
+      const ollamaOpts = ollamaOnly.map(m => `<option value="ollama:${m}">${m}</option>`).join('');
       const nmapOllama  = document.getElementById('nmap-ollama-models');
       const scapyOllama = document.getElementById('scapy-ollama-models');
       if (nmapOllama)  nmapOllama.innerHTML  = ollamaOpts;
       if (scapyOllama) scapyOllama.innerHTML = ollamaOpts;
+      // Default to qwen2.5:7b if available
+      const nmapSel  = document.getElementById('nmap-model-select');
+      const scapySel = document.getElementById('scapy-model-select');
+      if (nmapSel  && ollamaOnly.includes('qwen2.5:7b')) nmapSel.value  = 'ollama:qwen2.5:7b';
+      if (scapySel && ollamaOnly.includes('qwen2.5:7b')) scapySel.value = 'ollama:qwen2.5:7b';
     } catch(e) {
       console.error('Auto models:', e);
     }
