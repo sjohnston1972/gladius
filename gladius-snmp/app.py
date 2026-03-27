@@ -163,7 +163,10 @@ _OSPF_STATES = {"1": "down", "2": "attempt", "3": "init", "4": "twoway", "5": "e
                 "6": "exchange", "7": "loading", "8": "full"}
 
 def _add_event(dev: dict, event_type: str, severity: str, detail: str, extra: dict = None):
-    """Append a protocol event and cap the list."""
+    """Append a protocol event and cap the list. Skip if device is muted."""
+    if dev.get("muted"):
+        log.debug("MUTED — skipping event [%s] %s %s: %s", severity, dev.get("name", dev["host"]), event_type, detail)
+        return None
     evt = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "device_id": dev["id"],
@@ -445,7 +448,7 @@ def _detect_events(dev: dict, old_state: dict, new_state: dict) -> list[dict]:
             events.append(_add_event(dev, "ospf_up", "info",
                 f"OSPF neighbor {nbr} newly full", {"neighbor": nbr, "state": "full"}))
 
-    return events
+    return [e for e in events if e is not None]
 
 
 # ── Alert helpers ──────────────────────────────────────────────────────────────
@@ -545,6 +548,7 @@ class DeviceIn(BaseModel):
     auth_protocol: str = "SHA"
     priv_protocol: str = "AES"
     group:         str = ""
+    muted:         bool = False
 
 
 class DevicePatch(BaseModel):
@@ -558,6 +562,7 @@ class DevicePatch(BaseModel):
     priv_key:      str | None = None
     auth_protocol: str | None = None
     priv_protocol: str | None = None
+    muted:         bool | None = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -615,6 +620,7 @@ async def add_device(body: DeviceIn):
         "auth_protocol": body.auth_protocol,
         "priv_protocol": body.priv_protocol,
         "group":         body.group,
+        "muted":         body.muted,
         "added":         datetime.now(timezone.utc).isoformat(),
     }
     _devices[dev_id] = dev
