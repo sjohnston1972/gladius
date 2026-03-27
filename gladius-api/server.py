@@ -98,6 +98,46 @@ _last_audit: dict | None = None
 # The SSE stream picks this up and forwards it to the browser as audit_saved
 _pending_audit: dict | None = None
 
+# ── Running Tasks Tracker ─────────────────────────────────────────────────────
+import uuid as _uuid
+_running_tasks: dict[str, dict] = {}   # task_id → {agent, description, started, source, model}
+
+def _task_start(agent: str, description: str, source: str = "web", model: str = "") -> str:
+    """Register a running task. Returns task_id."""
+    tid = str(_uuid.uuid4())[:8]
+    _running_tasks[tid] = {
+        "id": tid,
+        "agent": agent,
+        "description": description[:200],
+        "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "source": source,
+        "model": model,
+        "status": "running",
+    }
+    log.info(f"[Task {tid}] STARTED: {agent} — {description[:80]} (source={source})")
+    return tid
+
+_TASK_RETAIN_SECS = 60  # keep completed tasks visible for 60s
+
+def _task_end(tid: str):
+    """Mark a task as completed (retained for _TASK_RETAIN_SECS before removal)."""
+    task = _running_tasks.get(tid)
+    if task:
+        task["status"] = "completed"
+        task["completed"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        log.info(f"[Task {tid}] ENDED: {task['agent']} — {task['description'][:80]}")
+
+def _prune_completed_tasks():
+    """Remove completed tasks older than _TASK_RETAIN_SECS."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expired = [
+        tid for tid, t in _running_tasks.items()
+        if t.get("status") == "completed" and t.get("completed")
+        and (now - datetime.datetime.fromisoformat(t["completed"])).total_seconds() > _TASK_RETAIN_SECS
+    ]
+    for tid in expired:
+        del _running_tasks[tid]
+
 _SEQUENTIAL_DEVICE_TOOLS = {"connect_to_device", "disconnect_device", "run_show_command", "push_config"}
 _CONTINUATION_MSG = (
     "If there are more devices remaining in the batch, proceed to the next one now. "
@@ -445,6 +485,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[Message]
     model: str | None = None
+    source: str | None = None      # "web", "slack", "overseer" — for task tracker
 
 class EmailRequest(BaseModel):
     subject: str
@@ -484,6 +525,62 @@ async def email_report(request: EmailRequest):
     except Exception as e:
         log.error(f"/api/email error: {e}", exc_info=True)
         return {"ok": False, "error": str(e)}
+
+
+class InlineEmailRequest(BaseModel):
+    subject: str
+    html_body: str
+    recipient: str = None
+
+@app.post("/api/email/inline")
+async def email_inline(request: InlineEmailRequest):
+    """Send an HTML email rendered inline in the email body (no attachment)."""
+    try:
+        args = {
+            "subject":  request.subject,
+            "body":     request.html_body,
+            "is_html":  True,
+        }
+        if request.recipient:
+            args["recipient"] = request.recipient
+        result = await mcp_manager.call_tool("send_email", args)
+        text   = " ".join(
+            c.text for c in (result.content or [])
+            if hasattr(c, "text")
+        )
+        log.info(f"Inline HTML email sent: {request.subject}")
+        return {"ok": True, "message": text}
+    except Exception as e:
+        log.error(f"/api/email/inline error: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/tasks/running")
+async def get_running_tasks():
+    """Return all active and recently completed agent tasks."""
+    _prune_completed_tasks()
+    tasks = list(_running_tasks.values())
+    return {"tasks": tasks, "count": len(tasks)}
+
+
+@app.post("/api/tasks/register")
+async def register_task(request: Request):
+    """Register an external task (from gladius-pyats, etc.)."""
+    body = await request.json()
+    tid = _task_start(
+        agent=body.get("agent", "Automation"),
+        description=body.get("description", ""),
+        source=body.get("source", "automation"),
+        model=body.get("model", ""),
+    )
+    return {"id": tid}
+
+
+@app.post("/api/tasks/{task_id}/complete")
+async def complete_task(task_id: str):
+    """Mark an externally registered task as completed."""
+    _task_end(task_id)
+    return {"ok": True}
 
 
 @app.get("/api/health")
@@ -603,6 +700,18 @@ async def health_full():
     except Exception:
         results["gladius_slack"] = {"status": "error", "detail": "Container unreachable"}
 
+    # ── 9. Gladius Ping Monitor ────────────────────────────────────────────────
+    try:
+        t0 = time.monotonic()
+        r  = http_requests.get(f"{PING_URL}/api/health", timeout=3)
+        ms = int((time.monotonic() - t0) * 1000)
+        if r.status_code == 200:
+            results["gladius_ping"] = {"status": "ok", "detail": f"Running ({ms}ms)"}
+        else:
+            results["gladius_ping"] = {"status": "error", "detail": f"HTTP {r.status_code}"}
+    except Exception:
+        results["gladius_ping"] = {"status": "error", "detail": "Container unreachable"}
+
     # ── 7. Cisco PSIRT API ────────────────────────────────────────────────────
     if not PSIRT_CLIENT_KEY:
         results["psirt"] = {"status": "warn", "detail": "Credentials not configured"}
@@ -626,6 +735,32 @@ async def health_full():
             results["eox"] = {"status": "ok", "detail": f"Auth OK ({ms}ms)"}
         except Exception as e:
             results["eox"] = {"status": "error", "detail": str(e)}
+
+    # ── Jira Cloud ──────────────────────────────────────────────────────────
+    try:
+        t0 = time.monotonic()
+        r  = http_requests.get(f"{AUTOMATION_URL}/api/jira/status", timeout=5)
+        ms = int((time.monotonic() - t0) * 1000)
+        if r.status_code == 200:
+            d = r.json()
+            if d.get("configured"):
+                # Try a real auth check
+                import base64 as _b64
+                jira_url   = d.get("url", "")
+                # Hit the myself endpoint through the pyats proxy
+                r2 = http_requests.get(f"{AUTOMATION_URL}/api/jira/issues?status=Done", timeout=10)
+                ms2 = int((time.monotonic() - t0) * 1000)
+                if r2.status_code == 200:
+                    count = r2.json().get("count", 0)
+                    results["jira"] = {"status": "ok", "detail": f"Project: {d['project']} · {count} done tickets ({ms2}ms)"}
+                else:
+                    results["jira"] = {"status": "error", "detail": f"Auth failed ({r2.status_code})"}
+            else:
+                results["jira"] = {"status": "warn", "detail": "Not configured — set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT"}
+        else:
+            results["jira"] = {"status": "error", "detail": f"Automation Factory returned {r.status_code}"}
+    except Exception as e:
+        results["jira"] = {"status": "error", "detail": str(e)}
 
     # Overall status — error if any component is in error
     overall = "ok"
@@ -974,14 +1109,34 @@ async def save_audit(result: AuditResult):
     return {"status": "ok", "findings": len(result.findings)}
 
 
+def _last_user_msg(messages: list) -> str:
+    """Extract the last user message text for task description."""
+    for m in reversed(messages):
+        content = m.get("content", "") if isinstance(m, dict) else getattr(m, "content", "")
+        if content:
+            return str(content)[:200]
+    return "Agent task"
+
+async def _tracked_stream(gen, task_id: str):
+    """Wrap an async generator with task lifecycle tracking."""
+    try:
+        async for chunk in gen:
+            yield chunk
+    finally:
+        _task_end(task_id)
+
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
     use_model = request.model or MODEL
+    source = request.headers.get("X-Gladius-Source", "web") if hasattr(request, "headers") else "web"
+    src = request.source or "web"
+    tid = _task_start("Audit Agent", _last_user_msg(messages), source=src, model=use_model)
     return StreamingResponse(
-        stream_response(messages, model=use_model),
+        _tracked_stream(stream_response(messages, model=use_model), tid),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -993,8 +1148,10 @@ async def tshoot(request: ChatRequest):
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
     use_model = request.model or MODEL
+    src = request.source or "web"
+    tid = _task_start("Tshoot Agent", _last_user_msg(messages), source=src, model=use_model)
     return StreamingResponse(
-        stream_tshoot(messages, model=use_model),
+        _tracked_stream(stream_tshoot(messages, model=use_model), tid),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1679,6 +1836,7 @@ async def ingest_collections():
 
 
 SNMP_URL           = os.getenv("SNMP_SERVICE_URL",        "http://gladius-snmp:8000")
+PING_URL           = os.getenv("PING_SERVICE_URL",        "http://gladius-ping:8000")
 AUTOMATION_URL     = os.getenv("AUTOMATION_SERVICE_URL", "http://gladius-pyats:8090")
 SLACK_BOT_TOKEN  = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_ALERT_CHANNEL = os.getenv("SLACK_ALERT_CHANNEL", "")  # channel ID or user ID to post alerts to
@@ -1894,7 +2052,7 @@ async def snmp_poll(request: Request):
 
 # ── AUTOMATION FACTORY PROXY ──────────────────────────────────────────────────
 
-@app.api_route("/api/automation/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+@app.api_route("/api/automation/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def automation_proxy(path: str, request: Request):
     """Proxy all /api/automation/* requests to the gladius-pyats container.
     Chat endpoint streams SSE; all other endpoints return JSON."""
@@ -1902,7 +2060,7 @@ async def automation_proxy(path: str, request: Request):
     ct   = request.headers.get("Content-Type", "application/json")
     url  = f"{AUTOMATION_URL}/api/{path}"
 
-    if path in ("chat", "coder", "review"):
+    if path in ("chat", "coder", "review", "itsm"):
         import httpx as _hx
         async def _stream():
             async with _hx.AsyncClient(timeout=180.0) as c:
@@ -1919,6 +2077,48 @@ async def automation_proxy(path: str, request: Request):
         None, lambda: http_requests.request(
             request.method, url, data=body,
             headers={"Content-Type": ct}, timeout=300
+        )
+    )
+    return Response(
+        content=r.content,
+        status_code=r.status_code,
+        media_type=r.headers.get("content-type", "application/json"),
+    )
+
+
+# ── PING MONITOR PROXY ──────────────────────────────────────────────────────
+
+@app.api_route("/api/ping/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def ping_proxy(path: str, request: Request):
+    """Proxy all /api/ping/* requests to the gladius-ping container.
+    SSE endpoint streams; all other endpoints return JSON."""
+    body = await request.body()
+    ct   = request.headers.get("Content-Type", "application/json")
+    url  = f"{PING_URL}/api/{path}"
+
+    # SSE streaming for live updates
+    if path == "sse":
+        import httpx as _hx
+        async def _sse_stream():
+            async with _hx.AsyncClient(timeout=None) as c:
+                async with c.stream("GET", url) as r:
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
+        return StreamingResponse(
+            _sse_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Pass query string through for GET requests
+    qs = str(request.query_params)
+    if qs:
+        url = f"{url}?{qs}"
+
+    r = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: http_requests.request(
+            request.method, url, data=body,
+            headers={"Content-Type": ct}, timeout=30
         )
     )
     return Response(

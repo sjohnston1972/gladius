@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLADIUS // Project Showcase</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Inter:wght@300;400;600;700;900&display=swap');
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  :root {
+    --bg: #0a0e1a;
+    --bg2: #0f1526;
+    --surface: #151c30;
+    --border: #1e2a45;
+    --accent: #00d4ff;
+    --accent2: #7b61ff;
+    --danger: #ff4444;
+    --warn: #f59e0b;
+    --success: #00cc66;
+    --text: #e8ecf4;
+    --dim: #5a6a8a;
+    --glow: rgba(0,212,255,0.15);
+  }
+
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    overflow-x: hidden;
+  }
+
+  /* ── HERO ── */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% 0%, rgba(0,212,255,0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(123,97,255,0.06) 0%, transparent 50%);
+    pointer-events: none;
+  }
+  .hero-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    animation: gridPan 30s linear infinite;
+  }
+  @keyframes gridPan {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(60px); }
+  }
+
+  .hero-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 4px;
+    color: var(--accent);
+    border: 1px solid rgba(0,212,255,0.3);
+    padding: 6px 20px;
+    border-radius: 20px;
+    margin-bottom: 30px;
+    position: relative;
+    z-index: 1;
+    background: rgba(0,212,255,0.05);
+  }
+
+  .hero-title {
+    font-size: clamp(60px, 10vw, 120px);
+    font-weight: 900;
+    letter-spacing: -2px;
+    background: linear-gradient(135deg, #fff 0%, var(--accent) 50%, var(--accent2) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    position: relative;
+    z-index: 1;
+    line-height: 1;
+    cursor: default;
+  }
+  /* Glitch effect on hover */
+  .hero-title:hover {
+    animation: glitch 0.4s linear;
+  }
+  @keyframes glitch {
+    0%   { text-shadow: 2px 0 #ff4444, -2px 0 #00d4ff; transform: translate(0); }
+    20%  { text-shadow: -3px 0 #ff4444, 3px 0 #00d4ff; transform: translate(-2px, 1px); }
+    40%  { text-shadow: 3px 0 #ff4444, -3px 0 #00d4ff; transform: translate(2px, -1px); }
+    60%  { text-shadow: -2px 0 #ff4444, 2px 0 #00d4ff; transform: translate(-1px, 2px); }
+    80%  { text-shadow: 2px 0 #ff4444, -2px 0 #00d4ff; transform: translate(1px, -2px); }
+    100% { text-shadow: none; transform: translate(0); }
+  }
+
+  .hero-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(14px, 2vw, 18px);
+    color: var(--dim);
+    margin-top: 16px;
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    max-width: 600px;
+    line-height: 1.6;
+  }
+
+  .hero-scroll {
+    position: absolute;
+    bottom: 40px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: var(--dim);
+    animation: bob 2s ease-in-out infinite;
+  }
+  .hero-scroll::after {
+    content: '';
+    display: block;
+    width: 1px;
+    height: 40px;
+    background: linear-gradient(to bottom, var(--accent), transparent);
+    margin: 12px auto 0;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(8px); }
+  }
+
+  /* ── SECTIONS ── */
+  section {
+    padding: 100px 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--accent);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+  }
+
+  .section-title {
+    font-size: clamp(32px, 5vw, 48px);
+    font-weight: 700;
+    margin-bottom: 16px;
+    line-height: 1.1;
+  }
+
+  .section-desc {
+    font-size: 16px;
+    color: var(--dim);
+    max-width: 640px;
+    line-height: 1.7;
+    margin-bottom: 48px;
+  }
+
+  /* ── STAT GRID ── */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 60px;
+  }
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s, transform 0.3s;
+  }
+  .stat-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .stat-card.mini {
+    padding: 10px 14px;
+    text-align: center;
+  }
+  .stat-card.mini .stat-label {
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+  }
+  .stat-grid.mini {
+    gap: 8px;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    opacity: 0.5;
+  }
+  .stat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 36px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1;
+  }
+  .stat-num.purple { color: var(--accent2); }
+  .stat-num.green { color: var(--success); }
+  .stat-num.orange { color: var(--warn); }
+  .stat-num.red { color: var(--danger); }
+  .stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--dim);
+    margin-top: 8px;
+    text-transform: uppercase;
+  }
+
+  /* ── CONTAINER CARDS ── */
+  .container-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .container-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    transition: border-color 0.3s, transform 0.3s;
+    position: relative;
+  }
+  .container-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+  .container-card .cc-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .container-card .cc-desc {
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .container-card .cc-tech {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .cc-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: rgba(0,212,255,0.08);
+    color: var(--accent);
+    border: 1px solid rgba(0,212,255,0.15);
+  }
+  .cc-tag.purple { background: rgba(123,97,255,0.08); color: var(--accent2); border-color: rgba(123,97,255,0.15); }
+  .cc-tag.green  { background: rgba(0,204,102,0.08); color: var(--success); border-color: rgba(0,204,102,0.15); }
+
+  /* ── TIMELINE ── */
+  .timeline {
+    position: relative;
+    padding-left: 40px;
+  }
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: 12px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(to bottom, var(--accent), var(--accent2), var(--success));
+    border-radius: 2px;
+  }
+  .tl-item {
+    position: relative;
+    margin-bottom: 36px;
+    padding-left: 20px;
+  }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: -33px;
+    top: 6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  .tl-item:nth-child(even)::before { background: var(--accent2); box-shadow: 0 0 8px var(--accent2); }
+  .tl-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--accent);
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+  .tl-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .tl-desc {
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.6;
+  }
+
+  /* ── FEATURE LIST ── */
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .feature-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    transition: border-color 0.3s;
+  }
+  .feature-card:hover { border-color: var(--accent); }
+  .feature-card .fc-icon {
+    font-size: 24px;
+    margin-bottom: 10px;
+  }
+  .feature-card .fc-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .feature-card .fc-desc {
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+
+  /* ── CHALLENGES ── */
+  .challenge-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 20px;
+  }
+  .challenge-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  .challenge-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px;
+    height: 100%;
+  }
+  .challenge-card.problem::before { background: var(--danger); }
+  .challenge-card.solution::before { background: var(--success); }
+  .ch-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .ch-label.red { color: var(--danger); }
+  .ch-label.green { color: var(--success); }
+  .ch-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .ch-desc {
+    font-size: 13px;
+    color: var(--dim);
+    line-height: 1.6;
+  }
+
+  /* ── DIVIDER ── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+    margin: 0 40px;
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    text-align: center;
+    padding: 80px 40px 40px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--dim);
+    letter-spacing: 2px;
+  }
+  .footer-title {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 12px;
+    font-family: 'Inter', sans-serif;
+  }
+
+  /* ── NAV DOTS ── */
+  .nav-dots {
+    position: fixed;
+    right: 24px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    z-index: 100;
+  }
+  .nav-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border);
+    border: none;
+    cursor: pointer;
+    transition: all 0.3s;
+    padding: 0;
+  }
+  .nav-dot:hover, .nav-dot.active {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    transform: scale(1.4);
+  }
+
+  /* ── CODE BLOCK ── */
+  .code-block {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--dim);
+    line-height: 1.8;
+    overflow-x: auto;
+    margin: 24px 0;
+  }
+  .code-block .hl { color: var(--accent); }
+  .code-block .hl2 { color: var(--accent2); }
+  .code-block .hlg { color: var(--success); }
+  .code-block .hlo { color: var(--warn); }
+
+  /* ── SCROLL ANIMATIONS ── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity 0.8s ease, transform 0.8s ease;
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── STAGGERED STAT CARDS ── */
+  .stat-grid .stat-card {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+    transition: opacity 0.5s ease, transform 0.5s ease;
+  }
+  .stat-grid.visible .stat-card { opacity: 1; transform: translateY(0) scale(1); }
+
+  /* ── HERO TYPING CURSOR ── */
+  .hero-sub .typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 0.7s step-end infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+
+  /* ── PARTICLE CANVAS ── */
+  #particle-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  /* ── QUOTE ── */
+  .quote-block {
+    border-left: 3px solid var(--accent2);
+    padding: 20px 28px;
+    margin: 40px 0;
+    background: rgba(123,97,255,0.04);
+    border-radius: 0 8px 8px 0;
+  }
+  .quote-block p {
+    font-size: 16px;
+    font-style: italic;
+    color: var(--text);
+    line-height: 1.7;
+  }
+  .quote-block cite {
+    display: block;
+    margin-top: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--dim);
+    font-style: normal;
+  }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 768px) {
+    section { padding: 60px 20px; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .nav-dots { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV DOTS -->
+<nav class="nav-dots" id="nav-dots">
+  <button class="nav-dot active" data-target="hero" title="Home"></button>
+  <button class="nav-dot" data-target="numbers" title="By the Numbers"></button>
+  <button class="nav-dot" data-target="stack" title="The Stack"></button>
+  <button class="nav-dot" data-target="features" title="Features"></button>
+  <button class="nav-dot" data-target="journey" title="Journey"></button>
+  <button class="nav-dot" data-target="challenges" title="Challenges"></button>
+  <button class="nav-dot" data-target="ai" title="The AI Partnership"></button>
+  <button class="nav-dot" data-target="whats-next" title="What's Next"></button>
+</nav>
+
+<!-- HERO -->
+<div class="hero" id="hero">
+  <canvas id="particle-canvas"></canvas>
+  <div class="hero-grid"></div>
+  <div class="hero-badge">NETWORK SECURITY AIOps PLATFORM</div>
+  <h1 class="hero-title">GLADIUS //</h1>
+  <p class="hero-sub">An AI-powered network security AIOps platform built in 27 days.<br>From zero to 25,000 lines of production code.</p>
+  <div class="hero-scroll">SCROLL</div>
+</div>
+
+<!-- BY THE NUMBERS -->
+<div class="divider"></div>
+<section id="numbers">
+  <div class="reveal">
+    <div class="section-label">// 001 — METRICS</div>
+    <h2 class="section-title">By the Numbers</h2>
+    <p class="section-desc">What we built from Feb 28 to Mar 26, 2026. Twenty-seven days. One engineer. One AI collaborator. Zero frameworks.</p>
+  </div>
+
+  <div class="stat-grid reveal">
+    <div class="stat-card">
+      <div class="stat-num">25,240</div>
+      <div class="stat-label">Lines of Code</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num purple">84,826</div>
+      <div class="stat-label">Total Code Churn</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num green">71</div>
+      <div class="stat-label">Git Commits</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num orange">27</div>
+      <div class="stat-label">Days Elapsed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">14</div>
+      <div class="stat-label">Active Dev Days</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num purple">8</div>
+      <div class="stat-label">Docker Containers</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num green">7</div>
+      <div class="stat-label">Python Services</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num orange">10</div>
+      <div class="stat-label">MCP Tools</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num red">14,967</div>
+      <div class="stat-label">Frontend Lines (Single File)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">9</div>
+      <div class="stat-label">Colour Themes</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num red">7</div>
+      <div class="stat-label">AI Agents</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">20</div>
+      <div class="stat-label">Devices Monitored</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num purple">2,377</div>
+      <div class="stat-label">RAG DB Chunks</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num purple">~5M+</div>
+      <div class="stat-label">Tokens Consumed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num green">6</div>
+      <div class="stat-label">Frameworks &amp; Libraries</div>
+    </div>
+  </div>
+
+  <div class="stat-grid mini reveal" style="grid-template-columns:repeat(6,1fr);margin-top:-10px;">
+    <div class="stat-card mini"><div class="stat-label">FastAPI</div></div>
+    <div class="stat-card mini"><div class="stat-label">pyATS / Genie</div></div>
+    <div class="stat-card mini"><div class="stat-label">Slack Bolt</div></div>
+    <div class="stat-card mini"><div class="stat-label">Anthropic SDK</div></div>
+    <div class="stat-card mini"><div class="stat-label">ChromaDB</div></div>
+    <div class="stat-card mini"><div class="stat-label">pysnmp</div></div>
+  </div>
+
+  <div class="code-block reveal">
+    <span class="hl">$</span> wc -l *.py *.html<br>
+    &nbsp;&nbsp;<span class="hl2">3,156</span>&nbsp; gladius-api/server.py<br>
+    &nbsp;&nbsp;<span class="hl2">2,002</span>&nbsp; network-audit-mcp/server.py<br>
+    &nbsp;&nbsp;<span class="hl2">3,353</span>&nbsp; gladius-pyats/app.py<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="hl2">768</span>&nbsp; gladius-snmp/app.py<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="hl2">503</span>&nbsp; gladius-slack/app.py<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span class="hl2">491</span>&nbsp; gladius-overseer/app.py<br>
+    <span class="hlo">14,967</span>&nbsp; index.html&nbsp;&nbsp;<span class="hl">// yes, one file. yes, vanilla JS.</span><br>
+    <span class="hlg">25,240</span>&nbsp; total
+  </div>
+</section>
+
+<!-- THE STACK -->
+<div class="divider"></div>
+<section id="stack">
+  <div class="reveal">
+    <div class="section-label">// 002 — ARCHITECTURE</div>
+    <h2 class="section-title">The Stack</h2>
+    <p class="section-desc">Eight purpose-built containers working in concert. Each service owns a single responsibility. The entire platform runs on a single homelab host.</p>
+  </div>
+
+  <div class="container-grid reveal">
+    <div class="container-card">
+      <div class="cc-name">gladius-api</div>
+      <div class="cc-desc">The brain. FastAPI backend hosting the Claude audit agent, SSE streaming, parallel subagent architecture, and all API endpoints.</div>
+      <div class="cc-tech">
+        <span class="cc-tag">FASTAPI</span>
+        <span class="cc-tag">CLAUDE SONNET</span>
+        <span class="cc-tag">SSE</span>
+        <span class="cc-tag">3,156 LOC</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">network-audit-mcp</div>
+      <div class="cc-desc">MCP tool server. 10 tools including SSH, ChromaDB RAG, NVD CVE lookup, NMAP, Scapy, email, and audit result saving.</div>
+      <div class="cc-tech">
+        <span class="cc-tag">MCP PROTOCOL</span>
+        <span class="cc-tag">PARAMIKO SSH</span>
+        <span class="cc-tag">NMAP</span>
+        <span class="cc-tag">SCAPY</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">gladius-pyats</div>
+      <div class="cc-desc">Automation Factory. LLM-driven pyATS/Genie script generation, Genie Learn/Diff, ITSM agent, scheduling engine, and Jira Cloud integration.</div>
+      <div class="cc-tech">
+        <span class="cc-tag purple">OLLAMA</span>
+        <span class="cc-tag purple">PYATS</span>
+        <span class="cc-tag purple">GENIE</span>
+        <span class="cc-tag purple">JIRA API</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">gladius-snmp</div>
+      <div class="cc-desc">SNMP poller and protocol event engine. Monitors interfaces, BGP peers, and OSPF neighbors. Auto-creates Jira tickets on events.</div>
+      <div class="cc-tech">
+        <span class="cc-tag green">PYSNMP</span>
+        <span class="cc-tag green">BGP FSM</span>
+        <span class="cc-tag green">OSPF FSM</span>
+        <span class="cc-tag green">JIRA AUTO</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">gladius-slack</div>
+      <div class="cc-desc">Slack audit bot. Forwards messages to the Claude agent, collects results, posts formatted score cards with persistent conversation history.</div>
+      <div class="cc-tech">
+        <span class="cc-tag">SLACK BOLT</span>
+        <span class="cc-tag">SSE CLIENT</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">gladius-overseer</div>
+      <div class="cc-desc">AI overseer with full project access via Slack. Can read/write files, run commands, and proactively notify. A Claude agent managing Claude agents.</div>
+      <div class="cc-tech">
+        <span class="cc-tag purple">CLAUDE AGENT</span>
+        <span class="cc-tag purple">FILE I/O</span>
+        <span class="cc-tag purple">DOCKER API</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">chroma-db</div>
+      <div class="cc-desc">Vector database storing NIST 800-53 and CIS IOS XE benchmark embeddings. Powers the RAG knowledge base for audit findings.</div>
+      <div class="cc-tech">
+        <span class="cc-tag green">CHROMADB</span>
+        <span class="cc-tag green">EMBEDDINGS</span>
+      </div>
+    </div>
+    <div class="container-card">
+      <div class="cc-name">web-projects (nginx)</div>
+      <div class="cc-desc">Serves the entire frontend: 14,967 lines of vanilla JS, CSS, and HTML in a single file. Nine cyberpunk colour themes. Zero build step.</div>
+      <div class="cc-tech">
+        <span class="cc-tag">NGINX</span>
+        <span class="cc-tag">VANILLA JS</span>
+        <span class="cc-tag">14,967 LOC</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<div class="divider"></div>
+<section id="features">
+  <div class="reveal">
+    <div class="section-label">// 003 — CAPABILITIES</div>
+    <h2 class="section-title">What It Does</h2>
+    <p class="section-desc">From a blank terminal to a full-stack network security operations platform. Every feature listed here was designed, built, and shipped during this project.</p>
+  </div>
+
+  <div class="feature-grid reveal">
+    <div class="feature-card">
+      <div class="fc-icon">&#9876;</div>
+      <div class="fc-title">Agentic Security Audits</div>
+      <div class="fc-desc">Claude SSHes into Cisco devices, runs show commands, scores configs against NIST 800-53 and CIS benchmarks, finds CVEs, and generates remediation reports.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#9889;</div>
+      <div class="fc-title">Parallel Audit Engine</div>
+      <div class="fc-desc">Device + Threat Intel subagents run concurrently. What took 87s sequentially now completes in under 40s. Auto-detects multi-device requests.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128269;</div>
+      <div class="fc-title">NMAP + Scapy Scanning</div>
+      <div class="fc-desc">Agentic network scanning — Claude selects profiles and interprets results. Scapy packet forge for custom protocol testing. All via MCP tools.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128202;</div>
+      <div class="fc-title">SNMP Monitoring</div>
+      <div class="fc-desc">Real-time device polling with CPU, memory, interface tables, live utilisation sparklines, and protocol event detection (BGP, OSPF, interface state).</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#9881;</div>
+      <div class="fc-title">Automation Factory</div>
+      <div class="fc-desc">Ollama generates pyATS/Genie test scripts from natural language. Execute, validate, view results. Genie Learn snapshots and AI-powered Diff analysis.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128197;</div>
+      <div class="fc-title">Scheduling Engine</div>
+      <div class="fc-desc">Cron-based scheduling for Learn and Diff jobs. Auto-runs, Slack/email notifications, severity-based Jira auto-ticketing.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#127915;</div>
+      <div class="fc-title">Jira Cloud Integration</div>
+      <div class="fc-desc">ITSM agent creates, queries, and closes Jira tickets. Auto-tickets from SNMP events. Duplicate detection with merge recommendations.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128172;</div>
+      <div class="fc-title">ITSM Agent</div>
+      <div class="fc-desc">Ollama-powered service desk agent. Drafts ITIL-aligned incident tickets, reasons about duplicate events, suggests ticket merges.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128736;</div>
+      <div class="fc-title">Tshoot Agent</div>
+      <div class="fc-desc">Claude-powered diagnostics. SSHes into devices, pulls Jira context, updates tickets with findings, and closes resolved issues.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128232;</div>
+      <div class="fc-title">Email Reports</div>
+      <div class="fc-desc">Full HTML security reports generated in-browser and sent as email attachments. Claude's send_email calls are intercepted and templated.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128488;</div>
+      <div class="fc-title">Slack Integration</div>
+      <div class="fc-desc">Two Slack bots: audit bot forwards requests to Claude, overseer has full project access and can proactively notify via DM.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128196;</div>
+      <div class="fc-title">Intel Feeds</div>
+      <div class="fc-desc">Live CVE data from NVD, Cisco PSIRT advisories, and EOX end-of-life lookups. Per-row "ASK" buttons for agentic deep-dives.</div>
+    </div>
+  </div>
+</section>
+
+<!-- JOURNEY -->
+<div class="divider"></div>
+<section id="journey">
+  <div class="reveal">
+    <div class="section-label">// 004 — TIMELINE</div>
+    <h2 class="section-title">The Journey</h2>
+    <p class="section-desc">From initial commit to production platform in under a month. Each milestone built on the last.</p>
+  </div>
+
+  <div class="timeline reveal">
+    <div class="tl-item">
+      <div class="tl-date">FEB 28 — DAY 1</div>
+      <div class="tl-title">Initial Commit</div>
+      <div class="tl-desc">FastAPI + MCP + Claude agent + single-file frontend. First audit against a live Cisco device. Reports, CVE tab, activity log all shipped same day. Six commits in 5 hours.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 1-2 — DAYS 2-3</div>
+      <div class="tl-title">NMAP, Scapy, Slack</div>
+      <div class="tl-desc">Added agentic NMAP scanning, Scapy packet forge, colour themes, Slack audit bot, and the overseer agent. Battled Claude's safety refusals on Scapy SYN floods.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 3 — DAY 4</div>
+      <div class="tl-title">Cisco Intel Stack</div>
+      <div class="tl-desc">PSIRT advisory integration, EOX end-of-life lookups, OAuth token caching, per-row ASK buttons. Three major features in one day.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 5 — DAY 6</div>
+      <div class="tl-title">SNMP + Design Agent</div>
+      <div class="tl-desc">SNMP monitor with auto-investigate pipeline, document ingestion page, Design agent with RAG. The platform started feeling like a real NOC tool.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 8-11 — DAYS 9-12</div>
+      <div class="tl-title">Performance Arc</div>
+      <div class="tl-desc">Persistent MCP sessions (19s to 3.5s tool latency). Background init + pre-warm. Parallel audit subagents. 64% audit speedup. The obsession with performance paid off.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 21 — DAY 22</div>
+      <div class="tl-title">Automation Factory</div>
+      <div class="tl-desc">Ollama-driven pyATS script generation, Genie Learn/Diff pipeline, code agent, script repository. The platform became self-operating.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 23 — DAY 24</div>
+      <div class="tl-title">Protocol Events</div>
+      <div class="tl-desc">Interface, BGP, and OSPF state detection via SNMP. False alarm filtering for virtual interfaces and FSM negotiation noise. The hardest debugging session.</div>
+    </div>
+    <div class="tl-item">
+      <div class="tl-date">MAR 25-26 — DAYS 26-27</div>
+      <div class="tl-title">Jira + ITSM</div>
+      <div class="tl-desc">Full Jira Cloud integration. Auto-ticketing from SNMP events. ITSM agent with duplicate detection. Tshoot agent with Jira tools. Dashboard Jira tile. The circle was complete.</div>
+    </div>
+  </div>
+</section>
+
+<!-- CHALLENGES -->
+<div class="divider"></div>
+<section id="challenges">
+  <div class="reveal">
+    <div class="section-label">// 005 — BATTLES WON</div>
+    <h2 class="section-title">Challenges & Solutions</h2>
+    <p class="section-desc">Every ambitious project has its war stories. These are ours.</p>
+  </div>
+
+  <div class="challenge-grid reveal">
+    <div class="challenge-card problem">
+      <div class="ch-label red">CHALLENGE</div>
+      <div class="ch-title">The audit_saved Race Condition</div>
+      <div class="ch-desc">Audit results were being lost. The MCP tool POSTed to a webhook, but the SSE stream had already moved on. Reports never appeared in the dashboard.</div>
+    </div>
+    <div class="challenge-card solution">
+      <div class="ch-label green">SOLUTION</div>
+      <div class="ch-title">Emit from tool_input Directly</div>
+      <div class="ch-desc">Bypassed the HTTP POST entirely. The SSE stream now emits audit_saved directly from the tool_input event, eliminating the race condition. Fixed on Day 1.</div>
+    </div>
+
+    <div class="challenge-card problem">
+      <div class="ch-label red">CHALLENGE</div>
+      <div class="ch-title">19-Second Tool Latency</div>
+      <div class="ch-desc">Every MCP tool call took 9-19 seconds. The model was loading on every request. A full audit could take 5+ minutes.</div>
+    </div>
+    <div class="challenge-card solution">
+      <div class="ch-label green">SOLUTION</div>
+      <div class="ch-title">Persistent Sessions + Pre-Warm</div>
+      <div class="ch-desc">Switched to persistent MCP sessions, set HF_HUB_OFFLINE=1, background init with pre-warm. Tool latency dropped to 1.5-3.5 seconds. Audit time cut 64%.</div>
+    </div>
+
+    <div class="challenge-card problem">
+      <div class="ch-label red">CHALLENGE</div>
+      <div class="ch-title">SNMP False Alarm Storm</div>
+      <div class="ch-desc">Virtual interfaces (Null0, Loopback, SR0) appearing and disappearing between polls. BGP active&harr;idle cycling generating hundreds of alerts.</div>
+    </div>
+    <div class="challenge-card solution">
+      <div class="ch-label green">SOLUTION</div>
+      <div class="ch-title">FSM-Aware Filtering</div>
+      <div class="ch-desc">Ignore list for virtual interfaces. 2-consecutive-miss requirement. BGP/OSPF alerts only when transitioning to/from established/full state. Noise eliminated.</div>
+    </div>
+
+    <div class="challenge-card problem">
+      <div class="ch-label red">CHALLENGE</div>
+      <div class="ch-title">Claude Refusing Scapy Commands</div>
+      <div class="ch-desc">Claude's safety layer blocked SYN floods, ARP spoofing, and other offensive testing tools — even in an authorised homelab context.</div>
+    </div>
+    <div class="challenge-card solution">
+      <div class="ch-label green">SOLUTION</div>
+      <div class="ch-title">Authorization Context Prompt</div>
+      <div class="ch-desc">Established explicit homelab authorization in the system prompt. Removed hidden packet count caps. Claude now executes security tests without pushback.</div>
+    </div>
+
+    <div class="challenge-card problem">
+      <div class="ch-label red">CHALLENGE</div>
+      <div class="ch-title">Ollama Ignoring Instructions</div>
+      <div class="ch-desc">The small ITSM model (qwen2.5:7b) skipped duplicate ticket detection buried in long bullet lists. Merge suggestions never appeared.</div>
+    </div>
+    <div class="challenge-card solution">
+      <div class="ch-label green">SOLUTION</div>
+      <div class="ch-title">Prompt Architecture for Small Models</div>
+      <div class="ch-desc">Moved critical instructions to dedicated sections at the END of the prompt with mandatory output formats and concrete examples. Small models need structure, not prose.</div>
+    </div>
+
+    <div class="challenge-card problem">
+      <div class="ch-label red">CHALLENGE</div>
+      <div class="ch-title">14,967-Line Single File</div>
+      <div class="ch-desc">The entire frontend is one HTML file. CSS accidentally placed inside a JS template literal was silently ignored. Styles had no effect and we couldn't find why.</div>
+    </div>
+    <div class="challenge-card solution">
+      <div class="ch-label green">SOLUTION</div>
+      <div class="ch-title">Documented the Trap</div>
+      <div class="ch-desc">generateReportHTML() contains a &lt;style&gt; block inside a template literal. CSS there is a string, not applied. Now documented in CLAUDE.md so the AI never makes this mistake again.</div>
+    </div>
+  </div>
+</section>
+
+<!-- THE AI PARTNERSHIP -->
+<div class="divider"></div>
+<section id="ai">
+  <div class="reveal">
+    <div class="section-label">// 006 — THE COLLABORATION</div>
+    <h2 class="section-title">Human + AI</h2>
+    <p class="section-desc">This project wasn't built by a human who used AI as a tool. It was a genuine collaboration between a network engineer and an AI agent.</p>
+  </div>
+
+  <div class="reveal">
+    <div class="quote-block">
+      <p>"The human brings domain expertise, taste, and the ability to say 'that's wrong, try again.' The AI brings tireless execution, cross-domain knowledge, and the ability to hold 25,000 lines of code in working memory."</p>
+      <cite>// The Gladius development philosophy</cite>
+    </div>
+  </div>
+
+  <div class="stat-grid reveal">
+    <div class="stat-card">
+      <div class="stat-num">3</div>
+      <div class="stat-label">AI Models Used</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num purple">Claude</div>
+      <div class="stat-label">Primary Agent + Dev Partner</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num orange">Ollama</div>
+      <div class="stat-label">Local LLM (pyATS + ITSM)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num green">ChromaDB</div>
+      <div class="stat-label">RAG Vector Store</div>
+    </div>
+  </div>
+
+  <div class="feature-grid reveal">
+    <div class="feature-card">
+      <div class="fc-title">Claude as the Audit Agent</div>
+      <div class="fc-desc">Claude Sonnet drives the security audit — selecting tools, SSHing into devices, interpreting configs, scoring against benchmarks, and writing findings. It's the core intelligence.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-title">Claude as the Developer</div>
+      <div class="fc-desc">Every line of code in this project was pair-programmed with Claude Code. The AI writes the implementation; the human steers the vision. A multiplier, not a replacement.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-title">Ollama for Local Tasks</div>
+      <div class="fc-desc">The Automation Factory and ITSM agent run Ollama locally (qwen2.5-coder:7b). No API costs for routine script generation and ticket drafting. Smart task routing.</div>
+    </div>
+  </div>
+</section>
+
+<!-- WHAT'S NEXT -->
+<div class="divider"></div>
+<section id="whats-next">
+  <div class="reveal">
+    <div class="section-label">// 007 — THE ROAD AHEAD</div>
+    <h2 class="section-title">What's Next</h2>
+    <p class="section-desc">Gladius is a living platform. The architecture is built to grow.</p>
+  </div>
+
+  <div class="feature-grid reveal">
+    <div class="feature-card">
+      <div class="fc-icon">&#127760;</div>
+      <div class="fc-title">Multi-Vendor Support</div>
+      <div class="fc-desc">Extend beyond Cisco IOS/IOS-XE to Juniper, Arista, and Palo Alto. The MCP tool architecture makes this modular.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128200;</div>
+      <div class="fc-title">Trend Analysis</div>
+      <div class="fc-desc">Historical audit scoring over time. Track security posture improvements, identify regression patterns, compliance drift detection.</div>
+    </div>
+    <div class="feature-card">
+      <div class="fc-icon">&#128274;</div>
+      <div class="fc-title">Automated Remediation</div>
+      <div class="fc-desc">Claude already knows the fix commands. The next step is pushing config changes with approval gates and rollback capability.</div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<div class="divider"></div>
+<div class="footer">
+  <div class="footer-title">GLADIUS //</div>
+  <p>Built with Claude Code &middot; Feb &ndash; Mar 2026</p>
+  <p style="margin-top:8px; opacity:0.5">github.com/sjohnston1972/gladius</p>
+</div>
+
+<script>
+  // ── FLOATING PARTICLES ──
+  (function() {
+    const canvas = document.getElementById('particle-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let W, H, particles = [];
+    function resize() {
+      const hero = canvas.parentElement;
+      W = canvas.width = hero.offsetWidth;
+      H = canvas.height = hero.offsetHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    const COUNT = 50;
+    const CONNECT_DIST = 120;
+    for (let i = 0; i < COUNT; i++) {
+      particles.push({
+        x: Math.random() * W, y: Math.random() * H,
+        vx: (Math.random() - 0.5) * 0.4,
+        vy: (Math.random() - 0.5) * 0.4,
+        r: Math.random() * 2 + 1
+      });
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+      // lines
+      for (let i = 0; i < COUNT; i++) {
+        for (let j = i + 1; j < COUNT; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < CONNECT_DIST) {
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.strokeStyle = `rgba(0,212,255,${0.12 * (1 - dist / CONNECT_DIST)})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+          }
+        }
+      }
+      // dots
+      for (const p of particles) {
+        p.x += p.vx; p.y += p.vy;
+        if (p.x < 0 || p.x > W) p.vx *= -1;
+        if (p.y < 0 || p.y > H) p.vy *= -1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(0,212,255,0.25)';
+        ctx.fill();
+      }
+      requestAnimationFrame(draw);
+    }
+    draw();
+  })();
+
+  // ── TYPING EFFECT on hero subtitle ──
+  (function() {
+    const sub = document.querySelector('.hero-sub');
+    if (!sub) return;
+    const fullHTML = sub.innerHTML;
+    sub.innerHTML = '';
+    sub.style.visibility = 'visible';
+    // Flatten to text segments respecting <br> tags
+    const parts = fullHTML.split(/<br\s*\/?>/i);
+    let charIndex = 0, partIndex = 0;
+    const cursor = document.createElement('span');
+    cursor.className = 'typing-cursor';
+    sub.appendChild(cursor);
+
+    function typeChar() {
+      if (partIndex >= parts.length) { cursor.remove(); return; }
+      const text = parts[partIndex].replace(/<[^>]*>/g, ''); // strip tags for typing
+      if (charIndex < text.length) {
+        cursor.before(text[charIndex]);
+        charIndex++;
+        setTimeout(typeChar, 22);
+      } else {
+        partIndex++;
+        if (partIndex < parts.length) {
+          cursor.before(document.createElement('br'));
+          charIndex = 0;
+          setTimeout(typeChar, 200);
+        } else {
+          setTimeout(() => cursor.remove(), 1500);
+        }
+      }
+    }
+    setTimeout(typeChar, 600);
+  })();
+
+  // ── PARALLAX on hero ──
+  (function() {
+    const hero = document.querySelector('.hero');
+    const grid = document.querySelector('.hero-grid');
+    const badge = document.querySelector('.hero-badge');
+    const title = document.querySelector('.hero-title');
+    const sub = document.querySelector('.hero-sub');
+    window.addEventListener('scroll', () => {
+      const y = window.scrollY;
+      if (y > window.innerHeight) return;
+      if (grid) grid.style.transform = `translateY(${y * 0.3}px)`;
+      if (badge) badge.style.transform = `translateY(${y * 0.15}px)`;
+      if (title) title.style.transform = `translateY(${y * 0.25}px)`;
+      if (sub) sub.style.transform = `translateY(${y * 0.2}px)`;
+    }, { passive: true });
+  })();
+
+  // Scroll reveal with staggered stat cards
+  const reveals = document.querySelectorAll('.reveal');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        // Stagger child stat-cards
+        if (e.target.classList.contains('stat-grid')) {
+          const cards = e.target.querySelectorAll('.stat-card');
+          cards.forEach((card, i) => {
+            card.style.transitionDelay = `${i * 80}ms`;
+          });
+        }
+      }
+    });
+  }, { threshold: 0.1 });
+  reveals.forEach(el => observer.observe(el));
+
+  // Nav dots
+  const sections = document.querySelectorAll('section, .hero');
+  const dots = document.querySelectorAll('.nav-dot');
+  dots.forEach(dot => {
+    dot.addEventListener('click', () => {
+      const target = document.getElementById(dot.dataset.target);
+      if (target) target.scrollIntoView({ behavior: 'smooth' });
+    });
+  });
+  const dotObserver = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        dots.forEach(d => d.classList.remove('active'));
+        const match = [...dots].find(d => d.dataset.target === e.target.id);
+        if (match) match.classList.add('active');
+      }
+    });
+  }, { threshold: 0.3 });
+  sections.forEach(s => dotObserver.observe(s));
+
+  // Animate stat numbers on scroll
+  const statNums = document.querySelectorAll('.stat-num');
+  const numObserver = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      const el = e.target;
+      if (el.dataset.counted) return;
+      el.dataset.counted = '1';
+      const txt = el.textContent.trim();
+      const raw = txt.replace(/[^0-9.]/g, '');
+      const target = parseFloat(raw);
+      if (isNaN(target) || target === 0) return;
+      const isInt = !raw.includes('.');
+      const duration = 1800;
+      const start = performance.now();
+      // Extract prefix/suffix using the original text (with commas), not stripped digits
+      const m = txt.match(/^([^0-9]*)([\d,.]+)(.*)$/);
+      const prefix = m ? m[1] : '';
+      const suffix = m ? m[3] : '';
+      function tick(now) {
+        const p = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - p, 3);
+        const val = target * eased;
+        el.textContent = prefix + (isInt ? Math.round(val).toLocaleString() : val.toFixed(1)) + suffix;
+        if (p < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  }, { threshold: 0.5 });
+  statNums.forEach(el => numObserver.observe(el));
+</script>
+
+</body>
+</html>

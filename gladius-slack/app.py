@@ -166,7 +166,7 @@ def _update_progress(client, channel: str, ts: str, tool_calls: list[dict]) -> N
 
 
 def format_audit_blocks(audit: dict) -> list:
-    """Build a compact Slack Block Kit section for an audit result."""
+    """Build detailed Slack Block Kit sections for an audit result."""
     score    = audit.get("score", {})
     findings = audit.get("findings", [])
 
@@ -183,22 +183,104 @@ def format_audit_blocks(audit: dict) -> list:
 
     sev_str = " | ".join(sev_parts) if sev_parts else "None"
 
-    return [
+    # Score emoji
+    overall = score.get("overall", 0)
+    if isinstance(overall, (int, float)):
+        score_emoji = "🟢" if overall >= 80 else "🟡" if overall >= 60 else "🔴"
+    else:
+        score_emoji = "⚪"
+
+    blocks: list = [
         {"type": "divider"},
+        {
+            "type": "header",
+            "text": {"type": "plain_text", "text": f"🛡️ Audit: {audit.get('device', 'Unknown')}"},
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Device:*\n`{audit.get('device', '?')}`"},
+                {"type": "mrkdwn", "text": f"*IP:*\n`{audit.get('ip', '?')}`"},
+                {"type": "mrkdwn", "text": f"*IOS:*\n{audit.get('ios', 'N/A')}"},
+                {"type": "mrkdwn", "text": f"*Findings:*\n{len(findings)} total"},
+            ],
+        },
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*Audit: {audit.get('device', 'Unknown')}*  `{audit.get('ip', '')}`\n"
-                    f"IOS: {audit.get('ios', 'N/A')}\n"
-                    f"Score — Overall: *{score.get('overall', '?')}*  |  "
-                    f"NIST: {score.get('nist', '?')}  |  CIS: {score.get('cis', '?')}\n"
-                    f"Findings ({len(findings)}): {sev_str}"
+                    f"{score_emoji} *Score — Overall: {overall}/100*\n"
+                    f"    NIST: *{score.get('nist', '?')}*  |  CIS: *{score.get('cis', '?')}*\n"
+                    f"    {sev_str}"
                 ),
             },
         },
     ]
+
+    # Group findings by severity for detailed breakdown
+    SEV_EMOJI = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🔵", "PASS": "✅", "INFO": "ℹ️"}
+    for sev in ["CRITICAL", "HIGH", "MEDIUM"]:
+        sev_findings = [f for f in findings if f.get("severity") == sev]
+        if not sev_findings:
+            continue
+
+        emoji = SEV_EMOJI.get(sev, "⚪")
+        lines = [f"*{emoji} {sev} ({len(sev_findings)})*"]
+
+        for f in sev_findings:
+            title    = f.get("title", "Untitled")
+            category = f.get("category", "")
+            impact   = f.get("impact", "")
+            fix      = f.get("fix", "")
+            commands = f.get("commands", "")
+            cve_id   = f.get("cve_id", "")
+            ref      = f.get("ref", "")
+
+            line = f"• *{title}*"
+            if category:
+                line += f"  _{category}_"
+            if cve_id:
+                line += f"  `{cve_id}`"
+            lines.append(line)
+
+            if impact:
+                lines.append(f"    Impact: {impact[:150]}{'…' if len(impact) > 150 else ''}")
+            if fix:
+                lines.append(f"    Fix: {fix[:150]}{'…' if len(fix) > 150 else ''}")
+            if commands:
+                cmds = commands if len(commands) <= 100 else commands[:100] + "…"
+                lines.append(f"    `{cmds}`")
+            if ref:
+                lines.append(f"    <{ref}|Reference>")
+
+        # Slack block text limit is ~3000 chars; split if needed
+        text = "\n".join(lines)
+        for chunk in _chunk_text(text, SLACK_BLOCK_LIMIT):
+            blocks.append({
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": chunk},
+            })
+
+    # LOW + PASS summary (don't list individually)
+    low_count  = severity_counts.get("LOW", 0)
+    pass_count = severity_counts.get("PASS", 0)
+    info_count = severity_counts.get("INFO", 0)
+    summary_parts = []
+    if pass_count:
+        summary_parts.append(f"✅ {pass_count} passed")
+    if low_count:
+        summary_parts.append(f"🔵 {low_count} low")
+    if info_count:
+        summary_parts.append(f"ℹ️ {info_count} info")
+    if summary_parts:
+        blocks.append({
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": " | ".join(summary_parts)}],
+        })
+
+    blocks.append({"type": "divider"})
+    return blocks
 
 
 def call_gladius_streaming(
@@ -211,7 +293,7 @@ def call_gladius_streaming(
     Stream /api/chat SSE. Updates the Slack placeholder in real-time as tools run.
     Returns (final_text, audit_or_None).
     """
-    payload     = {"messages": history}
+    payload     = {"messages": history, "source": "slack"}
     text_parts: list[str]  = []
     audit: dict | None     = None
     tool_calls: list[dict] = []   # tracks active/completed tool calls for progress display

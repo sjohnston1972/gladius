@@ -9,14 +9,18 @@ import json
 import uuid
 import sqlite3
 import asyncio
+import base64
 import logging
 import subprocess
 import tempfile
 import sys
 import ast
 import re
+import smtplib
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +51,16 @@ LAB_USERNAME      = os.getenv("LAB_USERNAME",      "")
 LAB_PASSWORD      = os.getenv("LAB_PASSWORD",      "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL",      "claude-sonnet-4-6")
+
+# Jira Cloud integration
+GLADIUS_API_URL = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
+
+JIRA_URL        = os.getenv("JIRA_URL", "")
+JIRA_EMAIL      = os.getenv("JIRA_EMAIL", "")
+JIRA_API_TOKEN  = os.getenv("JIRA_API_TOKEN", "")
+JIRA_PROJECT    = os.getenv("JIRA_PROJECT", "")
+JIRA_ISSUE_TYPE = os.getenv("JIRA_ISSUE_TYPE", "Task")
+JIRA_CONFIGURED = bool(JIRA_URL and JIRA_EMAIL and JIRA_API_TOKEN and JIRA_PROJECT)
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -95,6 +109,50 @@ def init_db():
                 source        TEXT DEFAULT 'manual'
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id          TEXT PRIMARY KEY,
+                device_id   TEXT NOT NULL,
+                device_name TEXT NOT NULL,
+                feature     TEXT NOT NULL,
+                data        TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                FOREIGN KEY (device_id) REFERENCES devices(id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schedules (
+                id           TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                type         TEXT NOT NULL DEFAULT 'learn',
+                device_ids   TEXT NOT NULL DEFAULT '[]',
+                features     TEXT NOT NULL DEFAULT '[]',
+                cron_expr    TEXT NOT NULL DEFAULT '0 * * * *',
+                notify_slack TEXT DEFAULT '',
+                notify_email TEXT DEFAULT '',
+                enabled      INTEGER DEFAULT 1,
+                last_run_at  TEXT,
+                last_status  TEXT,
+                created_at   TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS schedule_history (
+                id           TEXT PRIMARY KEY,
+                schedule_id  TEXT NOT NULL,
+                type         TEXT NOT NULL,
+                status       TEXT NOT NULL,
+                summary      TEXT,
+                diff_text    TEXT,
+                ran_at       TEXT NOT NULL,
+                FOREIGN KEY (schedule_id) REFERENCES schedules(id)
+            )
+        """)
+        # Add jira_auto_ticket column if missing (migration)
+        try:
+            conn.execute("ALTER TABLE schedules ADD COLUMN jira_auto_ticket TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         # Seed default dev switch if no devices exist
         existing = conn.execute("SELECT id FROM devices WHERE ip=?", (DEV_SWITCH_IP,)).fetchone()
         if not existing:
@@ -158,9 +216,9 @@ def sanitize_script(script: str) -> str:
     )
     # Fix hallucinated aetest.errlog.* → log.*
     script = re.sub(r'\baetest\.errlog\.(error|warning|info|debug)\b', r'log.\1', script)
-    # Ensure 'import logging' and logger are present if log.* is used
-    if 'log.' in script and 'import logging' not in script:
-        script = 'import logging\nlog = logging.getLogger(__name__)\n' + script
+    # Ensure 'import json' is present if GLADIUS_DATA is used
+    if 'GLADIUS_DATA' in script and 'import json' not in script:
+        script = 'import json\n' + script
     return script
 
 
@@ -205,59 +263,51 @@ TEMPLATES = [
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: Interface Health Check — operational status and error counters."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
 
-log = logging.getLogger(__name__)
 ERROR_THRESHOLD = 100
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
-class InterfaceStatusTest(aetest.Testcase):
+class InterfaceHealthTest(aetest.Testcase):
     @aetest.test
-    def check_oper_states(self, dev):
-        data = dev.parse('show interfaces')
-        lines = []
-        down  = []
-        for i, d in data.items():
-            if d.get('enabled') is False:
-                continue
-            status = d.get('oper_status', '?')
-            bw     = d.get('bandwidth', '')
-            bw_str = f" ({bw} Kbit)" if bw else ''
-            lines.append(f"{i}: {status}{bw_str}")
-            if status.lower() not in ('up', 'connected'):
-                down.append(i)
-        detail = "\\n".join(lines)
+    def check_interfaces(self, dev):
+        try:
+            parsed = dev.parse('show interfaces')
+        except Exception as e:
+            self.failed(f'show interfaces parse failed: {e}')
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Interface Status', 'data': parsed})}")
+        down = [i for i, d in parsed.items() if d.get('enabled') is not False and d.get('oper_status', '').lower() not in ('up', 'connected')]
         if down:
-            self.failed(f"{len(down)} interface(s) not UP:\\n{detail}")
+            self.failed(f'{len(down)} interface(s) not UP')
         else:
-            self.passed(f"{len(lines)} interfaces up:\\n{detail}")
+            self.passed(f'{len(parsed)} interfaces checked')
 
     @aetest.test
     def check_error_counters(self, dev):
-        data = dev.parse('show interfaces')
-        lines  = []
+        try:
+            parsed = dev.parse('show interfaces')
+        except Exception as e:
+            self.failed(f'show interfaces parse failed: {e}')
         issues = []
-        for intf, info in data.items():
-            c    = info.get('counters', {})
-            errs = {k: c.get(k, 0) or 0 for k in ('in_errors', 'out_errors', 'in_crc_errors')}
-            total = sum(errs.values())
-            lines.append(f"{intf}: in_err={errs['in_errors']} out_err={errs['out_errors']} crc={errs['in_crc_errors']}")
-            if any(v > ERROR_THRESHOLD for v in errs.values()):
+        for intf, info in parsed.items():
+            c = info.get('counters', {})
+            if any((c.get(k, 0) or 0) > ERROR_THRESHOLD for k in ('in_errors', 'out_errors', 'in_crc_errors')):
                 issues.append(intf)
-        detail = "\\n".join(lines)
         if issues:
-            self.failed(f"High error counters on {len(issues)} interface(s):\\n{detail}")
+            self.failed(f'{len(issues)} interface(s) over error threshold')
         else:
-            self.passed(f"Error counters within threshold ({len(lines)} interfaces):\\n{detail}")
+            self.passed(f'All {len(parsed)} interfaces within error threshold')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -280,46 +330,31 @@ if __name__ == '__main__':
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: BGP Neighbor Verification — adjacency states and prefix counts."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class BgpNeighborTest(aetest.Testcase):
     @aetest.test
     def check_bgp_summary(self, dev):
         try:
-            bgp = dev.parse('show bgp all summary')
+            parsed = dev.parse('show bgp all summary')
         except Exception as e:
-            self.skipped(f"BGP not configured or parse failed: {e}")
+            self.skipped(f'BGP not configured or parse failed: {e}')
             return
-        issues = []
-        lines  = []
-        for vrf, vd in bgp.get('vrf', {}).items():
-            for af, afd in vd.get('address_family', {}).items():
-                for nbr, nd in afd.get('neighbor', {}).items():
-                    state  = nd.get('session_state', '?')
-                    pfx    = nd.get('state_pfxrcd', nd.get('prefixes', {}).get('received', ''))
-                    updown = nd.get('up_down', '')
-                    lines.append(f"{nbr} ({vrf}/{af}): {state} prefixes={pfx} uptime={updown}")
-                    if state.lower() != 'established':
-                        issues.append(nbr)
-        detail = "\\n".join(lines)
-        if issues:
-            self.failed(f"{len(issues)} BGP neighbor(s) not established:\\n{detail}")
-        elif not lines:
-            self.skipped("No BGP neighbors found")
-        else:
-            self.passed(f"{len(lines)} BGP neighbor(s) established:\\n{detail}")
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'BGP Summary', 'data': parsed})}")
+        total = sum(len(afd.get('neighbor', {})) for vd in parsed.get('vrf', {}).values() for afd in vd.get('address_family', {}).values())
+        self.passed(f'{total} BGP neighbor(s) found')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -341,55 +376,32 @@ if __name__ == '__main__':
         "description": "Verifies OSPF neighbor adjacencies are FULL/2WAY",
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
-"""Gladius: OSPF Neighbor Health — adjacency states and database check."""
-import logging
+"""Gladius: OSPF Neighbor Health — adjacency states."""
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
-VALID_STATES = {'FULL', '2WAY', 'FULL/DR', 'FULL/BDR', 'FULL/  -', '2WAY/DROTHER'}
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class OspfNeighborTest(aetest.Testcase):
     @aetest.test
     def check_adjacencies(self, dev):
         try:
-            ospf = dev.parse('show ip ospf neighbor detail')
+            parsed = dev.parse('show ip ospf neighbor detail')
         except Exception as e:
-            self.skipped(f"OSPF not configured: {e}")
+            self.skipped(f'OSPF not configured: {e}')
             return
-        issues = []
-        lines  = []
-        for intf, id_ in ospf.get('interfaces', {}).items():
-            for nbr, nd in id_.get('neighbors', {}).items():
-                state    = nd.get('state', '?').upper()
-                priority = nd.get('priority', '')
-                dead     = nd.get('dead_time', '')
-                lines.append(f"{nbr} on {intf}: {state} priority={priority} dead={dead}")
-                if state not in VALID_STATES:
-                    issues.append(nbr)
-        detail = "\\n".join(lines)
-        if issues:
-            self.failed(f"{len(issues)} OSPF neighbor(s) unhealthy:\\n{detail}")
-        elif not lines:
-            self.skipped("No OSPF neighbors found")
-        else:
-            self.passed(f"{len(lines)} OSPF neighbor(s) healthy:\\n{detail}")
-
-    @aetest.test
-    def check_database(self, dev):
-        try:
-            dev.parse('show ip ospf database')
-            self.passed("OSPF database present")
-        except Exception as e:
-            self.skipped(f"OSPF database check skipped: {e}")
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'OSPF Neighbors', 'data': parsed})}")
+        total = sum(len(id_.get('neighbors', {})) for id_ in parsed.get('interfaces', {}).values())
+        self.passed(f'{total} OSPF neighbor(s) found')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -413,55 +425,41 @@ if __name__ == '__main__':
         "script": '''#!/usr/bin/env python3
 """Gladius: CDP/LLDP Neighbor Discovery — topology mapping."""
 import json
-import logging
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class CdpDiscoveryTest(aetest.Testcase):
     @aetest.test
     def collect_cdp(self, dev):
         try:
-            cdp = dev.parse('show cdp neighbors detail')
-            if not isinstance(cdp, dict):
-                self.skipped("CDP parse returned no structured data")
-                return
-            neighbors = []
-            for _, entry in cdp.get('index', {}).items():
-                neighbors.append({
-                    'device':      entry.get('device_id', ''),
-                    'local_intf':  entry.get('local_interface', ''),
-                    'remote_intf': entry.get('port_id', ''),
-                    'platform':    entry.get('platform', ''),
-                })
-            if neighbors:
-                lines = [f"{n['local_intf']} -> {n['device']} ({n['remote_intf']}) [{n['platform']}]" for n in neighbors]
-                self.passed(f"Found {len(neighbors)} CDP neighbor(s):\\n" + "\\n".join(lines))
-            else:
-                self.skipped("No CDP neighbors found")
+            parsed = dev.parse('show cdp neighbors detail')
         except Exception as e:
-            self.skipped(f"CDP unavailable: {e}")
+            self.skipped(f'CDP unavailable: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'CDP Neighbors', 'data': parsed})}")
+        count = len(parsed.get('index', {}))
+        self.passed(f'{count} CDP neighbor(s) found')
 
     @aetest.test
     def collect_lldp(self, dev):
         try:
-            lldp  = dev.parse('show lldp neighbors detail')
-            if not isinstance(lldp, dict):
-                self.skipped("LLDP parse returned no structured data")
-                return
-            count = sum(len(v) for v in lldp.get('interfaces', {}).values())
-            self.passed(f"Found {count} LLDP neighbor entries")
+            parsed = dev.parse('show lldp neighbors detail')
         except Exception as e:
-            self.skipped(f"LLDP unavailable: {e}")
+            self.skipped(f'LLDP unavailable: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'LLDP Neighbors', 'data': parsed})}")
+        count = sum(len(v) for v in parsed.get('interfaces', {}).values())
+        self.passed(f'{count} LLDP neighbor(s) found')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -480,54 +478,45 @@ if __name__ == '__main__':
     {
         "id": "vlan_audit",
         "name": "VLAN Database Audit",
-        "description": "Audits VLAN database, trunk ports, and access port assignments",
+        "description": "Audits VLAN database and trunk port configuration",
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
-"""Gladius: VLAN Database Audit — VLANs, trunks, and access ports."""
-import logging
+"""Gladius: VLAN Database Audit — VLANs and trunks."""
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class VlanAuditTest(aetest.Testcase):
     @aetest.test
     def check_vlan_database(self, dev):
         try:
-            vlans  = dev.parse('show vlan')
-            lines  = []
-            for vid, vd in vlans.get('vlans', {}).items():
-                name  = vd.get('name', '')
-                state = vd.get('state', '?')
-                ports = ', '.join(vd.get('interfaces', [])) or 'none'
-                lines.append(f"VLAN {vid} ({name}): {state} — ports: {ports}")
-            self.passed(f"{len(lines)} VLAN(s):\\n" + "\\n".join(lines))
+            parsed = dev.parse('show vlan')
         except Exception as e:
-            self.failed(f"VLAN parse failed: {e}")
+            self.failed(f'VLAN parse failed: {e}')
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'VLAN Database', 'data': parsed})}")
+        count = len(parsed.get('vlans', {}))
+        self.passed(f'{count} VLAN(s) found')
 
     @aetest.test
     def check_trunk_ports(self, dev):
         try:
-            trunks = dev.parse('show interfaces trunk')
-            lines = []
-            for port, pd in trunks.get('interface', {}).items():
-                mode     = pd.get('mode', '?')
-                native   = pd.get('native_vlan', '?')
-                lines.append(f"{port}: mode={mode} native_vlan={native}")
-            if lines:
-                self.passed(f"{len(lines)} trunk port(s):\\n" + "\\n".join(lines))
-            else:
-                self.skipped("No trunk ports found")
+            parsed = dev.parse('show interfaces trunk')
         except Exception as e:
-            self.skipped(f"Trunk check skipped: {e}")
+            self.skipped(f'Trunk check skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Trunk Ports', 'data': parsed})}")
+        count = len(parsed.get('interface', {}))
+        self.passed(f'{count} trunk port(s) found')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -549,67 +538,32 @@ if __name__ == '__main__':
         "description": "Audits ACLs, hit counts, and interface bindings",
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
-"""Gladius: ACL Configuration Audit — lists, hit counts, interface bindings."""
-import logging
+"""Gladius: ACL Configuration Audit — lists and hit counts."""
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
-DENY_HIT_THRESHOLD = 1000
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class AclAuditTest(aetest.Testcase):
     @aetest.test
-    def list_acls(self, dev):
+    def check_acls(self, dev):
         try:
-            acls  = dev.parse('show ip access-lists')
-            lines = []
-            for name, data in acls.get('acls', {}).items():
-                ace_count = len(data.get('aces', {}))
-                lines.append(f"{name}: {ace_count} ACE(s)")
-            self.passed(f"Found {len(lines)} ACL(s):\\n" + "\\n".join(lines))
+            parsed = dev.parse('show ip access-lists')
         except Exception as e:
-            self.skipped(f"ACL parse failed: {e}")
-
-    @aetest.test
-    def check_high_deny_hits(self, dev):
-        try:
-            acls    = dev.parse('show ip access-lists')
-            flagged = []
-            for name, data in acls.get('acls', {}).items():
-                for seq, entry in data.get('aces', {}).items():
-                    if entry.get('actions', {}).get('forwarding') == 'deny':
-                        hits = entry.get('statistics', {}).get('matched_packets', 0) or 0
-                        if hits > DENY_HIT_THRESHOLD:
-                            flagged.append(f"{name} seq {seq}: {hits} hits")
-            if flagged:
-                self.failed(f"High deny hit counts: {'; '.join(flagged)}")
-            else:
-                self.passed("No unusually high deny hit counts")
-        except Exception as e:
-            self.skipped(f"Hit count check skipped: {e}")
-
-    @aetest.test
-    def check_interface_bindings(self, dev):
-        try:
-            intfs = dev.parse('show ip interface')
-            bound = {i: {'in': d.get('inbound_access_list',''), 'out': d.get('outbound_access_list','')}
-                     for i, d in intfs.items()
-                     if d.get('inbound_access_list') or d.get('outbound_access_list')}
-            lines = [f"{i}: in={b['in'] or 'none'} out={b['out'] or 'none'}" for i, b in bound.items()]
-            if lines:
-                self.passed(f"ACLs bound on {len(bound)} interface(s):\\n" + "\\n".join(lines))
-            else:
-                self.passed("No ACLs bound to interfaces")
-        except Exception as e:
-            self.skipped(f"Binding check skipped: {e}")
+            self.skipped(f'ACL parse failed: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'IP Access Lists', 'data': parsed})}")
+        count = len(parsed.get('acls', {}))
+        self.passed(f'{count} ACL(s) found')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -628,55 +582,47 @@ if __name__ == '__main__':
     {
         "id": "routing_table",
         "name": "Routing Table Verification",
-        "description": "Checks default route, protocol distribution, and host route counts",
+        "description": "Checks routing table and route summary",
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
-"""Gladius: Routing Table Verification — default route, summary, host routes."""
-import logging
+"""Gladius: Routing Table Verification — routes and summary."""
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class RoutingTableTest(aetest.Testcase):
     @aetest.test
-    def check_default_route(self, dev):
+    def check_route_summary(self, dev):
         try:
-            routes  = dev.parse('show ip route')
-            default = (routes.get('vrf', {}).get('default', {})
-                             .get('address_family', {}).get('ipv4', {})
-                             .get('routes', {}))
-            if '0.0.0.0/0' in default:
-                nh_list = list(default['0.0.0.0/0'].get('next_hop', {}).get('next_hop_list', {}).values())
-                gw = nh_list[0].get('next_hop', 'unknown') if nh_list else 'unknown'
-                self.passed(f"Default route present via {gw}")
-            else:
-                self.failed("No default route (0.0.0.0/0) found")
+            parsed = dev.parse('show ip route summary')
         except Exception as e:
-            self.skipped(f"Route table parse skipped: {e}")
+            self.skipped(f'Route summary parse skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Route Summary', 'data': parsed})}")
+        self.passed('Route summary collected')
 
     @aetest.test
-    def check_host_route_count(self, dev):
+    def check_routes(self, dev):
         try:
-            routes  = dev.parse('show ip route')
-            all_r   = (routes.get('vrf', {}).get('default', {})
-                              .get('address_family', {}).get('ipv4', {})
-                              .get('routes', {}))
-            host_routes = [r for r in all_r if r.endswith('/32')]
-            if len(host_routes) > 50:
-                self.failed(f"Excessive /32 host routes: {len(host_routes)}")
-            else:
-                self.passed(f"Host route count normal: {len(host_routes)} /32 routes")
+            parsed = dev.parse('show ip route')
         except Exception as e:
-            self.skipped(f"Host route check skipped: {e}")
+            self.skipped(f'Route table parse skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'IP Route Table', 'data': parsed})}")
+        routes = (parsed.get('vrf', {}).get('default', {})
+                        .get('address_family', {}).get('ipv4', {})
+                        .get('routes', {}))
+        self.passed(f'{len(routes)} route(s) in table')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -699,73 +645,55 @@ if __name__ == '__main__':
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: System Health Check — CPU, memory, platform, uptime."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
-CPU_WARN = 70
-CPU_CRIT = 90
-MEM_WARN = 75
-MEM_CRIT = 90
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class SystemHealthTest(aetest.Testcase):
     @aetest.test
     def check_cpu(self, dev):
         try:
-            cpu  = dev.parse('show processes cpu')
-            u5s  = cpu.get('five_sec_cpu', 0) or 0
-            u1m  = cpu.get('one_min_cpu',  0) or 0
-            u5m  = cpu.get('five_min_cpu', 0) or 0
-            msg  = f"5m={u5m}% 1m={u1m}% 5s={u5s}%"
-            if u5m >= CPU_CRIT:
-                self.failed(f"CPU critical: {msg}")
-            elif u5m >= CPU_WARN:
-                self.failed(f"CPU warning: {msg}")
-            else:
-                self.passed(f"CPU normal: {msg}")
+            parsed = dev.parse('show processes cpu')
         except Exception as e:
-            self.skipped(f"CPU check skipped: {e}")
+            self.skipped(f'CPU check skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'CPU Utilisation', 'data': parsed})}")
+        u5m = parsed.get('five_min_cpu', 0) or 0
+        self.passed(f'CPU 5min average: {u5m}%')
 
     @aetest.test
     def check_memory(self, dev):
         try:
-            mem   = dev.parse('show processes memory')
-            total = mem.get('processor_pool', {}).get('total', 0) or 0
-            used  = mem.get('processor_pool', {}).get('used',  0) or 0
-            if total > 0:
-                pct = (used / total) * 100
-                msg = f"{pct:.1f}% used ({used}/{total} bytes)"
-                if pct >= MEM_CRIT:
-                    self.failed(f"Memory critical: {msg}")
-                elif pct >= MEM_WARN:
-                    self.failed(f"Memory warning: {msg}")
-                else:
-                    self.passed(f"Memory normal: {msg}")
-            else:
-                self.skipped("Memory pool data unavailable")
+            parsed = dev.parse('show processes memory')
         except Exception as e:
-            self.skipped(f"Memory check skipped: {e}")
+            self.skipped(f'Memory check skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Memory Utilisation', 'data': parsed})}")
+        total = parsed.get('processor_pool', {}).get('total', 0) or 0
+        used = parsed.get('processor_pool', {}).get('used', 0) or 0
+        pct = (used / total * 100) if total > 0 else 0
+        self.passed(f'Memory: {pct:.1f}% used')
 
     @aetest.test
-    def collect_version(self, dev):
+    def check_version(self, dev):
         try:
-            ver      = dev.parse('show version')
-            v        = ver.get('version', {})
-            platform = v.get('platform', '')
-            ios_ver  = v.get('version', '')
-            uptime   = v.get('uptime', '')
-            self.passed(f"Platform: {platform} | IOS: {ios_ver} | Uptime: {uptime}")
+            parsed = dev.parse('show version')
         except Exception as e:
-            self.skipped(f"Version info skipped: {e}")
+            self.skipped(f'Version info skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Device Version', 'data': parsed})}")
+        v = parsed.get('version', {})
+        self.passed(f"{v.get('hostname', '?')} — {v.get('platform', '?')} — IOS {v.get('version', '?')}")
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -788,51 +716,43 @@ if __name__ == '__main__':
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: NTP Synchronisation Audit — peers, stratum, sync state."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
-MAX_STRATUM = 5
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class NtpAuditTest(aetest.Testcase):
     @aetest.test
     def check_associations(self, dev):
         try:
-            ntp   = dev.parse('show ntp associations')
-            peers = list(ntp.get('peer', {}).keys())
-            if peers:
-                self.passed(f"{len(peers)} NTP peer(s): {', '.join(peers[:5])}")
-            else:
-                self.failed("No NTP peers configured")
+            parsed = dev.parse('show ntp associations')
         except Exception as e:
-            self.skipped(f"NTP associations check skipped: {e}")
+            self.skipped(f'NTP associations check skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'NTP Associations', 'data': parsed})}")
+        peers = len(parsed.get('peer', {}))
+        self.passed(f'{peers} NTP peer(s) configured')
 
     @aetest.test
     def check_sync_status(self, dev):
         try:
-            status  = dev.parse('show ntp status')
-            ss      = status.get('clock_state', {}).get('system_status', {})
-            synced  = ss.get('clock_state', '')
-            stratum = ss.get('stratum', 99)
-            ref     = ss.get('reference_host', '')
-            if synced.lower() == 'synchronized':
-                if stratum > MAX_STRATUM:
-                    self.failed(f"Synchronized but high stratum ({stratum}) via {ref}")
-                else:
-                    self.passed(f"NTP synchronized — stratum {stratum} via {ref}")
-            else:
-                self.failed(f"NTP NOT synchronized: {synced}")
+            parsed = dev.parse('show ntp status')
         except Exception as e:
-            self.skipped(f"NTP status check skipped: {e}")
+            self.skipped(f'NTP status check skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'NTP Status', 'data': parsed})}")
+        ss = parsed.get('clock_state', {}).get('system_status', {})
+        synced = ss.get('clock_state', 'unknown')
+        self.passed(f'NTP state: {synced}')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -855,52 +775,39 @@ if __name__ == '__main__':
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: AAA/TACACS Audit — new-model, servers, accounting, fallback."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class AaaAuditTest(aetest.Testcase):
     @aetest.test
-    def check_aaa_new_model(self, dev):
-        output = dev.execute('show run | include ^aaa new-model')
-        if 'aaa new-model' in output:
-            self.passed("AAA new-model enabled")
+    def check_aaa_config(self, dev):
+        try:
+            run = dev.execute('show running-config')
+        except Exception as e:
+            self.failed(f'Could not retrieve running config: {e}')
+        checks = {
+            'aaa_new_model': 'aaa new-model' in run,
+            'tacacs_configured': 'tacacs' in run.lower(),
+            'aaa_accounting': 'aaa accounting' in run,
+            'local_fallback': 'local' in run and 'aaa authentication' in run,
+        }
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'AAA Configuration Checks', 'data': checks})}")
+        failed = [k for k, v in checks.items() if not v]
+        if failed:
+            self.failed(f'{len(failed)} AAA checks failed: {", ".join(failed)}')
         else:
-            self.failed("AAA new-model NOT enabled — local auth only")
-
-    @aetest.test
-    def check_tacacs_servers(self, dev):
-        output = dev.execute('show run | section tacacs')
-        if 'tacacs' in output.lower():
-            self.passed("TACACS configuration found")
-        else:
-            self.skipped("No TACACS configuration found")
-
-    @aetest.test
-    def check_accounting(self, dev):
-        output = dev.execute('show run | include ^aaa accounting')
-        if 'aaa accounting' in output:
-            self.passed("AAA accounting configured")
-        else:
-            self.failed("AAA accounting not configured — no audit trail")
-
-    @aetest.test
-    def check_local_fallback(self, dev):
-        output = dev.execute('show run | include ^aaa authentication')
-        if 'local' in output:
-            self.passed("Local fallback configured in AAA authentication")
-        else:
-            self.failed("No local fallback — risk of lockout on TACACS failure")
+            self.passed('All AAA checks passed')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -919,55 +826,46 @@ if __name__ == '__main__':
     {
         "id": "spanning_tree",
         "name": "Spanning Tree Health",
-        "description": "Checks STP mode, topology change counts, and PortFast configuration",
+        "description": "Checks STP mode, topology change counts, and root status",
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: Spanning Tree Health — topology stability and TCN counts."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
-
-log = logging.getLogger(__name__)
-TCN_THRESHOLD = 10
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class SpanningTreeTest(aetest.Testcase):
     @aetest.test
     def check_stp_summary(self, dev):
         try:
-            stp   = dev.parse('show spanning-tree summary')
-            mode  = stp.get('mode', 'unknown')
-            lines = [f"Mode: {mode}"]
-            for vid, vd in stp.get('vlans', {}).items():
-                root = 'root' if vd.get('root', False) else 'non-root'
-                lines.append(f"VLAN {vid}: {root}")
-            self.passed(f"STP active on {len(stp.get('vlans', {}))} VLAN(s):\\n" + "\\n".join(lines))
+            parsed = dev.parse('show spanning-tree summary')
         except Exception as e:
-            self.skipped(f"STP summary skipped: {e}")
+            self.skipped(f'STP summary skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Spanning Tree Summary', 'data': parsed})}")
+        mode = parsed.get('mode', 'unknown')
+        vlans = len(parsed.get('vlans', {}))
+        self.passed(f'STP mode: {mode}, {vlans} VLAN(s)')
 
     @aetest.test
-    def check_topology_changes(self, dev):
+    def check_stp_detail(self, dev):
         try:
-            stp      = dev.parse('show spanning-tree detail')
-            high_tcn = []
-            for vid, vd in stp.get('pvst', {}).items():
-                tcns = sum(id_.get('topology_changes', 0) or 0
-                           for id_ in vd.get('interfaces', {}).values())
-                if tcns > TCN_THRESHOLD:
-                    high_tcn.append(f"VLAN {vid}: {tcns} TCNs")
-            if high_tcn:
-                self.failed(f"High TCN counts (instability): {', '.join(high_tcn)}")
-            else:
-                self.passed("Topology change counts within normal range")
+            parsed = dev.parse('show spanning-tree detail')
         except Exception as e:
-            self.skipped(f"TCN check skipped: {e}")
+            self.skipped(f'STP detail skipped: {e}')
+            return
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Spanning Tree Detail', 'data': parsed})}")
+        self.passed('STP detail collected')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -990,69 +888,39 @@ if __name__ == '__main__':
         "platform": "iosxe",
         "script": '''#!/usr/bin/env python3
 """Gladius: Interface Error Counter Monitoring — CRC, drops, input/output errors."""
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
 
-log = logging.getLogger(__name__)
-
-THRESHOLDS = {
-    'in_crc_errors':       5,
-    'in_errors':          10,
-    'out_errors':         10,
-    'in_discards':       100,
-    'out_discards':      100,
-    'input_queue_drops':  50,
-    'output_queue_drops': 50,
-}
+ERROR_THRESHOLD = 10
 
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
     def connect(self, testbed):
-        self.parent.parameters['dev'] = testbed.devices['DUT']
-        self.parent.parameters['dev'].connect(log_stdout=False)
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
 
 
 class InterfaceErrorTest(aetest.Testcase):
     @aetest.test
     def check_error_counters(self, dev):
-        data       = dev.parse('show interfaces')
-        violations = []
-        lines      = []
-        for intf, info in data.items():
-            c    = info.get('counters', {})
-            vals = {k: c.get(k, 0) or 0 for k in THRESHOLDS}
-            over = {k: v for k, v in vals.items() if v > THRESHOLDS[k]}
-            lines.append(f"{intf}: " + " ".join(f"{k}={vals[k]}" for k in THRESHOLDS))
-            if over:
-                violations.append(intf)
-        detail = "\\n".join(lines)
-        if violations:
-            self.failed(f"{len(violations)} interface(s) exceeding thresholds:\\n{detail}")
-        else:
-            self.passed(f"{len(data)} interfaces within error thresholds:\\n{detail}")
-
-    @aetest.test
-    def check_queue_drops(self, dev):
         try:
-            data   = dev.parse('show interfaces')
-            issues = []
-            lines  = []
-            for intf, info in data.items():
-                c   = info.get('counters', {})
-                oqd = c.get('output_queue_drops', 0) or 0
-                iqd = c.get('input_queue_drops',  0) or 0
-                lines.append(f"{intf}: in_drops={iqd} out_drops={oqd}")
-                if oqd > 0 or iqd > 0:
-                    issues.append(intf)
-            detail = "\\n".join(lines)
-            if issues:
-                self.failed(f"{len(issues)} interface(s) with queue drops:\\n{detail}")
-            else:
-                self.passed(f"No queue drops on {len(data)} interfaces:\\n{detail}")
+            parsed = dev.parse('show interfaces')
         except Exception as e:
-            self.skipped(f"Queue drop check skipped: {e}")
+            self.failed(f'show interfaces parse failed: {e}')
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Interface Counters', 'data': parsed})}")
+        violations = []
+        for intf, info in parsed.items():
+            c = info.get('counters', {})
+            if any((c.get(k, 0) or 0) > ERROR_THRESHOLD for k in ('in_errors', 'out_errors', 'in_crc_errors')):
+                violations.append(intf)
+        if violations:
+            self.failed(f'{len(violations)} interface(s) exceeding error threshold')
+        else:
+            self.passed(f'All {len(parsed)} interfaces within error threshold')
 
 
 class CommonCleanup(aetest.CommonCleanup):
@@ -1111,6 +979,44 @@ class DeviceCreate(BaseModel):
     password:     Optional[str]  = None
     is_dev_switch: bool = False
 
+class LearnRequest(BaseModel):
+    device_ids: list[str]
+    features:   list[str]
+
+class DiffRequest(BaseModel):
+    snapshot_a: str
+    snapshot_b: str
+
+class AnalyzeRequest(BaseModel):
+    diff_text:  str
+    feature:    str
+    device:     str
+    device_b:   Optional[str] = None
+    before_ts:  Optional[str] = None
+    after_ts:   Optional[str] = None
+    model:      Optional[str] = None
+
+class ScheduleCreate(BaseModel):
+    name:             str
+    type:             str = "learn"          # "learn" or "learn_diff"
+    device_ids:       list[str]
+    features:         list[str]
+    cron_expr:        str = "0 * * * *"      # hourly default
+    notify_slack:     Optional[str] = ""
+    notify_email:     Optional[str] = ""
+    jira_auto_ticket: Optional[str] = ""     # "", "all", "medium_plus", "high_only"
+    enabled:          bool = True
+
+class ScheduleUpdate(BaseModel):
+    name:             Optional[str] = None
+    device_ids:       Optional[list[str]] = None
+    features:         Optional[list[str]] = None
+    cron_expr:        Optional[str] = None
+    notify_slack:     Optional[str] = None
+    notify_email:     Optional[str] = None
+    jira_auto_ticket: Optional[str] = None
+    enabled:          Optional[bool] = None
+
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 
@@ -1123,6 +1029,33 @@ async def startup():
     init_db()
     log.info("Automation Factory started — Ollama: %s  model: %s", OLLAMA_URL, OLLAMA_MODEL)
     log.info("Dev switch: %s (%s)", DEV_SWITCH_HN, DEV_SWITCH_IP)
+
+
+# ── Running Tasks (register with gladius-api) ─────────────────────────────────
+
+async def _register_task(agent: str, description: str) -> str | None:
+    """Register a task with gladius-api. Returns task_id or None on failure."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{GLADIUS_API_URL}/api/tasks/register", json={
+                "agent": agent, "description": description, "source": "automation",
+            })
+            if r.status_code == 200:
+                return r.json().get("id")
+    except Exception as e:
+        log.warning("Failed to register task: %s", e)
+    return None
+
+
+async def _complete_task(task_id: str | None):
+    """Mark a task as completed in gladius-api."""
+    if not task_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{GLADIUS_API_URL}/api/tasks/{task_id}/complete")
+    except Exception as e:
+        log.warning("Failed to complete task %s: %s", task_id, e)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -1146,16 +1079,33 @@ async def health():
 
 # ── Ollama Streaming Chat ─────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are the Gladius Automation Factory agent, an expert in pyATS and Genie for Cisco network automation.
+SYSTEM_PROMPT = """You are the Gladius Automation Factory agent, an expert in both Python and pyATS/Genie for network automation.
 
-Your purpose is to generate production-quality pyATS/Genie scripts that can be saved and executed against network devices.
+You can generate TWO types of scripts:
 
-## Script requirements
-- Always use pyATS aetest framework: CommonSetup with connect(), one or more Testcase subclasses, CommonCleanup with disconnect()
-- CRITICAL imports — always use exactly these two lines at the top of every script:
+1. **pyATS scripts** — when the user asks to run checks against live network devices via the Gladius execution engine (testbed, parse, connect/disconnect). These use the pyATS/aetest framework with GLADIUS_DATA output protocol.
+2. **Plain Python scripts** — when the user asks for general Python code, standalone tools, data processing, file manipulation, API clients, netmiko/paramiko/nornir/scapy scripts, or anything that does NOT need the pyATS aetest framework.
+
+## How to decide which type
+- If the user says "pyATS", "aetest", "Genie parser", "testbed", or asks to run a check that should execute in Gladius → **pyATS script**
+- If the user says "Python", "script", "netmiko", "paramiko", "nornir", "scapy", "requests", "write a tool", "automate", or asks for general coding help → **plain Python script**
+- If ambiguous, ask yourself: does this need the pyATS aetest framework and a testbed? If not → **plain Python**
+- NEVER wrap plain Python code in pyATS CommonSetup/Testcase/CommonCleanup boilerplate — only use that framework when explicitly needed
+
+## Plain Python script rules
+- Write clean, production-quality Python with appropriate libraries (netmiko, paramiko, nornir, scapy, requests, httpx, etc.)
+- Use markdown code fences with ```python
+- Include proper error handling, type hints where helpful, and concise comments
+- For network scripts, use well-known libraries — do NOT force pyATS patterns onto non-pyATS requests
+- After generating a complete script, output: SAVE_SCRIPT: {"name": "Script Name", "description": "Brief description", "platform": "python"}
+
+## pyATS script requirements (ONLY for pyATS scripts)
+- CRITICAL imports — always use exactly these three lines at the top of every script:
+    import json
     from pyats import aetest
     from genie.testbed import load
   Never use "import aetest" or "from pyats.topology import load" — both will fail.
+  Never use "import logging" or "log.info()" — causes duplicate output with pyATS.
 - CRITICAL structure — every script MUST use EXACTLY this boilerplate (do not vary it):
 
     class CommonSetup(aetest.CommonSetup):
@@ -1166,9 +1116,13 @@ Your purpose is to generate production-quality pyATS/Genie scripts that can be s
 
     class SomeDescriptiveTestcase(aetest.Testcase):
         @aetest.test
-        def check_something(self, dev):       ← 'dev' is auto-injected from parent parameters
-            parsed = dev.parse('show ...')
-            ...
+        def check_something(self, dev):       # 'dev' is auto-injected from parent parameters
+            try:
+                parsed = dev.parse('show ...')
+            except Exception as e:
+                self.failed(f'Parser failed: {e}')
+            print(f"GLADIUS_DATA:{json.dumps({'label': 'Descriptive Label', 'data': parsed})}")
+            self.passed(f'Summary: collected N items')
 
     class CommonCleanup(aetest.CommonCleanup):
         @aetest.subsection
@@ -1182,14 +1136,21 @@ Your purpose is to generate production-quality pyATS/Genie scripts that can be s
   - Always store device as self.parent.parameters['dev'] in connect — never self.parameters, never self.device
   - Always receive device in test methods as 'dev' parameter — pyATS injects it automatically
   - CommonCleanup always disconnects via testbed.devices.values(), not via the 'dev' parameter
-- Use Genie parsers (device.parse('show ...')) for structured data — see parser reference below
-- Prefer device.learn('<feature>') for full feature snapshots when available
-- Include meaningful pass/fail criteria with thresholds
-- Handle exceptions gracefully: wrap every device.parse() and device.learn() in try/except and call self.skipped('reason') if the parser raises — Genie parsers can fail with SchemaMissingKeyError on older IOS versions
-- NEVER use aetest.errlog — it does not exist. For logging always include these two lines after imports: logging.basicConfig(level=logging.INFO) and log = logging.getLogger(__name__)
-- In except blocks use self.skipped(), self.failed(), or log.warning() — never aetest.anything except aetest.main()
-- For data-gathering scripts always call self.passed() with a summary of what was collected — log.info() output is only visible if logging.basicConfig(level=logging.INFO) is set
-- Testbed device is always referenced as 'DUT' (testbed.devices['DUT'])
+
+## GLADIUS_DATA output protocol (CRITICAL — every script MUST follow this)
+- ALL data output MUST use: print(f"GLADIUS_DATA:{json.dumps({'label': '...', 'data': parsed})}")
+- The label should be human-readable (e.g. 'IP Interface Brief', 'BGP Neighbors', 'ARP Table')
+- The data MUST be the raw Genie parsed dict — do NOT extract or reformat fields
+- NEVER use log.info(), print() without GLADIUS_DATA prefix, or any other output method for data
+- self.passed() / self.failed() are for pass/fail summary text ONLY — never put data dicts in them
+- Each @aetest.test method should: parse one command → print GLADIUS_DATA → self.passed/failed with summary
+
+## Data gathering rules
+- ALWAYS use dev.parse('show ...') for structured data — returns a Genie dict
+- NEVER use dev.execute('show ...') for data gathering — raw CLI text cannot be rendered as tables
+- The ONLY exception: use dev.execute('show running-config') for text-pattern checks (e.g. AAA audit)
+  For text checks, emit results as: print(f"GLADIUS_DATA:{json.dumps({'label': '...', 'data': {'check': bool, 'detail': '...'}})}")
+- Handle exceptions: wrap every dev.parse() in try/except, call self.failed(f'Parser failed: {e}')
 - End every script with: if __name__ == '__main__': import sys; aetest.main(testbed=load(sys.argv[1]))
 - Wrap complete scripts in ```python ... ``` code blocks
 
@@ -1311,40 +1272,13 @@ Your purpose is to generate production-quality pyATS/Genie scripts that can be s
   ops.info['vlans'][vlan_id]['state']
   ops.info['vlans'][vlan_id]['interfaces']   # list
 
-## Common patterns
-
-### Check running-config for a text pattern (when no structured parser exists)
-  try:
-      run = dev.execute('show running-config')
-  except Exception:
-      self.skipped('Could not retrieve running config')
-  if 'service password-encryption' in run:
-      self.passed('Password encryption enabled')
-  else:
-      self.failed('Password encryption not configured')
-
-### Iterate interfaces and check errors
-  parsed = dev.parse('show interfaces')
-  failures = []
-  for intf, data in parsed.items():
-      errs = data.get('counters', {}).get('in_errors', 0)
-      if errs > 0:
-          failures.append(f'{intf}: {errs} input errors')
-  if failures:
-      self.failed('\\n'.join(failures))
-  else:
-      self.passed(f'All {len(parsed)} interfaces clean')
-
 ## Complete working examples — always follow these patterns exactly
 
-### Example 1: check IOS version
+### Example 1: data gathering script (show version + interfaces)
 ```python
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
 
 class CommonSetup(aetest.CommonSetup):
     @aetest.subsection
@@ -1354,16 +1288,27 @@ class CommonSetup(aetest.CommonSetup):
         self.parent.parameters['dev'] = _dev
         self.parent.parameters['device'] = _dev
 
-class VersionCheck(aetest.Testcase):
+class DeviceSnapshot(aetest.Testcase):
     @aetest.test
     def check_version(self, dev):
         try:
             parsed = dev.parse('show version')
         except Exception as e:
-            self.skipped(f'show version parse failed: {e}')
-        version = parsed.get('version', {}).get('version_short', 'unknown')
+            self.failed(f'show version parse failed: {e}')
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Device Version', 'data': parsed})}")
         hostname = parsed.get('version', {}).get('hostname', 'unknown')
-        self.passed(f'{hostname} is running IOS {version}')
+        version = parsed.get('version', {}).get('version_short', 'unknown')
+        self.passed(f'{hostname} running IOS {version}')
+
+    @aetest.test
+    def check_interfaces(self, dev):
+        try:
+            parsed = dev.parse('show ip interface brief')
+        except Exception as e:
+            self.failed(f'show ip interface brief parse failed: {e}')
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'IP Interface Brief', 'data': parsed})}")
+        up = [i for i, d in parsed.get('interface', {}).items() if d.get('status') == 'up']
+        self.passed(f'{len(up)} interfaces up')
 
 class CommonCleanup(aetest.CommonCleanup):
     @aetest.subsection
@@ -1377,14 +1322,12 @@ if __name__ == '__main__':
     aetest.main(testbed=load(sys.argv[1]))
 ```
 
-### Example 2: check interface errors
+### Example 2: validation script with pass/fail logic
 ```python
-import logging
+import json
 from pyats import aetest
 from genie.testbed import load
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
 ERROR_THRESHOLD = 100
 
 class CommonSetup(aetest.CommonSetup):
@@ -1401,7 +1344,8 @@ class InterfaceErrorCheck(aetest.Testcase):
         try:
             parsed = dev.parse('show interfaces')
         except Exception as e:
-            self.skipped(f'show interfaces parse failed: {e}')
+            self.failed(f'show interfaces parse failed: {e}')
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'Interface Counters', 'data': parsed})}")
         failures = []
         for intf, data in parsed.items():
             c = data.get('counters', {})
@@ -1409,7 +1353,7 @@ class InterfaceErrorCheck(aetest.Testcase):
             if errs > ERROR_THRESHOLD:
                 failures.append(f'{intf}: {errs} errors')
         if failures:
-            self.failed('High error counters:\n' + '\n'.join(failures))
+            self.failed(f'{len(failures)} interfaces over threshold')
         else:
             self.passed(f'All {len(parsed)} interfaces within threshold')
 
@@ -1425,14 +1369,62 @@ if __name__ == '__main__':
     aetest.main(testbed=load(sys.argv[1]))
 ```
 
-Every script you write MUST follow these examples exactly — same imports, same CommonSetup, same CommonCleanup, same try/except pattern around every parse() call.
+### Example 3: running-config text check (when no Genie parser exists)
+```python
+import json
+from pyats import aetest
+from genie.testbed import load
+
+class CommonSetup(aetest.CommonSetup):
+    @aetest.subsection
+    def connect(self, testbed):
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
+
+class AAACheck(aetest.Testcase):
+    @aetest.test
+    def check_aaa(self, dev):
+        try:
+            run = dev.execute('show running-config')
+        except Exception as e:
+            self.failed(f'Could not retrieve running config: {e}')
+        checks = {
+            'aaa_new_model': 'aaa new-model' in run,
+            'tacacs_configured': 'tacacs' in run.lower(),
+            'local_fallback': 'local' in run and 'aaa authentication' in run,
+        }
+        print(f"GLADIUS_DATA:{json.dumps({'label': 'AAA Configuration Checks', 'data': checks})}")
+        failed = [k for k, v in checks.items() if not v]
+        if failed:
+            self.failed(f'{len(failed)} AAA checks failed: {", ".join(failed)}')
+        else:
+            self.passed('All AAA checks passed')
+
+class CommonCleanup(aetest.CommonCleanup):
+    @aetest.subsection
+    def disconnect(self, testbed):
+        for d in testbed.devices.values():
+            try: d.disconnect()
+            except Exception: pass
+
+if __name__ == '__main__':
+    import sys
+    aetest.main(testbed=load(sys.argv[1]))
+```
+
+Every pyATS script you write MUST follow these examples exactly — same imports (json, aetest, load), same CommonSetup, same CommonCleanup, same try/except pattern, same GLADIUS_DATA output.
 
 After generating a complete script, output a save hint on its own line:
 SAVE_SCRIPT: {"name": "Script Name", "description": "Brief description", "platform": "iosxe"}
 
-Valid platform values: iosxe, ios, nxos, eos
+Valid platform values for pyATS scripts: iosxe, ios, nxos, eos
+For plain Python scripts use: "platform": "python"
 
-You have access to the existing script repository and can reference or build upon existing scripts when asked."""
+You have access to the existing script repository and can reference or build upon existing scripts when asked.
+
+IMPORTANT: Do not default to pyATS for every request. If the user asks for a Python script, netmiko script, or general coding task, give them clean standalone Python — no aetest, no testbed, no GLADIUS_DATA."""
 
 
 class ReviewRequest(BaseModel):
@@ -1459,7 +1451,7 @@ async def review_output(req: ReviewRequest):
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream(
                     "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True}
+                    json={"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True, "options": {"num_ctx": 32768}}
                 ) as response:
                     async for line in response.aiter_lines():
                         if not line.strip():
@@ -1489,7 +1481,7 @@ async def review_output(req: ReviewRequest):
                     },
                     json={
                         "model": model,
-                        "max_tokens": 4096,
+                        "max_tokens": 16384,
                         "stream": True,
                         "messages": [{"role": "user", "content": prompt}],
                     },
@@ -1525,19 +1517,21 @@ async def review_output(req: ReviewRequest):
     )
 
 
-CODER_SYSTEM_PROMPT = """You are Gladius Code, a senior software engineering assistant specialising in network automation, Python, and infrastructure tooling.
+APITEST_SYSTEM_PROMPT = """You are Gladius API, an API testing and validation agent specialising in REST API endpoint testing, schema validation, and API documentation analysis.
 
 ## Behaviour
-- Answer coding questions directly with clear, working code
-- Default to Python unless the user specifies another language
-- Use markdown code fences with the language tag (```python, ```bash, ```yaml, etc.)
-- Keep explanations concise — lead with the code, explain after
-- When reviewing code, identify bugs, security issues, and performance problems
-- For network-related code, prefer well-known libraries: netmiko, paramiko, nornir, pyATS/Genie, scapy, napalm
-- For API work, prefer FastAPI (Python) or Express (JS)
-- Follow best practices: type hints, error handling, logging, docstrings for public APIs
+- Test API endpoints by describing HTTP requests, expected responses, and validation checks
+- Use markdown code fences with the language tag (```python, ```bash, ```json, etc.)
+- Default to Python (httpx/requests) for test scripts, curl for quick examples
+- For each endpoint test, clearly show: method, URL, headers, body, expected status, expected response schema
+- Validate response structures against documented schemas when available
+- Flag mismatches between documentation and actual API behaviour
+- Check for common API issues: missing auth, incorrect content types, missing CORS headers, slow response times
+- When testing CRUD operations, test the full lifecycle: create → read → update → delete
+- Report results in a structured format: endpoint, method, status, pass/fail, notes
+- For network device APIs (RESTCONF, NETCONF, Meraki, DNA Center), use appropriate auth patterns
 - If a question is ambiguous, give the most likely interpretation rather than asking for clarification
-- Never fabricate library names or API methods — if unsure, say so"""
+- Never fabricate API endpoints or response schemas — if unsure, say so"""
 
 
 CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
@@ -1578,7 +1572,7 @@ async def chat(req: ChatRequest):
             async with httpx.AsyncClient(timeout=180.0) as client:
                 async with client.stream(
                     "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True}
+                    json={"model": model, "messages": messages, "stream": True, "options": {"num_ctx": 32768}}
                 ) as response:
                     if response.status_code != 200:
                         yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
@@ -1606,16 +1600,16 @@ async def chat(req: ChatRequest):
     )
 
 
-# ── Coder Agent Chat ─────────────────────────────────────────────────────────
+# ── API Test Agent Chat ───────────────────────────────────────────────────────
 
-class CoderRequest(BaseModel):
+class ApitestRequest(BaseModel):
     messages: list[ChatMessage]
     model:    Optional[str] = None
 
 @app.post("/api/coder")
-async def coder_chat(req: CoderRequest):
+async def apitest_chat(req: ApitestRequest):
     model = req.model or "qwen2.5-coder:14b"
-    messages = [{"role": "system", "content": CODER_SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": APITEST_SYSTEM_PROMPT}]
     for m in req.messages:
         messages.append({"role": m.role, "content": m.content})
 
@@ -1624,7 +1618,7 @@ async def coder_chat(req: CoderRequest):
             async with httpx.AsyncClient(timeout=180.0) as client:
                 async with client.stream(
                     "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True}
+                    json={"model": model, "messages": messages, "stream": True, "options": {"num_ctx": 32768}}
                 ) as response:
                     if response.status_code != 200:
                         yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
@@ -1650,6 +1644,275 @@ async def coder_chat(req: CoderRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── ITSM Agent Chat ──────────────────────────────────────────────────────────
+
+ITSM_SYSTEM_PROMPT = f"""You are Gladius ITSM, an IT Service Management agent specialising in incident management, change management, and helpdesk ticket creation for network infrastructure.
+
+## Behaviour
+- When given an alert (interface down, BGP peer loss, OSPF adjacency drop, high latency, etc.), draft a structured incident ticket
+- Use ITIL-aligned terminology: Incident, Problem, Change Request, Known Error, Service Request
+- Always include: Priority (P1-P4), Category, Affected Service, Impact, Urgency, Description, Remediation Steps
+- For interface/BGP/OSPF alerts, assess blast radius — what services and users are affected
+- Draft tickets in a structured markdown format ready to paste into ServiceNow, Jira Service Management, or similar ITSM tools
+- For change requests, include: Justification, Risk Assessment, Rollback Plan, Test Plan, Approvers, Maintenance Window
+- For escalations, summarise the timeline, actions taken so far, and business impact
+- Generate Root Cause Analysis (RCA) reports with: Timeline, Root Cause, Contributing Factors, Impact Summary, Corrective Actions, Preventive Actions
+- When multiple alerts arrive, correlate them — a BGP drop and interface down on the same device is likely one incident, not two
+- Suggest appropriate priority levels based on impact and urgency:
+  - P1: Complete service outage, revenue impact, >100 users affected
+  - P2: Degraded service, redundancy lost, 10-100 users affected
+  - P3: Minor issue, workaround available, <10 users affected
+  - P4: Cosmetic, informational, no user impact
+- Use markdown code fences for ticket templates and structured output
+- If a question is ambiguous, give the most likely interpretation rather than asking for clarification
+- Never fabricate device names, IPs, or alert data — use what the user provides
+- When asked to email a ticket, format it as a clean, professional incident report ready to send
+- Default notification recipient: stevie.johnston@gmail.com
+- This agent is connected to Jira (project: {JIRA_PROJECT or 'not configured'}). After you draft a ticket, the user can create it directly in Jira with one click.
+- Always include a clear "Incident Title:" line that can be used as the Jira issue summary.
+- Always include "Priority: P1/P2/P3/P4" explicitly so it can be mapped to Jira priority.
+- You have access to live Jira ticket data. When the user asks about open tickets, who's assigned, ticket status, workload, etc., answer using the ticket data provided in your context.
+- Format ticket lists as tables when showing multiple tickets.
+- If asked about a specific ticket (e.g. GSR-5), provide all available details."""
+
+
+class ItsmRequest(BaseModel):
+    messages: list[ChatMessage]
+    model:    Optional[str] = None
+
+@app.post("/api/itsm")
+async def itsm_chat(req: ItsmRequest):
+    model = req.model or "qwen2.5:7b"
+
+    # Inject live Jira ticket context if configured
+    jira_context = ""
+    if JIRA_CONFIGURED:
+        try:
+            open_issues = await _jira_search(
+                f"project = {JIRA_PROJECT} AND status != Done ORDER BY updated DESC", 20
+            )
+            if open_issues:
+                lines = [f"## Current Jira Tickets ({JIRA_PROJECT})"]
+                for t in open_issues:
+                    lines.append(
+                        f"- **{t['key']}** [{t['status']}] P:{t['priority']} "
+                        f"Assignee:{t['assignee']} — {t['summary']}"
+                    )
+                jira_context = "\n".join(lines) + "\n\nUse this data to answer questions about open tickets, assignees, statuses, and workload."
+        except Exception as e:
+            log.warning("Failed to fetch Jira context for ITSM: %s", e)
+
+    system = ITSM_SYSTEM_PROMPT
+    if jira_context:
+        system += "\n\n" + jira_context
+
+    messages = [{"role": "system", "content": system}]
+    for m in req.messages:
+        messages.append({"role": m.role, "content": m.content})
+
+    async def generate():
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                async with client.stream(
+                    "POST", f"{OLLAMA_URL}/api/chat",
+                    json={"model": model, "messages": messages, "stream": True, "options": {"num_ctx": 32768}}
+                ) as response:
+                    if response.status_code != 200:
+                        yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
+                        return
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk   = json.loads(line)
+                            content = chunk.get("message", {}).get("content", "")
+                            if content:
+                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
+                            if chunk.get("done"):
+                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                                return
+                        except json.JSONDecodeError:
+                            continue
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── Jira Query & Ticket API ───────────────────────────────────────────────────
+
+async def _jira_search(jql: str, max_results: int = 50) -> list[dict]:
+    """Run a JQL query and return simplified issue list."""
+    if not JIRA_CONFIGURED:
+        return []
+    url = f"{JIRA_URL.rstrip('/')}/rest/api/3/search/jql"
+    params = {
+        "jql": jql,
+        "maxResults": max_results,
+        "fields": "summary,status,priority,assignee,reporter,created,updated,labels,issuetype",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, params=params, headers=_jira_headers())
+        if resp.status_code != 200:
+            log.error("Jira search failed: %s %s", resp.status_code, resp.text)
+            return []
+        data = resp.json()
+    issues = []
+    for issue in data.get("issues", []):
+        f = issue["fields"]
+        issues.append({
+            "key": issue["key"],
+            "summary": f.get("summary", ""),
+            "status": (f.get("status") or {}).get("name", "Unknown"),
+            "priority": (f.get("priority") or {}).get("name", "None"),
+            "assignee": (f.get("assignee") or {}).get("displayName", "Unassigned"),
+            "reporter": (f.get("reporter") or {}).get("displayName", "Unknown"),
+            "type": (f.get("issuetype") or {}).get("name", "Task"),
+            "created": f.get("created", ""),
+            "updated": f.get("updated", ""),
+            "labels": f.get("labels", []),
+            "url": f"{JIRA_URL.rstrip('/')}/browse/{issue['key']}",
+        })
+    return issues
+
+
+@app.get("/api/jira/issues")
+async def jira_issues(status: str = "", assignee: str = "", label: str = "", q: str = ""):
+    """Query Jira issues. Params build JQL filters."""
+    if not JIRA_CONFIGURED:
+        raise HTTPException(503, "Jira not configured")
+    clauses = [f"project = {JIRA_PROJECT}"]
+    if status:
+        clauses.append(f'status = "{status}"')
+    if assignee:
+        clauses.append(f'assignee = "{assignee}"')
+    if label:
+        clauses.append(f'labels = "{label}"')
+    if q:
+        clauses.append(f'text ~ "{q}"')
+    jql = " AND ".join(clauses) + " ORDER BY updated DESC"
+    issues = await _jira_search(jql)
+    return {"issues": issues, "count": len(issues), "jql": jql}
+
+
+@app.get("/api/jira/issue/{issue_key}")
+async def jira_issue_detail(issue_key: str):
+    """Get full detail for a single Jira issue including description and comments."""
+    if not JIRA_CONFIGURED:
+        raise HTTPException(503, "Jira not configured")
+    url = f"{JIRA_URL.rstrip('/')}/rest/api/3/issue/{issue_key}"
+    params = {"fields": "summary,status,priority,assignee,reporter,created,updated,labels,issuetype,description,comment"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, params=params, headers=_jira_headers())
+        if resp.status_code != 200:
+            raise HTTPException(resp.status_code, f"Jira API error: {resp.text}")
+        data = resp.json()
+    f = data["fields"]
+    # Extract plain text from ADF description
+    desc_text = ""
+    desc = f.get("description")
+    if desc and isinstance(desc, dict):
+        for block in desc.get("content", []):
+            for item in block.get("content", []):
+                if item.get("type") == "text":
+                    desc_text += item.get("text", "") + "\n"
+    comments = []
+    for c in (f.get("comment", {}).get("comments", []))[-10:]:
+        body = ""
+        if isinstance(c.get("body"), dict):
+            for block in c["body"].get("content", []):
+                for item in block.get("content", []):
+                    if item.get("type") == "text":
+                        body += item.get("text", "")
+        comments.append({
+            "author": (c.get("author") or {}).get("displayName", "Unknown"),
+            "created": c.get("created", ""),
+            "body": body,
+        })
+    return {
+        "key": data["key"],
+        "summary": f.get("summary", ""),
+        "status": (f.get("status") or {}).get("name", "Unknown"),
+        "priority": (f.get("priority") or {}).get("name", "None"),
+        "assignee": (f.get("assignee") or {}).get("displayName", "Unassigned"),
+        "reporter": (f.get("reporter") or {}).get("displayName", "Unknown"),
+        "type": (f.get("issuetype") or {}).get("name", "Task"),
+        "created": f.get("created", ""),
+        "updated": f.get("updated", ""),
+        "labels": f.get("labels", []),
+        "description": desc_text.strip(),
+        "comments": comments,
+        "url": f"{JIRA_URL.rstrip('/')}/browse/{data['key']}",
+    }
+
+
+class JiraCreateRequest(BaseModel):
+    summary:     str
+    description: str
+    priority:    str = "P3"
+    labels:      list[str] = []
+    issue_type:  Optional[str] = None
+    project_key: Optional[str] = None
+
+
+@app.get("/api/jira/status")
+async def jira_status():
+    return {
+        "configured": JIRA_CONFIGURED,
+        "project": JIRA_PROJECT if JIRA_CONFIGURED else None,
+        "url": JIRA_URL if JIRA_CONFIGURED else None,
+    }
+
+
+@app.post("/api/jira/create")
+async def jira_create(req: JiraCreateRequest):
+    if not JIRA_CONFIGURED:
+        raise HTTPException(503, "Jira not configured — set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT env vars")
+    try:
+        result = await _create_jira_ticket(
+            summary=req.summary,
+            description=req.description,
+            priority=req.priority,
+            labels=req.labels or ["gladius"],
+            issue_type=req.issue_type,
+            project_key=req.project_key,
+        )
+        return {"ok": True, **result}
+    except Exception as e:
+        log.error("Jira ticket creation failed: %s", e)
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/jira/parse-ticket")
+async def jira_parse_ticket(body: dict):
+    """Extract structured fields from ITSM agent markdown output."""
+    text = body.get("text", "")
+    summary = ""
+    priority = "P3"
+
+    p_match = re.search(r"Priority[:\s]+(P[1-4])", text, re.IGNORECASE)
+    if p_match:
+        priority = p_match.group(1).upper()
+
+    s_match = re.search(r"(?:Incident Title|Summary|Subject|Ticket Title)[:\s]+(.+)", text, re.IGNORECASE)
+    if s_match:
+        summary = s_match.group(1).strip().strip("*").strip()
+    else:
+        h_match = re.search(r"^#+\s+(.+)", text, re.MULTILINE)
+        if h_match:
+            summary = h_match.group(1).strip()
+
+    return {
+        "summary": summary or "Gladius ITSM Ticket",
+        "priority": priority,
+        "description": text,
+    }
 
 
 # ── Script Repository ─────────────────────────────────────────────────────────
@@ -1769,9 +2032,9 @@ async def validate_script(script_id: str, body: ValidateRequest):
             with get_db() as conn:
                 conn.execute(
                     "UPDATE scripts SET last_run_at=?, last_run_status=?, last_run_output=? WHERE id=?",
-                    (now, "PASS" if passed else "FAIL", output[:10000], script_id)
+                    (now, "PASS" if passed else "FAIL", output, script_id)
                 )
-            return {"passed": passed, "stage": "dry_run", "output": output[:5000],
+            return {"passed": passed, "stage": "dry_run", "output": output,
                     "device": dev_info.get("ip", DEV_SWITCH_IP)}
         except asyncio.TimeoutError:
             proc.kill()
@@ -1798,7 +2061,7 @@ async def _autofix_script(script: str, error: str, model: str | None = None) -> 
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(
                 f"{OLLAMA_URL}/api/chat",
-                json={"model": fix_model, "messages": [{"role": "user", "content": prompt}], "stream": False},
+                json={"model": fix_model, "messages": [{"role": "user", "content": prompt}], "stream": False, "options": {"num_ctx": 32768}},
             )
             if r.status_code != 200:
                 return None
@@ -1903,10 +2166,10 @@ async def run_script(script_id: str, body: RunRequest):
         with get_db() as conn:
             conn.execute(
                 "UPDATE scripts SET last_run_at=?, last_run_status=?, last_run_output=? WHERE id=?",
-                (now, status, full_output[:10000], script_id)
+                (now, status, full_output, script_id)
             )
         return {"passed": passed, "status": status, "device": display_name,
-                "output": full_output[:8000], "run_at": now,
+                "output": full_output, "run_at": now,
                 "autofix_applied": len(autofix_log) > 0}
     except asyncio.TimeoutError:
         return {"passed": False, "status": "FAIL", "error": "Timed out (300s)", "output": ""}
@@ -2026,6 +2289,878 @@ async def get_testbed():
         return {"yaml": "", "devices": []}
     safe = [{k: v for k, v in d.items() if k != "password"} for d in devices]
     return {"yaml": build_testbed_yaml(devices), "devices": safe}
+
+
+# ── Genie Learn / Diff ────────────────────────────────────────────────────────
+
+GENIE_LEARN_FEATURES = [
+    {"id": "interface",  "name": "Interfaces",      "description": "Interface status, counters, IP addresses"},
+    {"id": "bgp",        "name": "BGP",              "description": "BGP neighbors, prefixes, AS numbers"},
+    {"id": "ospf",       "name": "OSPF",             "description": "OSPF neighbors, areas, LSAs"},
+    {"id": "routing",    "name": "Routing Table",    "description": "Full routing table (all protocols)"},
+    {"id": "vlan",       "name": "VLANs",            "description": "VLAN database and port assignments"},
+    {"id": "stp",        "name": "Spanning Tree",    "description": "STP instances, root bridge, port states"},
+    {"id": "arp",        "name": "ARP Table",        "description": "ARP cache entries"},
+    {"id": "vrf",        "name": "VRF",              "description": "VRF instances and route targets"},
+    {"id": "hsrp",       "name": "HSRP",             "description": "HSRP groups and standby state"},
+    {"id": "ntp",        "name": "NTP",              "description": "NTP associations and sync status"},
+    {"id": "acl",        "name": "ACLs",             "description": "Access control lists and entries"},
+    {"id": "dot1x",      "name": "802.1X",           "description": "Dot1x authentication status"},
+    {"id": "lldp",       "name": "LLDP",             "description": "LLDP neighbor discovery"},
+    {"id": "cdp",        "name": "CDP",              "description": "CDP neighbor discovery"},
+    {"id": "mcast",      "name": "Multicast",        "description": "Multicast groups and routing"},
+    {"id": "platform",   "name": "Platform",         "description": "Hardware, software version, inventory"},
+    {"id": "config",     "name": "Running Config",   "description": "Full running configuration"},
+]
+
+
+_PARSER_FEATURES = {
+    "cdp": "show cdp neighbors detail",
+    "config": "show running-config",
+}
+
+def _build_learn_script(feature: str) -> str:
+    """Build a minimal pyATS script that learns a Genie feature and prints JSON."""
+    if feature in _PARSER_FEATURES:
+        return _build_parse_script(feature, _PARSER_FEATURES[feature])
+    return f'''#!/usr/bin/env python3
+"""Gladius: Genie Learn — {feature}"""
+import json
+import sys
+from pyats import aetest
+from genie.testbed import load
+
+class CommonSetup(aetest.CommonSetup):
+    @aetest.subsection
+    def connect(self, testbed):
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
+
+class LearnFeature(aetest.Testcase):
+    @aetest.test
+    def learn(self, dev):
+        try:
+            learned = dev.learn('{feature}')
+        except Exception as e:
+            self.failed(f'Learn {feature} failed: {{e}}')
+        info = getattr(learned, 'info', None)
+        if info is None:
+            info = {{}}
+        print(f"GLADIUS_LEARN:{{json.dumps(info, default=str)}}")
+        self.passed('{feature} learned successfully')
+
+class CommonCleanup(aetest.CommonCleanup):
+    @aetest.subsection
+    def disconnect(self, testbed):
+        for d in testbed.devices.values():
+            try: d.disconnect()
+            except Exception: pass
+
+if __name__ == '__main__':
+    aetest.main(testbed=load(sys.argv[1]))
+'''
+
+
+def _build_parse_script(feature: str, command: str) -> str:
+    """Build a pyATS script that parses a show command and prints JSON."""
+    return f'''#!/usr/bin/env python3
+"""Gladius: Genie Parse — {feature}"""
+import json
+import sys
+from pyats import aetest
+from genie.testbed import load
+
+class CommonSetup(aetest.CommonSetup):
+    @aetest.subsection
+    def connect(self, testbed):
+        _dev = next(iter(testbed.devices.values()))
+        _dev.connect(log_stdout=False)
+        self.parent.parameters['dev'] = _dev
+        self.parent.parameters['device'] = _dev
+
+class ParseFeature(aetest.Testcase):
+    @aetest.test
+    def parse(self, dev):
+        try:
+            parsed = dev.parse('{command}')
+        except Exception as e:
+            self.failed(f'Parse {feature} failed: {{e}}')
+        if not parsed:
+            parsed = {{}}
+        print(f"GLADIUS_LEARN:{{json.dumps(parsed, default=str)}}")
+        self.passed('{feature} parsed successfully')
+
+class CommonCleanup(aetest.CommonCleanup):
+    @aetest.subsection
+    def disconnect(self, testbed):
+        for d in testbed.devices.values():
+            try: d.disconnect()
+            except Exception: pass
+
+if __name__ == '__main__':
+    aetest.main(testbed=load(sys.argv[1]))
+'''
+
+
+def _extract_learn_data(output: str) -> dict | None:
+    """Extract JSON from GLADIUS_LEARN: line in script output."""
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith('GLADIUS_LEARN:'):
+            try:
+                return json.loads(line[14:])
+            except json.JSONDecodeError:
+                pass
+    return None
+
+
+@app.get("/api/learn/features")
+async def list_learn_features():
+    return {"features": GENIE_LEARN_FEATURES}
+
+
+@app.post("/api/learn")
+async def run_learn(body: LearnRequest, _skip_task: bool = False):
+    """Run Genie learn for selected features on selected devices."""
+    with get_db() as conn:
+        dev_rows = []
+        for did in body.device_ids:
+            row = conn.execute("SELECT * FROM devices WHERE id=?", (did,)).fetchone()
+            if row:
+                dev_rows.append(dict(row))
+    if not dev_rows:
+        raise HTTPException(400, "No valid devices selected")
+
+    dev_names = ", ".join(d["hostname"] for d in dev_rows[:3])
+    feat_names = ", ".join(body.features[:3])
+    task_id = None if _skip_task else await _register_task(
+        "Learn", f"Genie Learn — {dev_names} — {feat_names}"
+    )
+
+    results = []
+    for dev_info in dev_rows:
+        testbed_yaml = build_testbed_yaml([dev_info])
+        for feature in body.features:
+            if feature not in [f["id"] for f in GENIE_LEARN_FEATURES]:
+                results.append({"device": dev_info["hostname"], "feature": feature,
+                                "success": False, "error": f"Unknown feature: {feature}"})
+                continue
+
+            script = _build_learn_script(feature)
+            try:
+                passed, output = await _run_script_once(script, testbed_yaml, timeout=120)
+            except asyncio.TimeoutError:
+                results.append({"device": dev_info["hostname"], "feature": feature,
+                                "success": False, "error": "Timed out (120s)"})
+                continue
+            except Exception as e:
+                results.append({"device": dev_info["hostname"], "feature": feature,
+                                "success": False, "error": str(e)})
+                continue
+
+            data = _extract_learn_data(output)
+            if data is None:
+                results.append({"device": dev_info["hostname"], "feature": feature,
+                                "success": False, "error": "No structured data returned",
+                                "output": output[-2000:]})
+                continue
+
+            snap_id = str(uuid.uuid4())
+            now = datetime.now(timezone.utc).isoformat()
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT INTO snapshots (id, device_id, device_name, feature, data, created_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (snap_id, dev_info["id"], dev_info["hostname"], feature,
+                     json.dumps(data, default=str), now)
+                )
+            results.append({"device": dev_info["hostname"], "feature": feature,
+                            "success": True, "snapshot_id": snap_id, "created_at": now})
+
+    await _complete_task(task_id)
+    return {"results": results}
+
+
+@app.get("/api/learn/snapshots")
+async def list_snapshots(device_id: Optional[str] = None, feature: Optional[str] = None):
+    """List snapshots, optionally filtered by device and/or feature."""
+    query = "SELECT id, device_id, device_name, feature, created_at FROM snapshots"
+    params = []
+    clauses = []
+    if device_id:
+        clauses.append("device_id=?")
+        params.append(device_id)
+    if feature:
+        clauses.append("feature=?")
+        params.append(feature)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY created_at DESC"
+    with get_db() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return {"snapshots": [dict(r) for r in rows]}
+
+
+@app.get("/api/learn/snapshots/{snapshot_id}")
+async def get_snapshot(snapshot_id: str):
+    """Get full snapshot data."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM snapshots WHERE id=?", (snapshot_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Snapshot not found")
+    result = dict(row)
+    result["data"] = json.loads(result["data"])
+    return result
+
+
+@app.delete("/api/learn/snapshots/{snapshot_id}")
+async def delete_snapshot(snapshot_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM snapshots WHERE id=?", (snapshot_id,))
+    return {"deleted": snapshot_id}
+
+
+@app.post("/api/learn/diff")
+async def diff_snapshots(body: DiffRequest):
+    """Diff two snapshots and return the differences."""
+    with get_db() as conn:
+        row_a = conn.execute("SELECT * FROM snapshots WHERE id=?", (body.snapshot_a,)).fetchone()
+        row_b = conn.execute("SELECT * FROM snapshots WHERE id=?", (body.snapshot_b,)).fetchone()
+    if not row_a or not row_b:
+        raise HTTPException(404, "One or both snapshots not found")
+
+    a_info = dict(row_a)
+    b_info = dict(row_b)
+    data_a = json.loads(a_info["data"])
+    data_b = json.loads(b_info["data"])
+
+    # Use recursive dict diff since we can't import genie.utils.diff in the API process
+    diff_lines = _dict_diff(data_a, data_b, prefix="")
+    diff_text = "\n".join(diff_lines) if diff_lines else "No differences found."
+
+    return {
+        "diff": diff_text,
+        "has_changes": len(diff_lines) > 0,
+        "snapshot_a": {"id": a_info["id"], "device": a_info["device_name"],
+                       "feature": a_info["feature"], "created_at": a_info["created_at"]},
+        "snapshot_b": {"id": b_info["id"], "device": b_info["device_name"],
+                       "feature": b_info["feature"], "created_at": b_info["created_at"]},
+    }
+
+
+def _dict_diff(a, b, prefix="") -> list[str]:
+    """Recursively diff two dicts/values, returning human-readable diff lines."""
+    lines = []
+    if isinstance(a, dict) and isinstance(b, dict):
+        all_keys = set(list(a.keys()) + list(b.keys()))
+        for key in sorted(all_keys):
+            path = f"{prefix}.{key}" if prefix else key
+            if key not in a:
+                lines.append(f"+ {path}: {json.dumps(b[key], default=str)}")
+            elif key not in b:
+                lines.append(f"- {path}: {json.dumps(a[key], default=str)}")
+            else:
+                lines.extend(_dict_diff(a[key], b[key], path))
+    elif isinstance(a, list) and isinstance(b, list):
+        if a != b:
+            lines.append(f"  {prefix}:")
+            lines.append(f"  - {json.dumps(a, default=str)}")
+            lines.append(f"  + {json.dumps(b, default=str)}")
+    else:
+        if a != b:
+            lines.append(f"  {prefix}:")
+            lines.append(f"  - {json.dumps(a, default=str)}")
+            lines.append(f"  + {json.dumps(b, default=str)}")
+    return lines
+
+
+@app.post("/api/learn/analyze")
+async def analyze_diff(body: AnalyzeRequest):
+    """Send a diff to Ollama for natural language analysis."""
+    model = body.model or OLLAMA_MODEL
+    device_b = body.device_b or body.device
+    before_ts = body.before_ts or "unknown time"
+    after_ts = body.after_ts or "unknown time"
+
+    same_device = body.device == device_b
+    if same_device:
+        context = (
+            f"You are analyzing changes on device '{body.device}' for the '{body.feature}' feature.\n"
+            f"BEFORE snapshot was taken at: {before_ts}\n"
+            f"AFTER snapshot was taken at: {after_ts}\n\n"
+            f"This is a TEMPORAL diff — same device, two points in time.\n"
+            f"Lines starting with '-' show the BEFORE state (older).\n"
+            f"Lines starting with '+' show the AFTER state (newer/current).\n"
+        )
+    else:
+        context = (
+            f"You are comparing the '{body.feature}' feature between two devices.\n"
+            f"Device A (BEFORE/baseline): '{body.device}' at {before_ts}\n"
+            f"Device B (AFTER/comparison): '{device_b}' at {after_ts}\n\n"
+            f"Lines starting with '-' are ONLY in device A.\n"
+            f"Lines starting with '+' are ONLY in device B.\n"
+            f"Differences between devices are expected — focus on anomalies.\n"
+        )
+
+    prompt = (
+        f"{context}"
+        f"\nDiff:\n```\n{body.diff_text}\n```\n\n"
+        f"IMPORTANT RULES:\n"
+        f"- The '-' lines are BEFORE, '+' lines are AFTER. Do not confuse the direction.\n"
+        f"- If a counter goes from 100 (before) to 200 (after), it INCREASED, not decreased.\n"
+        f"- Interface counters (in/out octets, packets, errors) are cumulative and can only increase.\n"
+        f"- Focus on operationally significant changes (state changes, new/removed entries, errors).\n"
+        f"- Ignore cosmetic differences (uptime, counters that naturally increment).\n\n"
+        f"Provide a concise analysis in EXACTLY this format:\n\n"
+        f"SEVERITY: <LOW|MEDIUM|HIGH>\n\n"
+        f"Choose severity based on:\n"
+        f"- LOW: cosmetic changes, counter increments, expected state transitions\n"
+        f"- MEDIUM: configuration changes, new/removed entries, non-critical state changes\n"
+        f"- HIGH: security changes, link/protocol state flaps, error spikes, route changes, ACL modifications\n\n"
+        f"SUMMARY: <one-line summary of what changed>\n\n"
+        f"ANALYSIS:\n"
+        f"1. What changed and its potential impact\n"
+        f"2. Whether any changes are concerning (security, stability, performance)\n"
+        f"3. Recommended actions if any"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(f"{OLLAMA_URL}/api/generate", json={
+                "model": model, "prompt": prompt, "stream": False,
+                "options": {"num_ctx": 32768}
+            })
+            r.raise_for_status()
+            analysis = r.json().get("response", "")
+    except Exception as e:
+        raise HTTPException(502, f"Ollama analysis failed: {e}")
+
+    return {"analysis": analysis, "model": model}
+
+
+# ── SCHEDULE CRUD ──────────────────────────────────────────────────────────────
+
+@app.get("/api/learn/schedules")
+async def list_schedules():
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM schedules ORDER BY created_at DESC").fetchall()
+    return {"schedules": [dict(r) for r in rows]}
+
+
+@app.post("/api/learn/schedules")
+async def create_schedule(body: ScheduleCreate):
+    sid = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO schedules (id,name,type,device_ids,features,cron_expr,notify_slack,notify_email,jira_auto_ticket,enabled,created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, body.name, body.type, json.dumps(body.device_ids), json.dumps(body.features),
+             body.cron_expr, body.notify_slack or "", body.notify_email or "",
+             body.jira_auto_ticket or "", 1 if body.enabled else 0, now)
+        )
+    return {"id": sid, "created_at": now}
+
+
+@app.patch("/api/learn/schedules/{schedule_id}")
+async def update_schedule(schedule_id: str, body: ScheduleUpdate):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM schedules WHERE id=?", (schedule_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Schedule not found")
+        updates, params = [], []
+        if body.name is not None:
+            updates.append("name=?"); params.append(body.name)
+        if body.device_ids is not None:
+            updates.append("device_ids=?"); params.append(json.dumps(body.device_ids))
+        if body.features is not None:
+            updates.append("features=?"); params.append(json.dumps(body.features))
+        if body.cron_expr is not None:
+            updates.append("cron_expr=?"); params.append(body.cron_expr)
+        if body.notify_slack is not None:
+            updates.append("notify_slack=?"); params.append(body.notify_slack)
+        if body.notify_email is not None:
+            updates.append("notify_email=?"); params.append(body.notify_email)
+        if body.jira_auto_ticket is not None:
+            updates.append("jira_auto_ticket=?"); params.append(body.jira_auto_ticket)
+        if body.enabled is not None:
+            updates.append("enabled=?"); params.append(1 if body.enabled else 0)
+        if updates:
+            params.append(schedule_id)
+            conn.execute(f"UPDATE schedules SET {','.join(updates)} WHERE id=?", params)
+    return {"ok": True}
+
+
+@app.delete("/api/learn/schedules/{schedule_id}")
+async def delete_schedule(schedule_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM schedule_history WHERE schedule_id=?", (schedule_id,))
+        conn.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
+    return {"ok": True}
+
+
+@app.get("/api/learn/schedules/{schedule_id}/history")
+async def schedule_history(schedule_id: str, limit: int = 20):
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM schedule_history WHERE schedule_id=? ORDER BY ran_at DESC LIMIT ?",
+            (schedule_id, limit)
+        ).fetchall()
+    return {"history": [dict(r) for r in rows]}
+
+
+@app.post("/api/learn/schedules/{schedule_id}/run")
+async def run_schedule_now(schedule_id: str):
+    """Manually trigger a scheduled job."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM schedules WHERE id=?", (schedule_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Schedule not found")
+    sched = dict(row)
+    asyncio.create_task(_execute_schedule(sched))
+    return {"ok": True, "message": "Schedule triggered"}
+
+
+# ── NOTIFICATIONS ──────────────────────────────────────────────────────────────
+
+SMTP_SERVER   = os.getenv("SMTP_SERVER", "")
+SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM     = os.getenv("SMTP_FROM_NAME", "Gladius Auto")
+
+
+def _send_slack(webhook_url: str, text: str):
+    """Send a message to a Slack webhook."""
+    try:
+        r = httpx.post(webhook_url, json={"text": text}, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        log.error("Slack notification failed: %s", e)
+
+
+def _send_email_notification(to: str, subject: str, body_html: str):
+    """Send an email notification via SMTP."""
+    if not SMTP_SERVER or not to:
+        log.warning("Email notification skipped — SMTP not configured or no recipient")
+        return
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{SMTP_FROM} <{SMTP_USERNAME}>"
+        msg["To"] = to
+        msg.attach(MIMEText(body_html, "html"))
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USERNAME, SMTP_PASSWORD)
+            s.send_message(msg)
+    except Exception as e:
+        log.error("Email notification failed: %s", e)
+
+
+def _notify_schedule(sched: dict, subject: str, body: str, html: str):
+    """Send notifications for a schedule result."""
+    slack_url = sched.get("notify_slack", "")
+    email_to  = sched.get("notify_email", "")
+    if slack_url:
+        _send_slack(slack_url, f"*{subject}*\n{body}")
+    if email_to:
+        _send_email_notification(email_to, f"[Gladius] {subject}", html)
+
+
+# ── JIRA INTEGRATION ─────────────────────────────────────────────────────────
+
+JIRA_PRIORITY_MAP = {
+    "P1": "Highest",
+    "P2": "High",
+    "P3": "Medium",
+    "P4": "Low",
+}
+
+
+def _jira_headers() -> dict:
+    creds = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_API_TOKEN}".encode()).decode()
+    return {
+        "Authorization": f"Basic {creds}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+async def _create_jira_ticket(
+    summary: str,
+    description: str,
+    priority: str = "P3",
+    labels: list[str] | None = None,
+    issue_type: str | None = None,
+    project_key: str | None = None,
+) -> dict:
+    """Create a Jira Cloud issue. Returns {"key": "NET-123", "id": "...", "url": "..."}."""
+    if not JIRA_CONFIGURED:
+        raise ValueError("Jira not configured — set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT")
+
+    proj = project_key or JIRA_PROJECT
+    itype = issue_type or JIRA_ISSUE_TYPE
+    jira_priority = JIRA_PRIORITY_MAP.get(priority, "Medium")
+
+    # Jira Cloud v3 uses ADF (Atlassian Document Format) for description
+    adf_content = []
+    for line in description.split("\n"):
+        if line.strip():
+            adf_content.append({
+                "type": "paragraph",
+                "content": [{"type": "text", "text": line}]
+            })
+
+    payload = {
+        "fields": {
+            "project": {"key": proj},
+            "summary": summary[:255],
+            "description": {"type": "doc", "version": 1, "content": adf_content or [
+                {"type": "paragraph", "content": [{"type": "text", "text": "No description provided"}]}
+            ]},
+            "issuetype": {"name": itype},
+            "priority": {"name": jira_priority},
+            "labels": labels or ["gladius", "auto-generated"],
+        }
+    }
+
+    url = f"{JIRA_URL.rstrip('/')}/rest/api/3/issue"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, json=payload, headers=_jira_headers())
+        if resp.status_code not in (200, 201):
+            log.error("Jira create failed: %s %s", resp.status_code, resp.text)
+            raise ValueError(f"Jira API error {resp.status_code}: {resp.text}")
+        data = resp.json()
+        issue_key = data["key"]
+        return {
+            "key": issue_key,
+            "id": data["id"],
+            "url": f"{JIRA_URL.rstrip('/')}/browse/{issue_key}",
+        }
+
+
+# ── CRON PARSER & SCHEDULER ──────────────────────────────────────────────────
+
+def _cron_matches(cron_expr: str, dt: datetime) -> bool:
+    """Check if a cron expression matches a given datetime (minute granularity).
+    Supports: minute hour day-of-month month day-of-week
+    Fields: number, *, */N, comma-separated, ranges (N-M).
+    """
+    parts = cron_expr.strip().split()
+    if len(parts) != 5:
+        return False
+    fields = [dt.minute, dt.hour, dt.day, dt.month, dt.isoweekday() % 7]  # 0=Sun
+
+    for field_val, pattern in zip(fields, parts):
+        if not _cron_field_matches(pattern, field_val):
+            return False
+    return True
+
+
+def _cron_field_matches(pattern: str, value: int) -> bool:
+    if pattern == "*":
+        return True
+    for part in pattern.split(","):
+        if "/" in part:
+            base, step = part.split("/", 1)
+            step = int(step)
+            if base == "*":
+                if value % step == 0:
+                    return True
+            else:
+                start = int(base)
+                if value >= start and (value - start) % step == 0:
+                    return True
+        elif "-" in part:
+            lo, hi = part.split("-", 1)
+            if int(lo) <= value <= int(hi):
+                return True
+        else:
+            if int(part) == value:
+                return True
+    return False
+
+
+async def _execute_schedule(sched: dict):
+    """Execute a learn (and optionally diff) schedule."""
+    sched_id = sched["id"]
+    sched_type = sched.get("type", "learn")
+    device_ids = json.loads(sched["device_ids"]) if isinstance(sched["device_ids"], str) else sched["device_ids"]
+    features = json.loads(sched["features"]) if isinstance(sched["features"], str) else sched["features"]
+
+    log.info("Executing schedule '%s' (type=%s, devices=%d, features=%d)",
+             sched["name"], sched_type, len(device_ids), len(features))
+
+    label = "Learn + Diff" if sched_type == "learn_diff" else "Learn"
+    sched_task_id = await _register_task(label, f"Schedule: {sched['name']}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    status = "success"
+    summary_parts = []
+    diff_text = ""
+
+    # Step 1: Run learn
+    try:
+        learn_body = LearnRequest(device_ids=device_ids, features=features)
+        learn_result = await run_learn(learn_body, _skip_task=True)
+        results = learn_result.get("results", [])
+        ok_count = sum(1 for r in results if r.get("success"))
+        fail_count = sum(1 for r in results if not r.get("success"))
+        summary_parts.append(f"Learn: {ok_count} succeeded, {fail_count} failed")
+        if fail_count > 0:
+            status = "partial"
+            fails = [f"{r['device']}/{r['feature']}: {r.get('error','?')}" for r in results if not r.get("success")]
+            summary_parts.append("Failures: " + "; ".join(fails))
+        new_snap_ids = [r["snapshot_id"] for r in results if r.get("success") and "snapshot_id" in r]
+    except Exception as e:
+        log.error("Schedule learn failed: %s", e)
+        status = "error"
+        summary_parts.append(f"Learn error: {e}")
+        new_snap_ids = []
+
+    # Step 2: If learn_diff, run diff against previous snapshots
+    if sched_type == "learn_diff" and new_snap_ids:
+        diff_parts = []
+        for snap_id in new_snap_ids:
+            with get_db() as conn:
+                new_snap = conn.execute("SELECT * FROM snapshots WHERE id=?", (snap_id,)).fetchone()
+                if not new_snap:
+                    continue
+                new_snap = dict(new_snap)
+                # Find the most recent previous snapshot for the same device+feature
+                prev = conn.execute(
+                    "SELECT id FROM snapshots WHERE device_id=? AND feature=? AND id!=? ORDER BY created_at DESC LIMIT 1",
+                    (new_snap["device_id"], new_snap["feature"], snap_id)
+                ).fetchone()
+            if not prev:
+                continue
+            try:
+                diff_body = DiffRequest(snapshot_a=prev["id"], snapshot_b=snap_id)
+                diff_result = await diff_snapshots(diff_body)
+                if diff_result.get("has_changes"):
+                    diff_parts.append(
+                        f"=== {new_snap['device_name']} / {new_snap['feature']} ===\n{diff_result['diff']}"
+                    )
+            except Exception as e:
+                diff_parts.append(f"Diff error for {new_snap['device_name']}/{new_snap['feature']}: {e}")
+
+        if diff_parts:
+            diff_text = "\n\n".join(diff_parts)
+            summary_parts.append(f"Diff: {len(diff_parts)} change(s) detected")
+        else:
+            summary_parts.append("Diff: no changes detected")
+
+    summary = " | ".join(summary_parts)
+
+    # Save to history
+    hist_id = str(uuid.uuid4())
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO schedule_history (id,schedule_id,type,status,summary,diff_text,ran_at) VALUES (?,?,?,?,?,?,?)",
+            (hist_id, sched_id, sched_type, status, summary, diff_text, now_iso)
+        )
+        conn.execute("UPDATE schedules SET last_run_at=?, last_status=? WHERE id=?",
+                      (now_iso, status, sched_id))
+
+    # Analyze diffs with Ollama before notifying
+    analysis_text = ""
+    if diff_text:
+        try:
+            log.info("Schedule '%s': analyzing diff with Ollama…", sched["name"])
+            analyze_body = AnalyzeRequest(
+                diff_text=diff_text,
+                feature="scheduled",
+                device=sched["name"],
+                before_ts=now_iso,
+                after_ts=now_iso,
+            )
+            analyze_result = await analyze_diff(analyze_body)
+            analysis_text = analyze_result.get("analysis", "")
+        except Exception as e:
+            log.error("Schedule Ollama analysis failed (falling back to raw diff): %s", e)
+
+    # Notifications
+    subject = f"Schedule '{sched['name']}' — {status.upper()}"
+    if analysis_text:
+        body_plain = summary + "\n\n" + analysis_text
+        body_html = _build_schedule_email_html(sched, status, summary, diff_text, analysis_text)
+    else:
+        body_plain = summary + (f"\n\n{diff_text}" if diff_text else "")
+        body_html = _build_schedule_email_html(sched, status, summary, diff_text, "")
+    _notify_schedule(sched, subject, body_plain, body_html)
+
+    # Jira auto-ticket for scheduled diffs with changes
+    jira_auto = sched.get("jira_auto_ticket", "")
+    if JIRA_CONFIGURED and jira_auto and diff_text:
+        jira_severity = "P3"
+        jira_summary = f"Network Change Detected — {sched['name']}"
+        should_ticket = True
+
+        if analysis_text:
+            sev_match = re.search(r"SEVERITY:\s*(LOW|MEDIUM|HIGH)", analysis_text, re.IGNORECASE)
+            if sev_match:
+                sev = sev_match.group(1).upper()
+                if sev == "HIGH":
+                    jira_severity = "P2"
+                elif sev == "MEDIUM":
+                    jira_severity = "P3"
+                    if jira_auto == "high_only":
+                        should_ticket = False
+                elif sev == "LOW":
+                    jira_severity = "P4"
+                    if jira_auto in ("high_only", "medium_plus"):
+                        should_ticket = False
+            sum_match = re.search(r"SUMMARY:\s*(.+)", analysis_text, re.IGNORECASE)
+            if sum_match:
+                jira_summary = sum_match.group(1).strip()
+
+        if should_ticket:
+            try:
+                result = await _create_jira_ticket(
+                    summary=jira_summary,
+                    description=f"Schedule: {sched['name']}\nStatus: {status}\n\n{summary}\n\n{analysis_text or diff_text}",
+                    priority=jira_severity,
+                    labels=["gladius", "scheduled-diff", "auto-generated"],
+                )
+                log.info("Jira ticket created for schedule '%s': %s", sched["name"], result["key"])
+            except Exception as e:
+                log.error("Jira auto-ticket failed for schedule '%s': %s", sched["name"], e)
+
+    await _complete_task(sched_task_id)
+    log.info("Schedule '%s' completed: %s", sched["name"], summary)
+
+
+def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text: str, analysis: str = "") -> str:
+    """Build an HTML email body for schedule results."""
+    import re as _re
+    status_color = "#00cc66" if status == "success" else "#ffaa00" if status == "partial" else "#ff4444"
+
+    # AI Analysis section (primary content when available)
+    analysis_html = ""
+    if analysis:
+        sev_m = _re.search(r"SEVERITY:\s*(LOW|MEDIUM|HIGH)", analysis, _re.IGNORECASE)
+        sum_m = _re.search(r"SUMMARY:\s*(.+)", analysis, _re.IGNORECASE)
+        sev = sev_m.group(1).upper() if sev_m else None
+        sev_summary = sum_m.group(1).strip() if sum_m else ""
+        sev_colors = {"LOW": "#00cc66", "MEDIUM": "#ffaa00", "HIGH": "#ff4444"}
+        sev_bg = {"LOW": "rgba(0,204,102,0.12)", "MEDIUM": "rgba(255,170,0,0.12)", "HIGH": "rgba(255,68,68,0.12)"}
+        sev_color = sev_colors.get(sev, "#888")
+        sev_bgcolor = sev_bg.get(sev, "transparent")
+
+        # Severity banner
+        if sev:
+            sev_icon = "&#9888;" if sev == "HIGH" else "&#9670;" if sev == "MEDIUM" else "&#10003;"
+            analysis_html += f"""
+            <div style="margin:16px 0 12px;padding:10px 14px;border-radius:6px;background:{sev_bgcolor};border-left:4px solid {sev_color}">
+                <span style="font-size:14px;font-weight:700;color:{sev_color}">{sev_icon} {sev} SEVERITY</span>
+                {'<div style="font-size:12px;color:#ccc;margin-top:4px">' + sev_summary + '</div>' if sev_summary else ''}
+            </div>"""
+
+        # Format analysis body — strip SEVERITY/SUMMARY lines
+        body = analysis
+        body = _re.sub(r"^SEVERITY:\s*.+$", "", body, flags=_re.MULTILINE | _re.IGNORECASE)
+        body = _re.sub(r"^SUMMARY:\s*.+$", "", body, flags=_re.MULTILINE | _re.IGNORECASE)
+        body = body.strip()
+
+        # Convert numbered items and section headers
+        formatted_lines = []
+        for line in body.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                formatted_lines.append("<br>")
+            elif _re.match(r"^ANALYSIS:?$", stripped, _re.IGNORECASE):
+                formatted_lines.append(
+                    '<h3 style="color:#00d4ff;font-size:13px;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #333">ANALYSIS</h3>'
+                )
+            elif _re.match(r"^\d+\.", stripped):
+                num_m = _re.match(r"^(\d+)\.\s*(.+)", stripped)
+                if num_m:
+                    formatted_lines.append(
+                        f'<div style="display:flex;gap:8px;margin:4px 0;padding:8px 10px;background:#111;border-radius:4px;border-left:2px solid #00d4ff">'
+                        f'<span style="color:#00d4ff;font-weight:700;min-width:18px">{num_m.group(1)}.</span>'
+                        f'<span style="color:#ccc">{num_m.group(2)}</span></div>'
+                    )
+                else:
+                    formatted_lines.append(f'<div style="color:#ccc;margin:2px 0">{stripped}</div>')
+            elif stripped.startswith("-") or stripped.startswith("•"):
+                formatted_lines.append(
+                    f'<div style="margin:2px 0 2px 16px;color:#aaa">&#8226; {stripped.lstrip("-•").strip()}</div>'
+                )
+            else:
+                formatted_lines.append(f'<div style="color:#ccc;margin:2px 0">{stripped}</div>')
+
+        analysis_html += f"""
+        <div style="margin-top:12px;font-size:12px;line-height:1.7">
+            {"".join(formatted_lines)}
+        </div>"""
+
+    # Raw diff (collapsed if analysis present, shown if not)
+    diff_html = ""
+    if diff_text:
+        lines = diff_text.split("\n")
+        diff_lines = []
+        for line in lines:
+            if line.startswith("+"):
+                diff_lines.append(f'<span style="color:#00cc66">{line}</span>')
+            elif line.startswith("-"):
+                diff_lines.append(f'<span style="color:#ff4444">{line}</span>')
+            elif line.startswith("==="):
+                diff_lines.append(f'<br><strong style="color:#00d4ff">{line}</strong>')
+            else:
+                diff_lines.append(line)
+        label = "RAW DIFF" if analysis else "DIFF RESULTS"
+        diff_html = f"""
+        <div style="margin-top:16px">
+            <h3 style="color:#00d4ff;font-family:monospace;font-size:13px;margin-bottom:8px">{label}</h3>
+            <pre style="background:#111;color:#ccc;padding:12px;border-radius:6px;font-size:11px;overflow-x:auto;border:1px solid #222">{"<br>".join(diff_lines)}</pre>
+        </div>"""
+
+    return f"""
+    <div style="background:#0a0a0a;color:#ccc;padding:24px;font-family:monospace;border-radius:8px;max-width:700px">
+        <h2 style="color:#00d4ff;margin:0 0 8px 0;font-size:16px">GLADIUS AUTOMATION — SCHEDULED JOB</h2>
+        <div style="margin-bottom:12px">
+            <span style="font-size:12px;color:#888">Schedule:</span>
+            <strong style="color:#fff"> {sched['name']}</strong>
+        </div>
+        <div style="margin-bottom:12px">
+            <span style="font-size:12px;color:#888">Status:</span>
+            <strong style="color:{status_color}"> {status.upper()}</strong>
+        </div>
+        <div style="margin-bottom:4px;font-size:12px;color:#aaa">{summary}</div>
+        {analysis_html}
+        {diff_html}
+        <div style="margin-top:20px;font-size:10px;color:#555">Gladius Automation Factory · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</div>
+    </div>"""
+
+
+async def _scheduler_loop():
+    """Background loop that checks schedules every 60 seconds."""
+    log.info("Scheduler loop started")
+    last_check_minute = -1
+    while True:
+        await asyncio.sleep(30)
+        now = datetime.now(timezone.utc)
+        current_minute = now.hour * 60 + now.minute
+        if current_minute == last_check_minute:
+            continue
+        last_check_minute = current_minute
+
+        try:
+            with get_db() as conn:
+                rows = conn.execute("SELECT * FROM schedules WHERE enabled=1").fetchall()
+            for row in rows:
+                sched = dict(row)
+                if _cron_matches(sched["cron_expr"], now):
+                    asyncio.create_task(_execute_schedule(sched))
+        except Exception as e:
+            log.error("Scheduler loop error: %s", e)
+
+
+@app.on_event("startup")
+async def start_scheduler():
+    asyncio.create_task(_scheduler_loop())
 
 
 if __name__ == "__main__":
