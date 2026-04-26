@@ -18,11 +18,11 @@ import ast
 import re
 import smtplib
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, Union
 
 import httpx
 import yaml
@@ -148,6 +148,11 @@ def init_db():
                 FOREIGN KEY (schedule_id) REFERENCES schedules(id)
             )
         """)
+        # Add analysis column to schedule_history if missing (migration)
+        try:
+            conn.execute("ALTER TABLE schedule_history ADD COLUMN analysis TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
         # Add jira_auto_ticket column if missing (migration)
         try:
             conn.execute("ALTER TABLE schedules ADD COLUMN jira_auto_ticket TEXT DEFAULT ''")
@@ -1033,6 +1038,9 @@ async def startup():
 
 # ── Running Tasks (register with gladius-api) ─────────────────────────────────
 
+_active_procs: dict[str, asyncio.subprocess.Process] = {}  # task_id → subprocess
+_cancelled_tasks: set[str] = set()                          # task_ids that have been killed
+
 async def _register_task(agent: str, description: str) -> str | None:
     """Register a task with gladius-api. Returns task_id or None on failure."""
     try:
@@ -1051,11 +1059,28 @@ async def _complete_task(task_id: str | None):
     """Mark a task as completed in gladius-api."""
     if not task_id:
         return
+    _active_procs.pop(task_id, None)
+    _cancelled_tasks.discard(task_id)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(f"{GLADIUS_API_URL}/api/tasks/{task_id}/complete")
     except Exception as e:
         log.warning("Failed to complete task %s: %s", task_id, e)
+
+
+@app.post("/api/tasks/{task_id}/kill")
+async def kill_task(task_id: str):
+    """Kill a running task by terminating its subprocess."""
+    _cancelled_tasks.add(task_id)
+    proc = _active_procs.pop(task_id, None)
+    if proc and proc.returncode is None:
+        try:
+            proc.kill()
+            log.info("Killed subprocess for task %s (pid=%s)", task_id, proc.pid)
+        except Exception as e:
+            log.warning("Failed to kill process for task %s: %s", task_id, e)
+    await _complete_task(task_id)
+    return {"ok": True, "task_id": task_id}
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -1675,7 +1700,25 @@ ITSM_SYSTEM_PROMPT = f"""You are Gladius ITSM, an IT Service Management agent sp
 - Always include "Priority: P1/P2/P3/P4" explicitly so it can be mapped to Jira priority.
 - You have access to live Jira ticket data. When the user asks about open tickets, who's assigned, ticket status, workload, etc., answer using the ticket data provided in your context.
 - Format ticket lists as tables when showing multiple tickets.
-- If asked about a specific ticket (e.g. GSR-5), provide all available details."""
+- If asked about a specific ticket (e.g. GSR-5), provide all available details.
+
+## CRITICAL — Duplicate Ticket Detection (always do this)
+Every time you display or discuss tickets, you MUST check for duplicates and output a merge recommendation if found. Follow these rules:
+
+1. Two or more tickets are duplicates when they share the same device name AND were created within 5 minutes of each other.
+2. When you find duplicates, you MUST output a section titled "## Merge Recommendation" at the end of your response.
+3. In that section: list the duplicate ticket keys, explain they were caused by the same root event (e.g. a device going unreachable triggers IF DOWN + BGP DOWN + OSPF DOWN simultaneously), name the ticket that should be kept as the parent (always pick the EARLIEST created ticket by timestamp — lowest ticket number), and state the others should be closed as duplicates with a link to the parent.
+4. Example format:
+   ## Merge Recommendation
+   Tickets GSR-10, GSR-11, GSR-12 all relate to **device-name** and were created within 1 minute of each other. These are the same incident — the device went unreachable, triggering separate interface, BGP, and OSPF alerts.
+   - **Keep as parent:** GSR-10 (earliest created)
+   - **Close as duplicate:** GSR-11, GSR-12 — link to GSR-10
+5. If no duplicates exist, do NOT output a merge section.
+
+## Closing Tickets
+When you recommend closing a ticket (duplicate, resolved, not an issue), include a line in this exact format so the system can auto-close it:
+CLOSE_TICKET: GSR-XX | Reason for closing (e.g. "Duplicate of GSR-10", "Resolved — interface recovered")
+You can include multiple CLOSE_TICKET lines if recommending closing several tickets."""
 
 
 class ItsmRequest(BaseModel):
@@ -1696,11 +1739,19 @@ async def itsm_chat(req: ItsmRequest):
             if open_issues:
                 lines = [f"## Current Jira Tickets ({JIRA_PROJECT})"]
                 for t in open_issues:
+                    created = t.get('created', '')[:19].replace('T', ' ') if t.get('created') else ''
+                    labels  = ', '.join(t.get('labels', [])) or 'none'
                     lines.append(
                         f"- **{t['key']}** [{t['status']}] P:{t['priority']} "
-                        f"Assignee:{t['assignee']} — {t['summary']}"
+                        f"Assignee:{t['assignee']} Created:{created} "
+                        f"Labels:{labels} — {t['summary']}"
                     )
-                jira_context = "\n".join(lines) + "\n\nUse this data to answer questions about open tickets, assignees, statuses, and workload."
+                jira_context = "\n".join(lines) + (
+                    "\n\nUse this data to answer questions about open tickets, assignees, statuses, and workload."
+                    "\nIMPORTANT: Review the ticket list for potential duplicates — tickets for the same device/site "
+                    "created within a few minutes of each other are almost certainly caused by the same root incident. "
+                    "Flag these and recommend merging them."
+                )
         except Exception as e:
             log.warning("Failed to fetch Jira context for ITSM: %s", e)
 
@@ -1748,23 +1799,34 @@ async def itsm_chat(req: ItsmRequest):
 # ── Jira Query & Ticket API ───────────────────────────────────────────────────
 
 async def _jira_search(jql: str, max_results: int = 50) -> list[dict]:
-    """Run a JQL query and return simplified issue list."""
+    """Run a JQL query and return simplified issue list (paginated)."""
     if not JIRA_CONFIGURED:
         return []
     url = f"{JIRA_URL.rstrip('/')}/rest/api/3/search/jql"
-    params = {
-        "jql": jql,
-        "maxResults": max_results,
-        "fields": "summary,status,priority,assignee,reporter,created,updated,labels,issuetype",
-    }
+    all_raw = []
+    page_size = min(max_results, 100)
+    next_token = None
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, params=params, headers=_jira_headers())
-        if resp.status_code != 200:
-            log.error("Jira search failed: %s %s", resp.status_code, resp.text)
-            return []
-        data = resp.json()
+        while len(all_raw) < max_results:
+            params = {
+                "jql": jql,
+                "maxResults": page_size,
+                "fields": "summary,status,priority,assignee,reporter,created,updated,labels,issuetype",
+            }
+            if next_token:
+                params["nextPageToken"] = next_token
+            resp = await client.get(url, params=params, headers=_jira_headers())
+            if resp.status_code != 200:
+                log.error("Jira search failed: %s %s", resp.status_code, resp.text)
+                break
+            data = resp.json()
+            batch = data.get("issues", [])
+            all_raw.extend(batch)
+            next_token = data.get("nextPageToken")
+            if not next_token or len(batch) < page_size:
+                break
     issues = []
-    for issue in data.get("issues", []):
+    for issue in all_raw:
         f = issue["fields"]
         issues.append({
             "key": issue["key"],
@@ -1799,6 +1861,16 @@ async def jira_issues(status: str = "", assignee: str = "", label: str = "", q: 
     jql = " AND ".join(clauses) + " ORDER BY updated DESC"
     issues = await _jira_search(jql)
     return {"issues": issues, "count": len(issues), "jql": jql}
+
+
+@app.get("/api/jira/open")
+async def jira_open_tickets():
+    """Return all open (non-Done/Closed) tickets for the project."""
+    if not JIRA_CONFIGURED:
+        return {"issues": [], "count": 0, "configured": False}
+    jql = f'project = {JIRA_PROJECT} AND status = "In Progress" ORDER BY created DESC'
+    issues = await _jira_search(jql, max_results=1000)
+    return {"issues": issues, "count": len(issues), "configured": True}
 
 
 @app.get("/api/jira/issue/{issue_key}")
@@ -1854,7 +1926,7 @@ async def jira_issue_detail(issue_key: str):
 
 class JiraCreateRequest(BaseModel):
     summary:     str
-    description: str
+    description: Any   # str (paragraph-per-line) OR ADF doc dict {"type":"doc",...} OR ADF content list
     priority:    str = "P3"
     labels:      list[str] = []
     issue_type:  Optional[str] = None
@@ -1887,6 +1959,88 @@ async def jira_create(req: JiraCreateRequest):
     except Exception as e:
         log.error("Jira ticket creation failed: %s", e)
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/jira/comment")
+async def jira_add_comment(body: dict):
+    """Add a comment to an existing Jira issue."""
+    if not JIRA_CONFIGURED:
+        raise HTTPException(503, "Jira not configured")
+    issue_key = body.get("issue_key", "").strip()
+    comment   = body.get("comment", "").strip()
+    if not issue_key or not comment:
+        raise HTTPException(400, "issue_key and comment required")
+    url = f"{JIRA_URL.rstrip('/')}/rest/api/3/issue/{issue_key}/comment"
+    # Build ADF body for the comment
+    adf_body = {
+        "body": {
+            "version": 1, "type": "doc",
+            "content": [{"type": "paragraph", "content": [{"type": "text", "text": line}]}
+                        for line in comment.split("\n") if line.strip()]
+        }
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, json=adf_body, headers=_jira_headers())
+        if resp.status_code not in (200, 201):
+            log.error("Jira comment failed: %s", resp.text)
+            raise HTTPException(resp.status_code, f"Jira API error: {resp.text}")
+    log.info("Comment added to %s", issue_key)
+    return {"ok": True, "issue_key": issue_key}
+
+
+@app.post("/api/jira/close")
+async def jira_close_ticket(body: dict):
+    """Transition a Jira issue to Done/Closed status."""
+    if not JIRA_CONFIGURED:
+        raise HTTPException(503, "Jira not configured")
+    issue_key = body.get("issue_key", "").strip()
+    comment   = body.get("comment", "").strip()
+    if not issue_key:
+        raise HTTPException(400, "issue_key required")
+
+    headers = _jira_headers()
+    base = JIRA_URL.rstrip('/')
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Get available transitions for this issue
+        resp = await client.get(f"{base}/rest/api/3/issue/{issue_key}/transitions", headers=headers)
+        if resp.status_code != 200:
+            raise HTTPException(resp.status_code, f"Failed to get transitions: {resp.text}")
+        transitions = resp.json().get("transitions", [])
+
+        # Find a "Done" or "Closed" or "Resolved" transition
+        done_id = None
+        for t in transitions:
+            name_lower = t["name"].lower()
+            if name_lower in ("done", "closed", "resolved", "close", "resolve"):
+                done_id = t["id"]
+                break
+        if not done_id:
+            avail = ", ".join(f"{t['name']} (id:{t['id']})" for t in transitions)
+            raise HTTPException(400, f"No done/closed transition found. Available: {avail}")
+
+        # Add a closing comment if provided
+        if comment:
+            adf_body = {
+                "body": {
+                    "version": 1, "type": "doc",
+                    "content": [{"type": "paragraph", "content": [{"type": "text", "text": line}]}
+                                for line in comment.split("\n") if line.strip()]
+                }
+            }
+            await client.post(f"{base}/rest/api/3/issue/{issue_key}/comment", json=adf_body, headers=headers)
+
+        # Execute the transition
+        resp = await client.post(
+            f"{base}/rest/api/3/issue/{issue_key}/transitions",
+            json={"transition": {"id": done_id}},
+            headers=headers,
+        )
+        if resp.status_code not in (200, 204):
+            raise HTTPException(resp.status_code, f"Transition failed: {resp.text}")
+
+    log.info("Ticket %s closed (transition %s)", issue_key, done_id)
+    return {"ok": True, "issue_key": issue_key, "status": "Done"}
 
 
 @app.post("/api/jira/parse-ticket")
@@ -2079,8 +2233,8 @@ async def _autofix_script(script: str, error: str, model: str | None = None) -> 
     return None
 
 
-async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int = 300):
-    """Run a pyATS script, return (passed, output)."""
+async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int = 300, task_id: str | None = None):
+    """Run a pyATS script, return (passed, output). If task_id given, register proc for kill support."""
     with tempfile.TemporaryDirectory() as tmpdir:
         script_path  = os.path.join(tmpdir, "test_script.py")
         testbed_path = os.path.join(tmpdir, "testbed.yaml")
@@ -2093,7 +2247,15 @@ async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int 
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             cwd=tmpdir
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        if task_id:
+            _active_procs[task_id] = proc
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        finally:
+            if task_id:
+                _active_procs.pop(task_id, None)
+        if task_id and task_id in _cancelled_tasks:
+            return False, "⚠ Task killed by user."
         output = stdout.decode() + stderr.decode()
         passed = proc.returncode == 0 and _pyats_passed(output)
         return passed, output
@@ -2450,7 +2612,7 @@ async def run_learn(body: LearnRequest, _skip_task: bool = False):
 
             script = _build_learn_script(feature)
             try:
-                passed, output = await _run_script_once(script, testbed_yaml, timeout=120)
+                passed, output = await _run_script_once(script, testbed_yaml, timeout=120, task_id=task_id)
             except asyncio.TimeoutError:
                 results.append({"device": dev_info["hostname"], "feature": feature,
                                 "success": False, "error": "Timed out (120s)"})
@@ -2459,6 +2621,13 @@ async def run_learn(body: LearnRequest, _skip_task: bool = False):
                 results.append({"device": dev_info["hostname"], "feature": feature,
                                 "success": False, "error": str(e)})
                 continue
+
+            # Check if task was killed
+            if task_id and task_id in _cancelled_tasks:
+                results.append({"device": dev_info["hostname"], "feature": feature,
+                                "success": False, "error": "Task killed by user"})
+                await _complete_task(task_id)
+                return {"results": results, "killed": True}
 
             data = _extract_learn_data(output)
             if data is None:
@@ -2610,15 +2779,16 @@ async def analyze_diff(body: AnalyzeRequest):
         f"IMPORTANT RULES:\n"
         f"- The '-' lines are BEFORE, '+' lines are AFTER. Do not confuse the direction.\n"
         f"- If a counter goes from 100 (before) to 200 (after), it INCREASED, not decreased.\n"
-        f"- Interface counters (in/out octets, packets, errors) are cumulative and can only increase.\n"
-        f"- Focus on operationally significant changes (state changes, new/removed entries, errors).\n"
-        f"- Ignore cosmetic differences (uptime, counters that naturally increment).\n\n"
+        f"- Interface counters (in/out octets, packets, broadcasts, multicasts) are cumulative and ALWAYS increase over time. This is NORMAL traffic — never flag counter increments as issues.\n"
+        f"- Interface error/discard counters (CRC errors, input errors, output errors, runts, giants, throttles, overruns, discards) also increment over time. Small steady increases are normal. Only flag LARGE SPIKES in errors (e.g. thousands of new errors between polls).\n"
+        f"- Focus on operationally significant changes (state changes, new/removed entries, error SPIKES).\n"
+        f"- Ignore cosmetic differences (uptime, timestamps, counters that naturally increment).\n\n"
         f"Provide a concise analysis in EXACTLY this format:\n\n"
         f"SEVERITY: <LOW|MEDIUM|HIGH>\n\n"
         f"Choose severity based on:\n"
-        f"- LOW: cosmetic changes, counter increments, expected state transitions\n"
-        f"- MEDIUM: configuration changes, new/removed entries, non-critical state changes\n"
-        f"- HIGH: security changes, link/protocol state flaps, error spikes, route changes, ACL modifications\n\n"
+        f"- LOW: cosmetic changes, normal counter increments (traffic octets/packets/broadcasts), expected state transitions, uptime changes\n"
+        f"- MEDIUM: configuration changes, new/removed entries, non-critical state changes, moderate error counter increases\n"
+        f"- HIGH: security changes, link/protocol state flaps, LARGE error counter spikes (thousands of new errors), route changes, ACL modifications\n\n"
         f"SUMMARY: <one-line summary of what changed>\n\n"
         f"ANALYSIS:\n"
         f"1. What changed and its potential impact\n"
@@ -2645,7 +2815,12 @@ async def analyze_diff(body: AnalyzeRequest):
 async def list_schedules():
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM schedules ORDER BY created_at DESC").fetchall()
-    return {"schedules": [dict(r) for r in rows]}
+    schedules = []
+    for r in rows:
+        d = dict(r)
+        d["next_run_at"] = _cron_next_run(d.get("cron_expr", "")) if d.get("enabled") else None
+        schedules.append(d)
+    return {"schedules": schedules}
 
 
 @app.post("/api/learn/schedules")
@@ -2700,6 +2875,20 @@ async def delete_schedule(schedule_id: str):
     return {"ok": True}
 
 
+@app.get("/api/learn/schedules/reasoning-log")
+async def schedule_reasoning_log(limit: int = 30):
+    """Return all schedule history entries that have a stored AI analysis."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT h.id, h.schedule_id, h.status, h.summary, h.diff_text, h.analysis, h.ran_at, s.name as sched_name "
+            "FROM schedule_history h LEFT JOIN schedules s ON h.schedule_id = s.id "
+            "WHERE h.analysis IS NOT NULL AND h.analysis != '' "
+            "ORDER BY h.ran_at DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
+    return {"entries": [dict(r) for r in rows]}
+
+
 @app.get("/api/learn/schedules/{schedule_id}/history")
 async def schedule_history(schedule_id: str, limit: int = 20):
     with get_db() as conn:
@@ -2708,6 +2897,16 @@ async def schedule_history(schedule_id: str, limit: int = 20):
             (schedule_id, limit)
         ).fetchall()
     return {"history": [dict(r) for r in rows]}
+
+
+@app.get("/api/learn/schedules/history/{history_id}/analysis")
+async def schedule_history_analysis(history_id: str):
+    """Return the Ollama analysis text for a single history entry."""
+    with get_db() as conn:
+        row = conn.execute("SELECT id, schedule_id, analysis, summary, ran_at FROM schedule_history WHERE id=?", (history_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "History entry not found")
+    return {"id": row["id"], "analysis": row["analysis"] or "", "summary": row["summary"] or "", "ran_at": row["ran_at"]}
 
 
 @app.post("/api/learn/schedules/{schedule_id}/run")
@@ -2790,13 +2989,19 @@ def _jira_headers() -> dict:
 
 async def _create_jira_ticket(
     summary: str,
-    description: str,
+    description: Any,
     priority: str = "P3",
     labels: list[str] | None = None,
     issue_type: str | None = None,
     project_key: str | None = None,
 ) -> dict:
-    """Create a Jira Cloud issue. Returns {"key": "NET-123", "id": "...", "url": "..."}."""
+    """Create a Jira Cloud issue. Returns {"key": "NET-123", "id": "...", "url": "..."}.
+
+    `description` may be:
+      - a string  → split into ADF paragraphs (one per line)
+      - a list    → treated as ADF content array, wrapped in a doc node
+      - a dict with type=="doc" → used directly as the ADF document
+    """
     if not JIRA_CONFIGURED:
         raise ValueError("Jira not configured — set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT")
 
@@ -2804,22 +3009,27 @@ async def _create_jira_ticket(
     itype = issue_type or JIRA_ISSUE_TYPE
     jira_priority = JIRA_PRIORITY_MAP.get(priority, "Medium")
 
-    # Jira Cloud v3 uses ADF (Atlassian Document Format) for description
-    adf_content = []
-    for line in description.split("\n"):
-        if line.strip():
-            adf_content.append({
-                "type": "paragraph",
-                "content": [{"type": "text", "text": line}]
-            })
+    # Jira Cloud v3 uses ADF (Atlassian Document Format) for description.
+    # Accept pre-built ADF (richest formatting) or a plain string (back-compat).
+    if isinstance(description, dict) and description.get("type") == "doc":
+        description_adf = description
+    elif isinstance(description, list):
+        description_adf = {"type": "doc", "version": 1, "content": description}
+    else:
+        text = str(description or "")
+        adf_content = [
+            {"type": "paragraph", "content": [{"type": "text", "text": line}]}
+            for line in text.split("\n") if line.strip()
+        ]
+        description_adf = {"type": "doc", "version": 1, "content": adf_content or [
+            {"type": "paragraph", "content": [{"type": "text", "text": "No description provided"}]}
+        ]}
 
     payload = {
         "fields": {
             "project": {"key": proj},
             "summary": summary[:255],
-            "description": {"type": "doc", "version": 1, "content": adf_content or [
-                {"type": "paragraph", "content": [{"type": "text", "text": "No description provided"}]}
-            ]},
+            "description": description_adf,
             "issuetype": {"name": itype},
             "priority": {"name": jira_priority},
             "labels": labels or ["gladius", "auto-generated"],
@@ -2881,6 +3091,19 @@ def _cron_field_matches(pattern: str, value: int) -> bool:
             if int(part) == value:
                 return True
     return False
+
+
+def _cron_next_run(cron_expr: str, after: datetime | None = None) -> str | None:
+    """Return ISO timestamp of the next minute that matches *cron_expr*."""
+    try:
+        dt = (after or datetime.now(timezone.utc)).replace(second=0, microsecond=0) + timedelta(minutes=1)
+        for _ in range(60 * 24 * 400):          # scan up to ~400 days
+            if _cron_matches(cron_expr, dt):
+                return dt.isoformat()
+            dt += timedelta(minutes=1)
+    except Exception:
+        pass
+    return None
 
 
 async def _execute_schedule(sched: dict):
@@ -2980,6 +3203,14 @@ async def _execute_schedule(sched: dict):
             analysis_text = analyze_result.get("analysis", "")
         except Exception as e:
             log.error("Schedule Ollama analysis failed (falling back to raw diff): %s", e)
+
+    # Persist analysis text to history row
+    if analysis_text:
+        try:
+            with get_db() as conn:
+                conn.execute("UPDATE schedule_history SET analysis=? WHERE id=?", (analysis_text, hist_id))
+        except Exception as e:
+            log.error("Failed to save analysis to history: %s", e)
 
     # Notifications
     subject = f"Schedule '{sched['name']}' — {status.upper()}"
