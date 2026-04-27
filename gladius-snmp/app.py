@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pysnmp.hlapi import (
@@ -46,6 +46,7 @@ SYSTEM_OIDS = {
     "1.3.6.1.2.1.1.5.0": "sysName",
     "1.3.6.1.2.1.1.6.0": "sysLocation",
     "1.3.6.1.2.1.2.1.0": "ifNumber",
+    "1.3.6.1.2.1.47.1.1.1.1.11.1": "serialNum",
 }
 
 # ── In-memory stores ───────────────────────────────────────────────────────────
@@ -637,6 +638,16 @@ def delete_device(dev_id: str):
     _devices.pop(dev_id)
     _status.pop(dev_id, None)
     _save_devices()
+
+
+@app.post("/devices/mute-all")
+async def mute_all_devices(request: Request):
+    body = await request.json()
+    muted = body.get("muted", True)
+    for dev_id in _devices:
+        _devices[dev_id]["muted"] = muted
+    _save_devices()
+    return {"ok": True, "muted": muted, "count": len(_devices)}
 
 
 @app.patch("/devices/{dev_id}")

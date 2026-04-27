@@ -100,11 +100,18 @@ _pending_audit: dict | None = None
 
 # ── Running Tasks Tracker ─────────────────────────────────────────────────────
 import uuid as _uuid
+import asyncio as _asyncio
 _running_tasks: dict[str, dict] = {}   # task_id → {agent, description, started, source, model}
+_cancel_events: dict[str, _asyncio.Event] = {}  # task_id → Event (set = cancelled)
+
+# ── Tshoot Diagnostics History ────────────────────────────────────────────────
+_tshoot_diagnostics: list[dict] = []   # newest first; max 50
+_DIAG_MAX = 50
 
 def _task_start(agent: str, description: str, source: str = "web", model: str = "") -> str:
     """Register a running task. Returns task_id."""
     tid = str(_uuid.uuid4())[:8]
+    _cancel_events[tid] = _asyncio.Event()
     _running_tasks[tid] = {
         "id": tid,
         "agent": agent,
@@ -117,6 +124,11 @@ def _task_start(agent: str, description: str, source: str = "web", model: str = 
     log.info(f"[Task {tid}] STARTED: {agent} — {description[:80]} (source={source})")
     return tid
 
+def _is_task_cancelled(tid: str) -> bool:
+    """Check if a task has been cancelled."""
+    ev = _cancel_events.get(tid)
+    return ev.is_set() if ev else False
+
 _TASK_RETAIN_SECS = 60  # keep completed tasks visible for 60s
 
 def _task_end(tid: str):
@@ -126,17 +138,19 @@ def _task_end(tid: str):
         task["status"] = "completed"
         task["completed"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
         log.info(f"[Task {tid}] ENDED: {task['agent']} — {task['description'][:80]}")
+    _cancel_events.pop(tid, None)
 
 def _prune_completed_tasks():
-    """Remove completed tasks older than _TASK_RETAIN_SECS."""
+    """Remove completed/killed tasks older than _TASK_RETAIN_SECS."""
     now = datetime.datetime.now(datetime.timezone.utc)
     expired = [
         tid for tid, t in _running_tasks.items()
-        if t.get("status") == "completed" and t.get("completed")
+        if t.get("status") in ("completed", "killed") and t.get("completed")
         and (now - datetime.datetime.fromisoformat(t["completed"])).total_seconds() > _TASK_RETAIN_SECS
     ]
     for tid in expired:
         del _running_tasks[tid]
+        _cancel_events.pop(tid, None)
 
 _SEQUENTIAL_DEVICE_TOOLS = {"connect_to_device", "disconnect_device", "run_show_command", "push_config"}
 _CONTINUATION_MSG = (
@@ -296,6 +310,21 @@ TSHOOT_SYSTEM_PROMPT = """You are Gladius Tshoot, a network diagnostics and trou
 ## Device inventory:
 When asked for a list of devices, their IPs, hostnames, or status, always call snmp_get_devices — do not SSH to individual devices or run SNMP probes. The SNMP container maintains a live inventory; use it.
 
+## Jira integration:
+- get_jira_tickets — retrieves open Jira tickets; use this to check current tickets, find related issues, or get context before investigating
+- update_jira_ticket — adds a comment to an existing Jira ticket with your findings
+- close_jira_ticket — closes/resolves a Jira ticket with an optional comment; use when an issue is resolved or a ticket is a duplicate
+- When the user's message includes a Jira ticket reference (e.g. GSR-42), you MUST call update_jira_ticket after completing your investigation to record your findings on the ticket
+- Include: summary of diagnostics performed, findings, root cause (if identified), and recommended remediation
+- Write the comment in a structured format with clear headings
+
+## Mermaid diagrams:
+You can include Mermaid diagrams in your responses to visualise network topologies, traffic flows, troubleshooting decision trees, or protocol state machines. Wrap them in a ```mermaid code block. The frontend will render them automatically. Examples of useful diagrams:
+- Network topology: `graph LR; A[Router1] --- B[Switch1]; B --- C[Host1]`
+- Flowchart: `flowchart TD; Start --> Check{Interface Up?}; Check -->|Yes| OK; Check -->|No| Fix`
+- Sequence: `sequenceDiagram; Router->>Switch: OSPF Hello; Switch-->>Router: OSPF Hello`
+Use diagrams when they add clarity — especially for multi-hop paths, protocol exchanges, or topology relationships.
+
 Always use your tools. Never fabricate output. NEVER call save_audit_results, query_nvd, query_psirt, or query_knowledge_base."""
 
 
@@ -304,6 +333,47 @@ Always use your tools. Never fabricate output. NEVER call save_audit_results, qu
 TSHOOT_TOOLS = {
     "connect_to_device", "run_show_command", "push_config", "disconnect_device",
     "run_nmap_scan", "run_scapy", "run_dig", "snmp_get_devices", "snmp_poll",
+    "update_jira_ticket", "get_jira_tickets", "close_jira_ticket",
+}
+
+# Tool definitions injected into tshoot (not MCP tools — handled by gladius-api directly)
+_JIRA_TOOL_DEF = {
+    "name": "update_jira_ticket",
+    "description": "Add a comment to an existing Jira ticket with troubleshooting findings. Use this to update the Jira ticket associated with an event after completing your investigation.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "issue_key": {"type": "string", "description": "Jira issue key, e.g. GSR-42"},
+            "comment":   {"type": "string", "description": "The comment text to add — include your diagnostic findings, root cause analysis, and recommended actions"},
+        },
+        "required": ["issue_key", "comment"],
+    },
+}
+
+_JIRA_GET_TICKETS_DEF = {
+    "name": "get_jira_tickets",
+    "description": "Retrieve open Jira tickets from the project. Use this to check what tickets exist, their status, assignee, priority, and timestamps. Optionally filter by status.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "description": "Filter by status (e.g. 'To Do', 'In Progress', 'Done'). Leave empty for all open tickets."},
+            "limit":  {"type": "integer", "description": "Max tickets to return (default 20)", "default": 20},
+        },
+        "required": [],
+    },
+}
+
+_JIRA_CLOSE_TICKET_DEF = {
+    "name": "close_jira_ticket",
+    "description": "Close/resolve a Jira ticket by transitioning it to Done. Optionally add a closing comment explaining why the ticket is being closed (e.g. resolved, duplicate, not an issue).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "issue_key": {"type": "string", "description": "Jira issue key to close, e.g. GSR-42"},
+            "comment":   {"type": "string", "description": "Optional closing comment — explain resolution or reason for closing"},
+        },
+        "required": ["issue_key"],
+    },
 }
 
 # ── Persistent MCP Session Manager ──────────────────────────────────────────
@@ -581,6 +651,39 @@ async def complete_task(task_id: str):
     """Mark an externally registered task as completed."""
     _task_end(task_id)
     return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/kill")
+async def kill_task(task_id: str):
+    """Kill a running task. For local tasks, sets cancel event. For automation tasks, forwards to pyats."""
+    task = _running_tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.get("status") != "running":
+        return {"ok": False, "reason": "Task is not running"}
+
+    # If this is an automation-registered task, forward kill to gladius-pyats
+    if task.get("source") == "automation":
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as hc:
+                r = await hc.post(f"http://gladius-pyats:8090/api/tasks/{task_id}/kill")
+                if r.status_code == 200:
+                    task["status"] = "killed"
+                    task["completed"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    _cancel_events.pop(task_id, None)
+                    log.info(f"[Task {task_id}] KILLED (forwarded to pyats)")
+                    return {"ok": True, "method": "pyats"}
+        except Exception as e:
+            log.warning(f"Failed to forward kill to pyats for {task_id}: {e}")
+
+    # For local tasks (chat/tshoot), set the cancel event
+    ev = _cancel_events.get(task_id)
+    if ev:
+        ev.set()
+    task["status"] = "killed"
+    task["completed"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    log.info(f"[Task {task_id}] KILLED (cancel event set)")
+    return {"ok": True, "method": "cancel_event"}
 
 
 @app.get("/api/health")
@@ -1118,9 +1221,13 @@ def _last_user_msg(messages: list) -> str:
     return "Agent task"
 
 async def _tracked_stream(gen, task_id: str):
-    """Wrap an async generator with task lifecycle tracking."""
+    """Wrap an async generator with task lifecycle tracking + cancellation."""
     try:
         async for chunk in gen:
+            if _is_task_cancelled(task_id):
+                yield f"event: text\ndata: {json.dumps({'text': '\n\n⚠ Task killed by user.'})}\n\n"
+                yield "event: done\ndata: {}\n\n"
+                break
             yield chunk
     finally:
         _task_end(task_id)
@@ -1157,10 +1264,116 @@ async def tshoot(request: ChatRequest):
     )
 
 
+class AutoTshootRequest(BaseModel):
+    device: str
+    host: str = ""
+    detail: str = ""
+    event_type: str = ""
+    jira_key: str = ""
+    severity: str = ""
+    group: str = ""
+
+
+@app.post("/api/tshoot/auto")
+async def tshoot_auto(req: AutoTshootRequest):
+    """Auto-tshoot: triggered by SNMP alerts. Runs diagnostics and updates Jira ticket."""
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+
+    # Build the diagnostic prompt
+    prompt_parts = [
+        f"AUTOMATED DIAGNOSTIC REQUEST — triggered by SNMP protocol event.",
+        f"",
+        f"Event: {req.event_type.replace('_', ' ').upper()}",
+        f"Device: {req.device}",
+        f"Host: {req.host}",
+        f"Detail: {req.detail}",
+        f"Severity: {req.severity}",
+    ]
+    if req.group:
+        prompt_parts.append(f"Group: {req.group}")
+    if req.jira_key:
+        prompt_parts.append(f"")
+        prompt_parts.append(f"Jira ticket {req.jira_key} has been raised for this event.")
+        prompt_parts.append(f"After your investigation, update the ticket with your findings using the update_jira_ticket tool.")
+    prompt_parts.append(f"")
+    prompt_parts.append(f"Connect to {req.host or req.device} and run diagnostics:")
+    prompt_parts.append(f"1. Check interface status (show ip interface brief, show interfaces {req.detail})")
+    prompt_parts.append(f"2. Check logs (show logging | last 20)")
+    prompt_parts.append(f"3. Check CDP/LLDP neighbors")
+    prompt_parts.append(f"4. Check for any related errors or drops")
+    prompt_parts.append(f"5. Provide a root cause assessment and recommended actions")
+
+    prompt = "\n".join(prompt_parts)
+    messages = [{"role": "user", "content": prompt}]
+    tid = _task_start("Tshoot Agent (auto)", f"{req.event_type}: {req.device} — {req.detail}", source="snmp-auto", model=MODEL)
+
+    # Run in background — don't block the caller
+    asyncio.create_task(_run_auto_tshoot(messages, tid, req))
+    return {"ok": True, "task_id": tid, "message": f"Auto-tshoot started for {req.device}"}
+
+
+async def _run_auto_tshoot(messages: list, task_id: str, req: AutoTshootRequest):
+    """Run tshoot agent to completion, collect results, store in diagnostics history."""
+    full_text = []
+    tools_used = []
+    try:
+        async for chunk in stream_tshoot(messages, model=MODEL):
+            if not chunk.startswith("data: "):
+                continue
+            try:
+                payload = json.loads(chunk[6:].strip())
+            except Exception:
+                continue
+            if payload.get("type") == "text":
+                full_text.append(payload.get("content", ""))
+            elif payload.get("type") == "tool_start":
+                tools_used.append(payload.get("tool", ""))
+            elif payload.get("type") == "done":
+                break
+            elif payload.get("type") == "error":
+                full_text.append(f"\n[Error: {payload.get('content', 'unknown')}]")
+                break
+    except Exception as e:
+        log.error(f"[Auto-tshoot] error for task {task_id}: {e}", exc_info=True)
+        full_text.append(f"\n[Auto-tshoot error: {e}]")
+    finally:
+        _task_end(task_id)
+
+    # Store in diagnostics history
+    diag = {
+        "id": task_id,
+        "device": req.device,
+        "host": req.host,
+        "detail": req.detail,
+        "event_type": req.event_type,
+        "jira_key": req.jira_key,
+        "severity": req.severity,
+        "group": req.group,
+        "started": _running_tasks.get(task_id, {}).get("started", datetime.datetime.now(datetime.timezone.utc).isoformat()),
+        "completed": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "findings": "".join(full_text),
+        "tools_used": list(dict.fromkeys(tools_used)),  # unique, ordered
+    }
+    _tshoot_diagnostics.insert(0, diag)
+    if len(_tshoot_diagnostics) > _DIAG_MAX:
+        _tshoot_diagnostics[:] = _tshoot_diagnostics[:_DIAG_MAX]
+    log.info(f"[Auto-tshoot] completed for {req.device} ({req.event_type}), {len(tools_used)} tool calls, {len(diag['findings'])} chars")
+
+
+@app.get("/api/tshoot/diagnostics")
+async def get_tshoot_diagnostics():
+    """Return auto-tshoot diagnostic history."""
+    return {"diagnostics": _tshoot_diagnostics}
+
+
 async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]:
     """Tshoot agent — filtered tool set, diagnostics-focused system prompt."""
     model = model or MODEL
     tools = [t for t in cached_tools if t["name"] in TSHOOT_TOOLS]
+    tools.append(_JIRA_TOOL_DEF)
+    tools.append(_JIRA_GET_TICKETS_DEF)
+    tools.append(_JIRA_CLOSE_TICKET_DEF)
     _TRUNCATE_TOOLS = {"run_show_command", "run_nmap_scan"}
     _TOOL_MAX_CHARS  = 20000
 
@@ -1229,9 +1442,67 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
             for tool_use_id, tool_name, tool_input in tool_calls:
                 log.info(f"[Tshoot] tool: {tool_name}")
                 try:
-                    result      = await mcp_manager.call_tool(tool_name, tool_input)
-                    result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
-                    is_error    = bool(result.isError)
+                    if tool_name == "update_jira_ticket":
+                        # Handle locally — POST to gladius-pyats Jira comment endpoint
+                        r = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: http_requests.post(
+                                f"{AUTOMATION_URL}/api/jira/comment",
+                                json={"issue_key": tool_input.get("issue_key", ""), "comment": tool_input.get("comment", "")},
+                                timeout=15,
+                            )
+                        )
+                        data = r.json()
+                        if data.get("ok"):
+                            result_text = f"Comment added to {tool_input.get('issue_key')} successfully."
+                        else:
+                            result_text = f"Jira comment failed: {data}"
+                        is_error = not data.get("ok")
+                    elif tool_name == "get_jira_tickets":
+                        # Handle locally — GET from gladius-pyats Jira issues endpoint
+                        status_filter = tool_input.get("status", "")
+                        limit_val = tool_input.get("limit", 20)
+                        params = {"limit": limit_val}
+                        if status_filter:
+                            params["status"] = status_filter
+                        r = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: http_requests.get(
+                                f"{AUTOMATION_URL}/api/jira/issues",
+                                params=params, timeout=15,
+                            )
+                        )
+                        data = r.json()
+                        tickets = data.get("issues", [])
+                        if tickets:
+                            lines = [f"Found {len(tickets)} ticket(s):\n"]
+                            for t in tickets:
+                                lines.append(
+                                    f"- {t['key']} [{t['status']}] Priority:{t['priority']} "
+                                    f"Assignee:{t['assignee']} Created:{t.get('created','')} "
+                                    f"Labels:{','.join(t.get('labels',[]))} — {t['summary']}"
+                                )
+                            result_text = "\n".join(lines)
+                        else:
+                            result_text = "No tickets found matching the criteria."
+                        is_error = False
+                    elif tool_name == "close_jira_ticket":
+                        # Handle locally — POST to gladius-pyats Jira close endpoint
+                        r = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: http_requests.post(
+                                f"{AUTOMATION_URL}/api/jira/close",
+                                json={"issue_key": tool_input.get("issue_key", ""), "comment": tool_input.get("comment", "")},
+                                timeout=15,
+                            )
+                        )
+                        data = r.json()
+                        if data.get("ok"):
+                            result_text = f"Ticket {tool_input.get('issue_key')} has been closed successfully."
+                        else:
+                            result_text = f"Failed to close ticket: {data.get('detail', data)}"
+                        is_error = not data.get("ok")
+                    else:
+                        result      = await mcp_manager.call_tool(tool_name, tool_input)
+                        result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                        is_error    = bool(result.isError)
                 except Exception as e:
                     result_text = f"Tool error: {e}"
                     is_error    = True
@@ -2025,6 +2296,12 @@ async def snmp_get_devices():
 async def snmp_add_device(request: Request):
     body = await request.body()
     r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices", data=body, headers={"Content-Type": "application/json"}, timeout=10))
+    return Response(content=r.content, status_code=r.status_code, media_type="application/json")
+
+@app.post("/api/snmp/devices/mute-all")
+async def snmp_mute_all(request: Request):
+    body = await request.body()
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/mute-all", data=body, headers={"Content-Type": "application/json"}, timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 @app.delete("/api/snmp/devices/{dev_id}")

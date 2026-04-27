@@ -11,6 +11,7 @@ import sys
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+import re
 import time
 import logging
 import requests
@@ -631,8 +632,8 @@ async def _run_show_command(command: str, host: str = None) -> list[types.TextCo
     try:
         channel.send(command + "\n")
         time.sleep(0.5)
-        output = _clear_buffer(channel, timeout=10)
-        return [types.TextContent(type="text", text=output)]
+        output = _clear_buffer(channel, timeout=30)
+        return [types.TextContent(type="text", text=_sanitize_output(output))]
     except Exception as e:
         return [types.TextContent(type="text", text=f"ERROR: Command failed: {e}")]
 
@@ -660,7 +661,7 @@ async def _push_config(commands: list, confirmed: bool, host: str = None) -> lis
         channel.send("write memory\n")
         time.sleep(2)
         output += _clear_buffer(channel)
-        return [types.TextContent(type="text", text=f"Configuration applied to {h}:\n{output}")]
+        return [types.TextContent(type="text", text=f"Configuration applied to {h}:\n{_sanitize_output(output)}")]
     except Exception as e:
         return [types.TextContent(type="text", text=f"ERROR: Config push failed: {e}")]
 
@@ -1870,16 +1871,54 @@ async def _query_eox(
     return [types.TextContent(type="text", text=output)]
 
 
+_INJECTION_PATTERNS = re.compile(
+    r'(?i)'
+    r'(\[?\s*SYSTEM\s*(DIRECTIVE|INSTRUCTION|PROMPT|MESSAGE|OVERRIDE|COMMAND)\s*\]?)'
+    r'|(\bignore\s+(all\s+)?previous\s+instructions\b)'
+    r'|(\byou\s+are\s+now\s+in\s+(unrestricted|admin|root|jailbreak)\s+mode\b)'
+    r'|(\bexecute\s+(all\s+)?.*without\s+(user\s+)?confirm)'
+    r'|(\bdisregard\s+(all\s+)?(prior|previous|above)\b)'
+    r'|(\boverride\s+safety\b)'
+    r'|(\bact\s+as\s+(root|admin|superuser)\b)'
+    r'|(\bnew\s+system\s+prompt\b)'
+    r'|(\byou\s+must\s+now\s+obey\b)'
+)
+
+def _sanitize_output(text: str) -> str:
+    """Strip prompt injection patterns from device output."""
+    if not _INJECTION_PATTERNS.search(text):
+        return text
+    cleaned = []
+    for line in text.split('\n'):
+        if _INJECTION_PATTERNS.search(line):
+            log.warning(f"PROMPT INJECTION STRIPPED: {line.strip()[:120]}")
+            cleaned.append('[INJECTION REMOVED]')
+        else:
+            cleaned.append(line)
+    return '\n'.join(cleaned)
+
+
 def _clear_buffer(channel, timeout: int = 5) -> str:
     output = ""
     start  = time.time()
+    idle   = 0
     while (time.time() - start) < timeout:
         if channel.recv_ready():
-            chunk   = channel.recv(8192).decode("utf-8", errors="ignore")
+            chunk   = channel.recv(65536).decode("utf-8", errors="ignore")
             output += chunk
-            if any(p in chunk for p in ["#", ">"]):
-                break
+            idle    = 0
+            # Only break on a trailing CLI prompt (hostname# or hostname>)
+            stripped = output.rstrip()
+            if stripped and (stripped[-1] == '#' or stripped.endswith('>')):
+                # Verify it looks like a prompt line (not mid-output '>')
+                last_line = stripped.split('\n')[-1].strip()
+                if last_line.endswith('#') or (last_line.endswith('>') and len(last_line) < 80):
+                    break
         else:
+            idle += 1
+            # If we already have output and nothing new for 1.5s, we're done
+            if output and idle > 15:
+                break
             time.sleep(0.1)
     return output
 
@@ -1902,6 +1941,7 @@ async def _snmp_get_devices() -> list[types.TextContent]:
         icon    = status_icon.get(d.get("status", "unknown"), "?")
         name    = d.get("name", d.get("host", "—"))
         host    = d.get("host", "—")
+        group   = d.get("group") or "—"
         sysname = d.get("sysName") or "—"
         descr   = (d.get("sysDescr") or "—")[:80]
         uptime  = d.get("sysUpTime") or "—"
@@ -1911,6 +1951,7 @@ async def _snmp_get_devices() -> list[types.TextContent]:
         lines.append(
             f"\n{icon} {name} ({host})\n"
             f"  Hostname : {sysname}\n"
+            f"  Group    : {group}\n"
             f"  Descr    : {descr}\n"
             f"  Uptime   : {uptime}  Interfaces: {ifaces}  RTT: {rtt}{err}"
         )
