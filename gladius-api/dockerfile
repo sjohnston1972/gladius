@@ -13,7 +13,12 @@ RUN pip install --no-cache-dir \
     mcp \
     python-dotenv \
     pydantic \
-	requests
+    requests \
+    sentence-transformers \
+    pdfminer.six
+
+# Pre-download embedding model so HF_HUB_OFFLINE=1 at runtime works without an internet round-trip.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY server.py .
 
