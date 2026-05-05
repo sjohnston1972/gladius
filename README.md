@@ -29,6 +29,10 @@
 |---|---|
 | ![CVE](docs/screenshots/cve.png) | ![Reports](docs/screenshots/reports.png) |
 
+| PenTest Reports | Local Security Chat |
+|---|---|
+| ![PenTest Reports](docs/screenshots/pentest-reports.png) | ![Chat](docs/screenshots/pentest-chat.png) |
+
 ---
 
 ## What It Does
