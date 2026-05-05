@@ -6,6 +6,7 @@ Gladius API Server
 """
 
 import os
+import re
 import json
 
 # Disable HuggingFace network calls — use local cache only.
@@ -74,6 +75,7 @@ MODEL             = "claude-sonnet-4-6"
 OLLAMA_URL        = os.getenv("OLLAMA_URL", "http://192.168.1.250:11434")
 MCP_COMMAND       = "docker"
 MCP_ARGS          = ["exec", "-i", "network-audit-mcp", "python", "/app/server.py"]
+MCP_PENTEST_ARGS  = ["exec", "-i", "gladius-pentest-mcp", "python", "/app/server.py"]
 
 CHROMA_HOST  = os.getenv("CHROMA_HOST", "chroma-db")
 CHROMA_PORT  = os.getenv("CHROMA_PORT", "8000")
@@ -382,32 +384,36 @@ _JIRA_CLOSE_TICKET_DEF = {
 # not safe for concurrent calls. Auto-reconnects on session failure.
 
 cached_tools: list = []
+cached_pentest_tools: list = []
 
 class MCPManager:
     """Persistent MCP session — one subprocess, reused across all requests."""
 
-    def __init__(self):
+    def __init__(self, command: str | None = None, args: list[str] | None = None, label: str = "audit"):
         self._lock    = asyncio.Lock()
         self._session = None
         self._ctx     = None        # stdio_client context
         self._sess_ctx = None       # ClientSession context
         self._connected = False
+        self._command = command if command is not None else MCP_COMMAND
+        self._args    = args if args is not None else MCP_ARGS
+        self._label   = label
 
     async def connect(self) -> bool:
         """Open the MCP subprocess and initialise the session."""
-        server_params = StdioServerParameters(command=MCP_COMMAND, args=MCP_ARGS)
+        server_params = StdioServerParameters(command=self._command, args=self._args)
         try:
-            log.info("MCP: opening persistent session...")
+            log.info(f"MCP[{self._label}]: opening persistent session...")
             self._ctx      = stdio_client(server_params)
             read, write    = await self._ctx.__aenter__()
             self._sess_ctx = ClientSession(read, write)
             self._session  = await self._sess_ctx.__aenter__()
             await self._session.initialize()
             self._connected = True
-            log.info("MCP: persistent session ready")
+            log.info(f"MCP[{self._label}]: persistent session ready")
             return True
         except Exception as e:
-            log.error(f"MCP connect failed: {e}", exc_info=True)
+            log.error(f"MCP[{self._label}] connect failed: {e}", exc_info=True)
             self._connected = False
             return False
 
@@ -427,7 +433,7 @@ class MCPManager:
         self._session = self._ctx = self._sess_ctx = None
 
     async def _reconnect(self) -> bool:
-        log.warning("MCP: reconnecting...")
+        log.warning(f"MCP[{self._label}]: reconnecting...")
         await self.disconnect()
         return await self.connect()
 
@@ -468,7 +474,8 @@ class MCPManager:
         raise RuntimeError(f"MCP tool {name} failed after reconnect")
 
 
-mcp_manager = MCPManager()
+mcp_manager = MCPManager(MCP_COMMAND, MCP_ARGS, label="audit")
+pentest_mcp_manager = MCPManager(MCP_COMMAND, MCP_PENTEST_ARGS, label="pentest")
 
 # Serialise synthesis phases across all concurrent device audits — prevents
 # 4 simultaneous Claude API calls that would hit Anthropic rate limits.
@@ -534,6 +541,20 @@ async def _background_mcp_init():
     except Exception as e:
         log.warning(f"Design: collection ID cache failed (non-fatal): {e}")
 
+    # Pentest MCP discovery — non-fatal. If the container is down, gladius-api
+    # still serves audit traffic; pentest endpoints will surface the missing
+    # tools clearly rather than crashing startup.
+    global cached_pentest_tools
+    try:
+        log.info("MCP[pentest]: background init starting...")
+        if await pentest_mcp_manager.connect():
+            cached_pentest_tools = await pentest_mcp_manager.list_tools()
+            log.info(f"MCP[pentest]: {len(cached_pentest_tools)} tools cached")
+        else:
+            log.warning("MCP[pentest]: connect failed — pentest agent disabled")
+    except Exception as e:
+        log.warning(f"MCP[pentest]: init failed (non-fatal): {e}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -542,6 +563,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_background_mcp_init())
     yield
     await mcp_manager.disconnect()
+    await pentest_mcp_manager.disconnect()
 
 app = FastAPI(title="Gladius API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -693,6 +715,8 @@ async def health():
         "model": MODEL,
         "tools_cached": len(cached_tools),
         "tools": [t["name"] for t in cached_tools],
+        "pentest_tools_cached": len(cached_pentest_tools),
+        "pentest_tools": [t["name"] for t in cached_pentest_tools],
     }
 
 
@@ -1745,6 +1769,787 @@ async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
     except Exception as e:
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+
+
+# ── GLADIUS PENTEST AGENT ──────────────────────────────────────────────────
+# Adaptive pentest agent. Drives an authorized engagement against the operator's
+# homelab. Uses gladius-pentest-mcp tools. Hard gate on active phases via
+# _pentest_active state, toggled by the browser GO ACTIVE switch.
+
+_pending_pentest: dict | None = None
+_last_pentest:    dict | None = None
+_pentest_active:  bool = False  # Operator must opt in via UI before active tools
+
+PENTEST_PASSIVE_TOOLS = {
+    "dig_lookup", "whois_lookup", "cert_transparency", "fetch_url",
+    "request_go_active", "cve_correlation", "save_pentest_results",
+    "foundation_sec_analyze", "resolve_target",
+}
+
+PENTEST_TRUNCATE_TOOLS = {
+    "port_scan", "masscan_sweep", "nikto_scan", "dir_enum",
+    "ssl_audit", "smb_enum", "snmp_walk", "fetch_url", "cve_correlation",
+}
+PENTEST_TOOL_MAX_CHARS = 16000
+
+ATTACK_TECHNIQUES = [
+    ("T1046",     "Network Service Discovery",       "Discovery"),
+    ("T1018",     "Remote System Discovery",         "Discovery"),
+    ("T1135",     "Network Share Discovery",         "Discovery"),
+    ("T1083",     "File and Directory Discovery",    "Discovery"),
+    ("T1110",     "Brute Force",                     "Credential Access"),
+    ("T1110.001", "Password Guessing",               "Credential Access"),
+    ("T1078",     "Valid Accounts",                  "Initial Access"),
+    ("T1078.003", "Local Accounts",                  "Initial Access"),
+    ("T1190",     "Exploit Public-Facing Application","Initial Access"),
+    ("T1133",     "External Remote Services",        "Initial Access"),
+    ("T1021",     "Remote Services",                 "Lateral Movement"),
+    ("T1021.002", "SMB/Windows Admin Shares",        "Lateral Movement"),
+    ("T1021.004", "SSH",                             "Lateral Movement"),
+    ("T1021.006", "Windows Remote Management",       "Lateral Movement"),
+    ("T1071",     "Application Layer Protocol",      "Command and Control"),
+    ("T1071.001", "Web Protocols",                   "Command and Control"),
+    ("T1213",     "Data from Information Repositories","Collection"),
+    ("T1592",     "Gather Victim Host Information",  "Reconnaissance"),
+    ("T1592.002", "Software",                        "Reconnaissance"),
+    ("T1595",     "Active Scanning",                 "Reconnaissance"),
+    ("T1595.001", "Scanning IP Blocks",              "Reconnaissance"),
+    ("T1595.002", "Vulnerability Scanning",          "Reconnaissance"),
+    ("T1595.003", "Wordlist Scanning",               "Reconnaissance"),
+    ("T1596",     "Search Open Technical Databases", "Reconnaissance"),
+    ("T1596.001", "DNS/Passive DNS",                 "Reconnaissance"),
+    ("T1589",     "Gather Victim Identity Information","Reconnaissance"),
+    ("T1590",     "Gather Victim Network Information","Reconnaissance"),
+    ("T1590.001", "Domain Properties",               "Reconnaissance"),
+    ("T1590.002", "DNS",                             "Reconnaissance"),
+    ("T1590.005", "IP Addresses",                    "Reconnaissance"),
+    ("T1591",     "Gather Victim Org Information",   "Reconnaissance"),
+    ("T1552",     "Unsecured Credentials",           "Credential Access"),
+    ("T1552.001", "Credentials In Files",            "Credential Access"),
+    ("T1552.004", "Private Keys",                    "Credential Access"),
+    ("T1212",     "Exploitation for Credential Access","Credential Access"),
+    ("T1003",     "OS Credential Dumping",           "Credential Access"),
+    ("T1499",     "Endpoint Denial of Service",      "Impact"),
+    ("T1219",     "Remote Access Software",          "Command and Control"),
+    ("T1040",     "Network Sniffing",                "Credential Access"),
+    ("T1199",     "Trusted Relationship",            "Initial Access"),
+    ("T1059",     "Command and Scripting Interpreter","Execution"),
+    ("T1554",     "Compromise Client Software Binary","Persistence"),
+    ("T1574",     "Hijack Execution Flow",           "Persistence"),
+    ("T1530",     "Data from Cloud Storage",         "Collection"),
+    ("T1119",     "Automated Collection",            "Collection"),
+    ("T1592.004", "Client Configurations",           "Reconnaissance"),
+    ("T1596.005", "Scan Databases",                  "Reconnaissance"),
+    ("T1589.001", "Credentials",                     "Reconnaissance"),
+    ("T1003.005", "Cached Domain Credentials",       "Credential Access"),
+]
+
+_attack_tech_block = "\n".join(f"  {tid:<10} {name} ({tactic})" for tid, name, tactic in ATTACK_TECHNIQUES)
+
+SYSTEM_PROMPT_PENTEST = f"""You are Gladius PenTest — a senior penetration tester running an authorized engagement against the operator's homelab. The operator is technically experienced but is NOT a pentest specialist. You are the expert; lead the engagement.
+
+OPERATING PRINCIPLES
+1. If the operator has not given scope, ask for it as your first message and treat their answer as binding. Scope = in-scope IPs/CIDRs/domains, optional out-of-scope, and intensity.
+2. Drive the engagement. Pick the next move; don't wait to be told.
+
+KNOWN HOMELAB TARGETS (resolve fresh — do NOT assume IPs from past engagements):
+- gladius-target — Metasploitable2; primary intentional-vuln Linux box on the Docker net_core network. Container IP rotates on restart.
+For ANY known alias, ALWAYS call resolve_target FIRST (before port_scan or anything that takes an IP). The resolved primary IP is then your target for all subsequent tools in this engagement. If the operator gives you an IP directly, use it as-is and skip resolution.
+
+3. Phases (announce each phase change explicitly with the literal label so the UI can render a divider):
+   PHASE: passive_recon  → dig_lookup, whois_lookup, cert_transparency, fetch_url
+   PHASE: active_recon   → port_scan, masscan_sweep   [requires go-active]
+   PHASE: service_enum   → smb_enum, snmp_walk, ldap_enum, web_fingerprint, ssl_audit   [requires go-active]
+   PHASE: safe_checks    → nikto_scan, dir_enum, default_creds_check, traversal_probe   [requires go-active]
+   PHASE: correlation    → cve_correlation
+   PHASE: synthesis      → save_pentest_results, then a final wrap-up message
+4. Never run destructive checks. Proof-of-vulnerability only.
+5. Adaptive loop — chain probes off findings:
+   port 445 open  → smb_enum
+   port 161 open  → snmp_walk
+   port 22  open  → cve_correlation on the SSH banner
+   port 80/443    → fetch_url('/'), fetch_url('/robots.txt') → web_fingerprint → ssl_audit → nikto_scan → dir_enum
+   default cred ACCEPTED → CRITICAL finding; never escalate
+
+VOICE RHYTHM (MANDATORY)
+- Tool calls: ONE-LINE operator note. e.g. "Banner-grabbing 22, 80, 443."
+- Routine results: ONE-LINE operator note. e.g. "OpenSSH 7.4 confirmed."
+- Findings or pivots: TEACHER paragraph. State what, why it matters, what it unlocks.
+  Translate every jargon term the first time you use it ("null session = anyone on the network can connect without credentials").
+- End of phase: TEACHER summary + explicit next-step recommendation.
+
+GO-ACTIVE GATE
+Before ANY tool whose phase is not passive_recon (or correlation), you MUST call request_go_active ONCE per engagement.
+- If the response says "approved" or "active mode is on", proceed with active phases.
+- If denied, stay in passive_recon. State clearly what you can and cannot infer from public data only.
+
+LOCAL EXPERT MODEL — foundation_sec_analyze
+You have access to a locally-hosted security specialist LLM (Foundation-Sec-8B by Cisco Foundation AI) via the foundation_sec_analyze tool. It is text-in/text-out only — it cannot run scans or touch the network.
+Delegate to it when domain-specific reasoning over evidence would benefit from a security-tuned model. Good uses:
+  - Interpret a raw banner / nmap service line / sslyze block in operator-friendly terms.
+  - Classify a finding's severity or pick the strongest ATT&CK technique from the allowlist.
+  - Draft the narrative field for a finding given the raw evidence.
+  - Propose plausible attack paths given a set of observed services on a host.
+  - Translate a CVE description into an exploitable-impact summary.
+Do NOT use it for: anything requiring a tool call, anything where you already have a clean answer, or for inventing evidence. Pass real evidence in the evidence field; keep the task field specific. Treat its output as advisory — you remain the final author of findings, paths, and summaries.
+
+ATT&CK MAPPING
+For every finding, assign a technique id from this allowlist (return the id in the finding's attack_technique field):
+{_attack_tech_block}
+
+If no technique fits exactly, pick T1592, T1595, or T1596 by activity type. NEVER invent technique IDs.
+
+ENGAGEMENT CLOSE
+When the engagement is complete (no new probes warranted, OR the operator says stop):
+1. Call save_pentest_results with the FULL engagement object including:
+   - engagement_id (use format pt-YYYY-MM-DD-NNN)
+   - scope: {{in_scope, out_of_scope, intensity, started, ended}}
+   - targets: [{{host, hostnames, os, open_ports, services, finding_ids}}]
+   - findings: [{{id, host, title, severity, phase, tool, narrative, cve, attack_technique, parent_id}}]
+   - kill_chain: [{{id, parent_id, phase, tool, target, result_summary, led_to}}]
+   - attack_paths: [{{id, narrative, finding_chain, severity}}]
+   - attack_techniques: [{{id, name, tactic, finding_ids}}]
+   - executive_summary: 2-3 short paragraphs for non-experts. Use blank lines between paragraphs. Lead each paragraph with a bold marker like **What we tested:**, **What we found:**, **What this means:**.
+   - technical_summary: structured for skim-reading, NEVER a single wall of text. Use this exact pattern (markdown literal):
+       **Attack surface:** 1-2 sentences on what's exposed.
+       **Critical findings:** bullet list (- ) of the CRITICAL items, one per line, each with CVE and CVSS where available.
+       **Exploitable paths:** bullet list of the attack paths.
+       **Tool coverage:** 1-2 sentences on what was exercised vs negative/skipped.
+     Use blank lines between sections. Bullet lines start with `- `. Keep each bullet under ~140 chars.
+   - summary: counts {{hosts_total, hosts_live, findings_total, findings_critical, findings_high, attack_paths, exploitable_findings}}
+2. After saving, output a concise wrap-up message and STOP. Do not continue probing."""
+
+
+def _new_engagement_id() -> str:
+    return "pt-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+
+
+async def stream_pentest(messages: list, model: str | None = None) -> AsyncIterator[str]:
+    """
+    Pentest agent loop. Mirrors stream_response but:
+    - Uses pentest_mcp_manager + cached_pentest_tools
+    - Intercepts request_go_active to check the _pentest_active flag
+    - Intercepts save_pentest_results to emit pentest_saved + finding events
+    - Emits phase_change events when the agent declares a new phase in text
+    """
+    global _pending_pentest, _last_pentest, _pentest_active, _last_claude_success
+    model = model or MODEL
+    tools = list(cached_pentest_tools)
+
+    if not tools:
+        yield f"data: {json.dumps({'type':'error','content':'pentest MCP not available — gladius-pentest-mcp container down?'})}\n\n"
+        return
+
+    _pentest_saved = False
+    seen_phases: set[str] = set()
+    phase_re = re.compile(r"PHASE:\s*(passive_recon|active_recon|service_enum|safe_checks|correlation|synthesis)", re.IGNORECASE)
+
+    try:
+        loop_messages = list(messages)
+        loop_count = 0
+        MAX_LOOPS = 80
+
+        while loop_count < MAX_LOOPS:
+            loop_count += 1
+            response = await client.messages.create(
+                model=model, max_tokens=8192, system=SYSTEM_PROMPT_PENTEST,
+                messages=loop_messages, tools=tools,
+            )
+
+            assistant_content = []
+            tool_calls = []
+
+            for block in response.content:
+                if block.type == "text":
+                    assistant_content.append({"type": "text", "text": block.text})
+                    # Emit phase_change events when the agent crosses a phase divider
+                    for m in phase_re.finditer(block.text):
+                        phase = m.group(1).lower()
+                        if phase not in seen_phases:
+                            seen_phases.add(phase)
+                            yield f"data: {json.dumps({'type':'phase_change','phase':phase})}\n\n"
+                    # Stream text chunked by space
+                    parts = block.text.split(" ")
+                    for i, word in enumerate(parts):
+                        chunk = word + (" " if i < len(parts) - 1 else "")
+                        yield f"data: {json.dumps({'type':'text','content':chunk})}\n\n"
+                        await asyncio.sleep(0.01)
+
+                elif block.type == "tool_use":
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id":    block.id,
+                        "name":  block.name,
+                        "input": block.input,
+                    })
+                    tool_calls.append((block.id, block.name, block.input))
+
+                    # Slim tool input for the browser
+                    _STRIP = {"findings", "kill_chain", "attack_paths", "attack_techniques", "targets",
+                              "executive_summary", "technical_summary"}
+                    slim = {k: v for k, v in block.input.items() if k not in _STRIP}
+                    if "findings" in block.input:
+                        slim["findings_count"] = len(block.input["findings"])
+                    if "kill_chain" in block.input:
+                        slim["kill_chain_count"] = len(block.input["kill_chain"])
+                    yield f"data: {json.dumps({'type':'tool_start','tool':block.name,'input':slim})}\n\n"
+
+            if not tool_calls:
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type':'done'})}\n\n"
+                break
+
+            tool_results = []
+            for tool_use_id, tool_name, tool_input in tool_calls:
+                log.info(f"[Pentest] Tool call: {tool_name}")
+                try:
+                    if tool_name == "request_go_active":
+                        if _pentest_active:
+                            result_text = (
+                                "APPROVED — operator has GO ACTIVE enabled. Proceed with active phases. "
+                                "Continue to chain probes adaptively from your findings."
+                            )
+                        else:
+                            yield f"data: {json.dumps({'type':'go_active_request','reason':tool_input.get('reason','')})}\n\n"
+                            result_text = (
+                                "DENIED — operator has not enabled GO ACTIVE. "
+                                "Stay in passive_recon. Tell the operator what passive recon found and what active recon "
+                                "would unlock. Then stop and wait."
+                            )
+                        is_error = False
+
+                    elif tool_name in PENTEST_PASSIVE_TOOLS or _pentest_active:
+                        if tool_name == "save_pentest_results":
+                            _last_pentest = tool_input
+                        # Wrap the MCP call so we can emit SSE keepalives every 15s while
+                        # long-running tools (nmap, nikto, masscan, sslyze) are working.
+                        # Cloudflare drops the tunnel after ~100s of silence; nginx after 300s.
+                        result_task = asyncio.create_task(
+                            pentest_mcp_manager.call_tool(tool_name, tool_input)
+                        )
+                        while not result_task.done():
+                            done_set, _ = await asyncio.wait({result_task}, timeout=15)
+                            if not done_set:
+                                yield f"data: {json.dumps({'type':'keepalive'})}\n\n"
+                        result      = result_task.result()
+                        result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                        is_error    = bool(result.isError)
+                        log.info(f"[Pentest] {tool_name} done — {len(result_text)} chars")
+                    else:
+                        # Active tool requested without go-active — refuse without invoking MCP
+                        result_text = (
+                            f"BLOCKED — '{tool_name}' is an active tool but GO ACTIVE is OFF. "
+                            f"Call request_go_active first, or stay in passive recon."
+                        )
+                        is_error = True
+
+                except Exception as e:
+                    log.error(f"[Pentest] Tool {tool_name} failed: {type(e).__name__}: {e}", exc_info=True)
+                    result_text = f"Tool error: {type(e).__name__}: {e}"
+                    is_error    = True
+
+                yield f"data: {json.dumps({'type':'tool_done','tool':tool_name})}\n\n"
+
+                # Save handling
+                if tool_name == "save_pentest_results" and not is_error:
+                    eng = dict(tool_input)
+                    eng.setdefault("engagement_id", _new_engagement_id())
+                    eng["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+                    # Stream individual findings to the chat for inline cards
+                    for f in eng.get("findings", []):
+                        slim = {
+                            "id":       f.get("id", ""),
+                            "host":     f.get("host", ""),
+                            "title":    f.get("title", ""),
+                            "severity": f.get("severity", ""),
+                            "phase":    f.get("phase", ""),
+                            "attack_technique": f.get("attack_technique", ""),
+                        }
+                        yield f"data: {json.dumps({'type':'finding','finding':slim})}\n\n"
+                        await asyncio.sleep(0.02)
+                    yield f"data: {json.dumps({'type':'pentest_saved','engagement':eng})}\n\n"
+                    _pending_pentest = None
+                    _pentest_saved = True
+
+                # Truncate big outputs before feeding back to Claude
+                ctx = result_text
+                if tool_name in PENTEST_TRUNCATE_TOOLS and len(result_text) > PENTEST_TOOL_MAX_CHARS:
+                    ctx = result_text[:PENTEST_TOOL_MAX_CHARS] + f"\n[truncated — {len(result_text)} chars]"
+
+                tool_results.append({
+                    "type":        "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content":     [{"type": "text", "text": ctx}],
+                    "is_error":    is_error,
+                })
+
+            if assistant_content:
+                loop_messages.append({"role": "assistant", "content": assistant_content})
+            if tool_results:
+                loop_messages.append({"role": "user", "content": tool_results})
+
+            if _pentest_saved:
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type':'done'})}\n\n"
+                break
+
+            if response.stop_reason != "tool_use":
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type':'done'})}\n\n"
+                break
+
+        else:
+            log.warning(f"[Pentest] MAX_LOOPS ({MAX_LOOPS}) reached")
+            yield f"data: {json.dumps({'type':'done'})}\n\n"
+
+    except Exception as e:
+        log.error(f"[Pentest] Stream error: {type(e).__name__}: {e}", exc_info=True)
+        yield f"data: {json.dumps({'type':'error','content':str(e)})}\n\n"
+
+
+@app.post("/api/pentest/chat")
+async def pentest_chat(request: ChatRequest):
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
+    messages = [{"role": m.role, "content": m.content} for m in request.messages]
+    use_model = request.model or MODEL
+    src = request.source or "web"
+    tid = _task_start("PenTest Agent", _last_user_msg(messages), source=src, model=use_model)
+    return StreamingResponse(
+        _tracked_stream(stream_pentest(messages, model=use_model), tid),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+PENTEST_HISTORY_DIR = "/data/pentest"
+PENTEST_HISTORY_MAX = 20
+
+
+def _load_pentest_history() -> list[dict]:
+    """List saved engagements newest-first by reading /data/pentest/<id>/report.json."""
+    if not os.path.isdir(PENTEST_HISTORY_DIR):
+        return []
+    rows = []
+    for entry in os.listdir(PENTEST_HISTORY_DIR):
+        path = os.path.join(PENTEST_HISTORY_DIR, entry, "report.json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path) as fh:
+                rows.append((os.path.getmtime(path), json.load(fh)))
+        except Exception as e:
+            log.warning(f"pentest history: skipping {path}: {e}")
+    rows.sort(key=lambda r: r[0], reverse=True)
+    return [r[1] for r in rows[:PENTEST_HISTORY_MAX]]
+
+
+@app.post("/api/pentest/save")
+async def pentest_save(payload: dict):
+    """Receives the engagement object from save_pentest_results MCP tool."""
+    global _pending_pentest, _last_pentest
+    _pending_pentest = payload
+    _last_pentest = payload
+    eid = payload.get("engagement_id") or "pt-unknown"
+    try:
+        eng_dir = os.path.join(PENTEST_HISTORY_DIR, eid)
+        os.makedirs(eng_dir, exist_ok=True)
+        with open(os.path.join(eng_dir, "report.json"), "w") as fh:
+            json.dump(payload, fh, indent=2, default=str)
+    except Exception as e:
+        log.warning(f"[Pentest] history persist failed: {e}")
+    log.info(f"[Pentest] engagement saved: {eid} — "
+             f"{len(payload.get('findings', []))} findings")
+    return {"ok": True, "engagement_id": eid}
+
+
+@app.get("/api/pentest/history")
+async def pentest_history():
+    """Return all persisted pentest engagements, newest-first, capped at 20."""
+    return {"engagements": _load_pentest_history()}
+
+
+@app.get("/api/pentest/active")
+async def pentest_active_get():
+    return {"active": _pentest_active}
+
+
+class PentestActiveRequest(BaseModel):
+    active: bool
+
+
+@app.post("/api/pentest/active")
+async def pentest_active_set(req: PentestActiveRequest):
+    global _pentest_active
+    _pentest_active = bool(req.active)
+    log.info(f"[Pentest] GO ACTIVE = {_pentest_active}")
+    return {"ok": True, "active": _pentest_active}
+
+
+# ── FOUNDATION-SEC POST-HOC ANALYSIS ────────────────────────────────────────
+# Lets the operator point Foundation-Sec-8B (local Ollama, security-tuned LLM)
+# at a saved pentest engagement. Two modes:
+#   - "analyze": canned one-shot expert review (no user prompt required)
+#   - "chat":    multi-turn Q&A scoped to that engagement's evidence
+# Bypasses Claude and the MCP layer entirely — direct HTTP to Ollama.
+
+OLLAMA_URL_FSEC      = os.getenv("OLLAMA_URL", "http://192.168.1.250:11434")
+FOUNDATION_SEC_MODEL = os.getenv("FOUNDATION_SEC_MODEL", "foundation-sec")
+
+FSEC_SYSTEM_BASE = (
+    "You are Foundation-Sec, a cybersecurity-specialist language model. "
+    "You are reviewing a saved penetration-test engagement that another agent has already completed. "
+    "You CANNOT run scans or call tools — you reason only from the evidence in the engagement object. "
+    "Be technical, concise, and ground every claim in the evidence shown. "
+    "If the evidence is silent on something, say so rather than inventing facts."
+)
+
+
+def _engagement_brief(eng: dict, max_chars: int = 8000) -> str:
+    """Compact textual brief of an engagement, sized to fit Foundation-Sec context."""
+    if not eng:
+        return "(no engagement loaded)"
+    sc = eng.get("scope") or {}
+    summ = eng.get("summary") or {}
+    findings = eng.get("findings") or []
+    paths = eng.get("attack_paths") or []
+    techs = eng.get("attack_techniques") or []
+    targets = eng.get("targets") or []
+
+    lines = [
+        f"engagement_id: {eng.get('engagement_id', '?')}",
+        f"timestamp:     {eng.get('timestamp', '?')}",
+        f"scope:         in={sc.get('in_scope') or []}  out={sc.get('out_of_scope') or []}  intensity={sc.get('intensity', '?')}",
+        f"summary:       hosts_live={summ.get('hosts_live', '?')}  findings_total={summ.get('findings_total', len(findings))}  "
+        f"critical={summ.get('findings_critical', '?')}  high={summ.get('findings_high', '?')}  paths={summ.get('attack_paths', len(paths))}",
+        "",
+        "EXECUTIVE SUMMARY:",
+        (eng.get("executive_summary") or "(none)").strip(),
+        "",
+        "TECHNICAL SUMMARY:",
+        (eng.get("technical_summary") or "(none)").strip(),
+        "",
+        f"TARGETS ({len(targets)}):",
+    ]
+    def _as_list(v):
+        if v is None: return []
+        if isinstance(v, list): return v
+        if isinstance(v, dict):
+            return [f"{k}={vv}" for k, vv in v.items()]
+        return [v]
+    for t in targets[:10]:
+        host = t.get("host") or t.get("ip") or "?"
+        ports = ",".join(str(p) for p in _as_list(t.get("open_ports"))[:20])
+        services = "; ".join(str(s) for s in _as_list(t.get("services"))[:10])
+        lines.append(f"  - {host}  ports=[{ports}]  services=[{services}]")
+    lines.append("")
+    lines.append(f"FINDINGS ({len(findings)}):")
+    for f in findings[:30]:
+        lines.append(
+            f"  - [{f.get('severity', '?'):>8}] {f.get('id', '?')}  host={f.get('host', '?')}  "
+            f"phase={f.get('phase', '?')}  tool={f.get('tool', '?')}  attck={f.get('attack_technique', '?')}"
+        )
+        narr = (f.get("narrative") or "").strip().replace("\n", " ")
+        if narr:
+            lines.append(f"      narrative: {narr[:280]}")
+        cve = f.get("cve")
+        if cve:
+            lines.append(f"      cve: {cve}")
+    if len(findings) > 30:
+        lines.append(f"  ... and {len(findings) - 30} more findings (truncated)")
+    lines.append("")
+    lines.append(f"ATTACK PATHS ({len(paths)}):")
+    for p in paths[:10]:
+        lines.append(f"  - [{p.get('severity', '?'):>8}] {p.get('id', '?')}  chain={p.get('finding_chain') or []}")
+        narr = (p.get("narrative") or "").strip().replace("\n", " ")
+        if narr:
+            lines.append(f"      narrative: {narr[:280]}")
+    lines.append("")
+    lines.append(f"ATT&CK TECHNIQUES OBSERVED: {[t.get('id') for t in techs][:25]}")
+
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        text = text[:max_chars] + f"\n[truncated — full engagement is {len(text)} chars]"
+    return text
+
+
+def _find_engagement(engagement_id: str) -> dict | None:
+    for eng in _load_pentest_history():
+        if eng.get("engagement_id") == engagement_id:
+            return eng
+    return None
+
+
+async def _stream_foundation_sec(
+    messages: list[dict],
+    max_tokens: int = 1500,
+    temperature: float = 0.3,
+) -> AsyncIterator[str]:
+    """
+    Stream Ollama /api/chat against Foundation-Sec as SSE events.
+    Emits 'text' chunks, 'keepalive' between chunks while waiting, 'done' at end.
+    """
+    payload = {
+        "model": FOUNDATION_SEC_MODEL,
+        "messages": messages,
+        "stream": True,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "num_ctx": 8192,
+        },
+    }
+    sent_any = False
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as cli:
+            async with cli.stream("POST", f"{OLLAMA_URL_FSEC}/api/chat", json=payload) as r:
+                if r.status_code != 200:
+                    body = (await r.aread()).decode(errors="replace")[:500]
+                    yield f"data: {json.dumps({'type':'error','content':f'Ollama HTTP {r.status_code}: {body}'})}\n\n"
+                    return
+                async for line in r.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    chunk = (obj.get("message") or {}).get("content", "")
+                    if chunk:
+                        sent_any = True
+                        yield f"data: {json.dumps({'type':'text','content':chunk})}\n\n"
+                    if obj.get("done"):
+                        if not sent_any:
+                            yield f"data: {json.dumps({'type':'error','content':f'Foundation-Sec returned empty response (model={FOUNDATION_SEC_MODEL})'})}\n\n"
+                        else:
+                            yield f"data: {json.dumps({'type':'done'})}\n\n"
+                        return
+    except Exception as e:
+        yield f"data: {json.dumps({'type':'error','content':f'Foundation-Sec stream failed: {type(e).__name__}: {e}'})}\n\n"
+
+
+class FoundationSecRequest(BaseModel):
+    engagement_id: str
+    mode: str = "analyze"  # "analyze" | "chat"
+    user_message: str | None = None
+    history: list[dict] | None = None  # [{role:'user'|'assistant', content:str}, ...]
+    finding_id: str | None = None      # If set, scope to a single finding
+    technique_id: str | None = None    # If set, scope to one MITRE ATT&CK technique
+    attack_path_id: str | None = None  # If set, scope to one attack path
+
+
+def _finding_focus_block(eng: dict, finding_id: str) -> str | None:
+    """Return a focused dossier on one finding, or None if not found."""
+    findings = eng.get("findings") or []
+    f = next((x for x in findings if (x.get("id") or "") == finding_id), None)
+    if not f:
+        return None
+    # Also grab adjacency: same-host findings, attack paths containing this finding,
+    # parent kill-chain step.
+    same_host = [x for x in findings if x.get("host") == f.get("host") and x.get("id") != f.get("id")]
+    paths = [p for p in (eng.get("attack_paths") or []) if finding_id in (p.get("finding_chain") or [])]
+    parent = None
+    if f.get("parent_id"):
+        parent = next((x for x in findings if x.get("id") == f.get("parent_id")), None)
+    lines = [
+        f"FINDING UNDER REVIEW: {f.get('id', '?')}",
+        f"  title:       {f.get('title', '?')}",
+        f"  severity:    {f.get('severity', '?')}",
+        f"  host:        {f.get('host', '?')}",
+        f"  phase:       {f.get('phase', '?')}",
+        f"  tool:        {f.get('tool', '?')}",
+        f"  attck:       {f.get('attack_technique', '?')}",
+        f"  cve:         {f.get('cve', 'n/a')}",
+    ]
+    for k in ("narrative", "impact", "fix", "commands", "ref", "evidence"):
+        v = (f.get(k) or "").strip()
+        if v:
+            lines.append(f"  {k}:")
+            for ln in v.splitlines()[:20]:
+                lines.append(f"    {ln}")
+    if parent:
+        lines.append(f"  parent_kill_chain_step: {parent.get('id')} — {parent.get('title', '')}")
+    if same_host:
+        lines.append(f"  other_findings_on_same_host:")
+        for o in same_host[:8]:
+            lines.append(f"    - [{o.get('severity', '?')}] {o.get('id', '?')} {o.get('title', '?')}")
+    if paths:
+        lines.append(f"  attack_paths_including_this_finding:")
+        for p in paths[:5]:
+            chain = " -> ".join(p.get("finding_chain") or [])
+            lines.append(f"    - {p.get('id', '?')} [{p.get('severity', '?')}]  chain: {chain}")
+    return "\n".join(lines)
+
+
+def _attack_path_focus_block(eng: dict, path_id: str) -> str | None:
+    """Return a focused dossier on one attack path within the engagement context."""
+    paths = eng.get("attack_paths") or []
+    findings = eng.get("findings") or []
+    p = next((x for x in paths if (x.get("id") or "") == path_id), None)
+    if not p:
+        return None
+    fmap = {f.get("id"): f for f in findings}
+    chain_ids = p.get("finding_chain") or []
+    lines = [
+        f"FOCUSED ATTACK PATH: {p.get('id', '?')}",
+        f"  severity:  {p.get('severity', '?')}",
+        f"  narrative: {(p.get('narrative') or '').strip()[:600]}",
+        f"  chain     ({len(chain_ids)} steps):",
+    ]
+    for fid in chain_ids:
+        f = fmap.get(fid)
+        if f:
+            lines.append(
+                f"    → {fid}  [{f.get('severity', '?')}]  host={f.get('host', '?')}  "
+                f"title={f.get('title', '?')}  attck={f.get('attack_technique', '?')}"
+            )
+            narr = (f.get("narrative") or "").strip().replace("\n", " ")
+            if narr:
+                lines.append(f"        narrative: {narr[:200]}")
+        else:
+            lines.append(f"    → {fid}  (referenced finding not in engagement — agent error)")
+    return "\n".join(lines)
+
+
+def _technique_focus_block(eng: dict, technique_id: str) -> str:
+    """Return a focused dossier on one ATT&CK technique within the engagement context."""
+    techs = eng.get("attack_techniques") or []
+    findings = eng.get("findings") or []
+    rec = next((t for t in techs if (t.get("id") or "") == technique_id), None)
+    name = (rec or {}).get("name") or "(name not recorded by agent)"
+    tactic = (rec or {}).get("tactic") or "(tactic not recorded)"
+    using = [f for f in findings if (f.get("attack_technique") or "") == technique_id]
+    lines = [
+        f"FOCUSED ATT&CK TECHNIQUE: {technique_id}",
+        f"  name:   {name}",
+        f"  tactic: {tactic}",
+        f"  mitre:  https://attack.mitre.org/techniques/{technique_id.replace('.', '/')}/",
+        f"  findings_in_engagement_using_this_technique ({len(using)}):",
+    ]
+    for f in using[:20]:
+        lines.append(
+            f"    - [{f.get('severity', '?'):>8}] {f.get('id', '?')}  host={f.get('host', '?')}  "
+            f"title={f.get('title', '?')}"
+        )
+        narr = (f.get("narrative") or "").strip().replace("\n", " ")
+        if narr:
+            lines.append(f"        narrative: {narr[:200]}")
+    if not using:
+        lines.append("    (none — operator is asking about a technique not actually exercised in this engagement)")
+    return "\n".join(lines)
+
+
+def _build_fsec_messages(req: "FoundationSecRequest", eng: dict) -> tuple[list[dict], int]:
+    brief = _engagement_brief(eng)
+    system_prompt = f"{FSEC_SYSTEM_BASE}\n\n=== ENGAGEMENT UNDER REVIEW ===\n{brief}\n=== END ENGAGEMENT ==="
+
+    # Optional scoped focus — appended to system prompt so chat history still works.
+    focused_finding = None
+    focused_technique = None
+    focused_path = None
+    if req.finding_id:
+        focused_finding = _finding_focus_block(eng, req.finding_id)
+        if focused_finding:
+            system_prompt += f"\n\n=== FOCUSED FINDING — answer questions in terms of this finding by default ===\n{focused_finding}\n=== END FOCUSED FINDING ==="
+        else:
+            log.warning(f"[FoundationSec] finding_id={req.finding_id} not found in engagement {eng.get('engagement_id')}")
+    if req.technique_id:
+        focused_technique = _technique_focus_block(eng, req.technique_id)
+        system_prompt += f"\n\n=== FOCUSED ATT&CK TECHNIQUE — answer questions in terms of this technique by default ===\n{focused_technique}\n=== END FOCUSED TECHNIQUE ==="
+    if req.attack_path_id:
+        focused_path = _attack_path_focus_block(eng, req.attack_path_id)
+        if focused_path:
+            system_prompt += f"\n\n=== FOCUSED ATTACK PATH — answer questions in terms of this path by default ===\n{focused_path}\n=== END FOCUSED ATTACK PATH ==="
+        else:
+            log.warning(f"[FoundationSec] attack_path_id={req.attack_path_id} not found in engagement {eng.get('engagement_id')}")
+
+    if req.mode == "analyze":
+        if focused_finding:
+            user_prompt = (
+                "Produce a deep-dive expert review of the FOCUSED FINDING above. "
+                "Use this exact markdown layout:\n\n"
+                "**What this is:** plain-English explanation of the vulnerability or exposure (2-3 sentences). "
+                "Translate any jargon the first time you use it.\n\n"
+                "**Why it matters here:** why this matters specifically given the surrounding engagement context "
+                "(other findings on the same host, attack paths it appears in). 2-3 sentences.\n\n"
+                "**How an attacker would exploit it:** concrete step-by-step (3-5 numbered steps). "
+                "Reference real tools and CVEs where applicable.\n\n"
+                "**Concrete remediation:** ordered list of 2-4 specific fixes the operator can apply tonight, "
+                "highest-leverage first. Include command examples where useful.\n\n"
+                "**Detection signal:** one or two log/IDS signatures that would catch the exploitation attempt."
+            )
+        elif focused_technique:
+            user_prompt = (
+                "Produce a deep-dive expert review of the FOCUSED ATT&CK TECHNIQUE above. "
+                "Use this exact markdown layout:\n\n"
+                "**What this technique is:** plain-English explanation of the technique (2-3 sentences). "
+                "Translate jargon the first time you use it.\n\n"
+                "**How it appears in this engagement:** which findings exercise it and what the operator should "
+                "take from that pattern (2-3 sentences).\n\n"
+                "**Real-world exploitation:** concrete step-by-step of how a real adversary uses this technique "
+                "(3-5 numbered steps). Cite known tooling.\n\n"
+                "**Detection priorities:** ordered list of 2-4 detection signals (log sources, sensor positions, "
+                "indicator patterns) that would surface this technique in production.\n\n"
+                "**Mitigation priorities:** ordered list of 2-4 concrete mitigations, highest-leverage first."
+            )
+        elif focused_path:
+            user_prompt = (
+                "Produce a deep-dive expert review of the FOCUSED ATTACK PATH above. "
+                "Use this exact markdown layout:\n\n"
+                "**Path summary:** 1-2 sentences describing the attacker's full route from first foothold to final impact.\n\n"
+                "**Why this path matters:** what an adversary actually achieves by chaining these specific findings "
+                "(impact in business/operational terms, 2-3 sentences).\n\n"
+                "**Step-by-step walkthrough:** numbered list — for EACH step in the chain, one bullet describing "
+                "exactly what the attacker does at that step, the tooling they'd use, and what the next step relies on.\n\n"
+                "**Break the chain — highest-leverage fix:** identify the ONE step in this chain that, if fixed, "
+                "would block the entire path. Explain why and how to fix it (1-2 sentences + specific commands/config).\n\n"
+                "**Detection priorities:** 2-4 detection signals that would catch this path early (log sources, "
+                "alert patterns)."
+            )
+        else:
+            user_prompt = (
+                "Produce a structured expert review of this engagement. Use this exact markdown layout:\n\n"
+                "**Verdict:** one-sentence overall posture call (e.g. 'Critical — multiple unauthenticated RCE paths exposed').\n\n"
+                "**What stands out:** 2-4 bullet points on the most consequential findings, with technique IDs where relevant.\n\n"
+                "**Strongest attack path:** name it and explain in 2-3 sentences why this is the path a real attacker would take first.\n\n"
+                "**Gaps in the engagement:** 2-3 bullet points on what was NOT tested but probably should have been, given the observed attack surface.\n\n"
+                "**Remediation priorities:** ordered list of 3-5 concrete fixes, highest-leverage first."
+            )
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_prompt},
+        ], 1500
+
+    if req.mode == "chat":
+        if not req.user_message or not req.user_message.strip():
+            raise HTTPException(400, "user_message required for chat mode")
+        clean_history = []
+        for m in (req.history or [])[-10:]:
+            role = m.get("role")
+            content = (m.get("content") or "").strip()
+            if role in ("user", "assistant") and content:
+                clean_history.append({"role": role, "content": content})
+        msgs = [{"role": "system", "content": system_prompt}] + clean_history + [
+            {"role": "user", "content": req.user_message.strip()}
+        ]
+        return msgs, 1200
+
+    raise HTTPException(400, f"Unknown mode '{req.mode}' (expected 'analyze' or 'chat')")
+
+
+@app.post("/api/foundation_sec/analyze")
+async def foundation_sec_analyze_endpoint(req: FoundationSecRequest):
+    """SSE-streamed Foundation-Sec analysis. Events: text, done, error."""
+    eng = _find_engagement(req.engagement_id)
+    if not eng:
+        raise HTTPException(404, f"Engagement '{req.engagement_id}' not found")
+    messages, max_tok = _build_fsec_messages(req, eng)
+    log.info(f"[FoundationSec] {req.mode}: engagement={req.engagement_id}")
+    return StreamingResponse(
+        _stream_foundation_sec(messages, max_tokens=max_tok),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── OLLAMA-BACKED NMAP / SCAPY ──────────────────────────────────────────────

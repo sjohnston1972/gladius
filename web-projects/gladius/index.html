@@ -301,7 +301,7 @@
     z-index: 200;
     box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     min-width: 54px;
-    max-height: 260px;
+    max-height: calc(100vh - 40px);
     overflow-y: auto;
   }
   .sidebar-section.collapsible.open .nav-items-group::-webkit-scrollbar {
@@ -2868,6 +2868,228 @@
   #page-apitest.active                  { display:flex; }
   #page-itsm                            { display:none; flex-direction:column; overflow:hidden; }
   #page-itsm.active                     { display:flex; }
+  #page-pentest                         { display:none; flex-direction:column; overflow:hidden; }
+  #page-pentest.active                  { display:flex; }
+  #page-pentest-reports                 { display:none; flex-direction:column; overflow-y:auto; padding:18px 22px; gap:14px; }
+  #page-pentest-reports.active          { display:flex; }
+
+  /* ── PenTest Agent ── */
+  .pentest-go-active {
+    display:inline-flex; align-items:center; gap:8px; padding:4px 10px;
+    border:1px solid var(--border); border-radius:14px;
+    font-family:var(--font-mono); font-size:10px; letter-spacing:1.5px;
+    color:var(--text-dim); background:var(--surface); cursor:pointer;
+    transition:all 0.2s;
+  }
+  .pentest-go-active.active {
+    border-color:#ff3a4a; color:#ff3a4a;
+    box-shadow:0 0 14px rgba(255,58,74,0.35), inset 0 0 8px rgba(255,58,74,0.10);
+    background:rgba(255,58,74,0.06);
+  }
+  .pentest-go-active .dot {
+    width:8px; height:8px; border-radius:50%; background:var(--text-dim);
+  }
+  .pentest-go-active.active .dot {
+    background:#ff3a4a; animation:pentest-pulse 1.4s infinite;
+  }
+  @keyframes pentest-pulse {
+    0%,100% { box-shadow:0 0 0 0 rgba(255,58,74,0.7); }
+    50%     { box-shadow:0 0 0 6px rgba(255,58,74,0); }
+  }
+  .phase-divider {
+    display:flex; align-items:center; gap:10px; margin:12px 0;
+    font-family:var(--font-mono); font-size:10px; letter-spacing:2px;
+    color:var(--accent); text-transform:uppercase;
+  }
+  .phase-divider::before, .phase-divider::after {
+    content:""; flex:1; height:1px; background:var(--accent); opacity:0.4;
+  }
+  .pt-finding-card {
+    border:1px solid var(--border); border-left-width:3px;
+    border-radius:6px; padding:8px 12px; margin:6px 0; background:var(--surface);
+    font-family:var(--font-mono); font-size:11px;
+  }
+  .pt-finding-card.sev-CRITICAL { border-left-color:#ff3a4a; }
+  .pt-finding-card.sev-HIGH     { border-left-color:#ff8c1a; }
+  .pt-finding-card.sev-MEDIUM   { border-left-color:#f3c623; }
+  .pt-finding-card.sev-LOW      { border-left-color:#5cd99a; }
+  .pt-finding-card .sev-tag {
+    display:inline-block; padding:1px 6px; border-radius:3px;
+    font-size:9px; letter-spacing:1px; margin-right:6px;
+  }
+  .pt-finding-card.sev-CRITICAL .sev-tag { background:rgba(255,58,74,0.15); color:#ff3a4a; }
+  .pt-finding-card.sev-HIGH     .sev-tag { background:rgba(255,140,26,0.15); color:#ff8c1a; }
+  .pt-finding-card.sev-MEDIUM   .sev-tag { background:rgba(243,198,35,0.15); color:#f3c623; }
+  .pt-finding-card.sev-LOW      .sev-tag { background:rgba(92,217,154,0.15); color:#5cd99a; }
+  .pt-killchain-tree { font-family:var(--font-mono); font-size:11px; padding:10px; }
+  .pt-kc-phase { margin-bottom:14px; }
+  .pt-kc-phase-label {
+    font-family:var(--font-mono); font-size:10px; letter-spacing:2px;
+    color:var(--accent); text-transform:uppercase; margin-bottom:8px;
+    padding:3px 0 3px 10px; border-left:3px solid var(--accent);
+  }
+  .pt-kc-phase-nodes {
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(240px, 1fr));
+    gap:6px;
+  }
+  .pt-kc-node {
+    border:1px solid var(--border); border-left:2px solid var(--accent);
+    border-radius:4px; padding:6px 10px; background:var(--bg);
+    font-family:var(--font-mono); font-size:11px; min-width:0;
+  }
+  .pt-kc-node .kc-tool { color:var(--accent); font-weight:700; word-break:break-word; }
+  .pt-kc-node .kc-parent { color:var(--text-dim); font-weight:normal; font-size:10px; margin-left:4px; }
+  .pt-kc-node .kc-target { opacity:0.75; font-size:10px; margin-top:2px; word-break:break-word; }
+  .pt-kc-node .kc-summary { opacity:0.85; margin-top:4px; line-height:1.4; word-break:break-word; }
+  .pt-attck-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:6px; }
+  .pt-attck-cell {
+    border:1px solid var(--border); border-radius:4px; padding:6px 8px;
+    font-family:var(--font-mono); font-size:10px;
+    background:var(--surface); color:var(--text-dim);
+    opacity:0.45; transition:all 0.15s; position:relative;
+  }
+  .pt-attck-cell.hit {
+    border:2px solid var(--accent); padding:5px 7px;
+    color:var(--text); opacity:1; font-weight:500;
+    background:linear-gradient(135deg, rgba(0,212,255,0.18) 0%, rgba(0,212,255,0.06) 100%);
+    box-shadow:0 0 14px rgba(0,212,255,0.30), inset 0 0 10px rgba(0,212,255,0.12);
+  }
+  .pt-attck-cell.hit::before {
+    content:"●"; position:absolute; top:4px; right:6px;
+    color:var(--accent); font-size:8px;
+    text-shadow:0 0 6px var(--accent);
+  }
+  .pt-attck-cell .tid { color:var(--text-dim); font-weight:700; }
+  .pt-attck-cell.hit .tid { color:var(--accent); text-shadow:0 0 4px rgba(0,212,255,0.5); }
+  .pt-attck-cell.hit { cursor:pointer; }
+  .pt-attck-cell.hit:hover {
+    filter: brightness(1.15);
+    box-shadow:0 0 18px var(--accent-glow, rgba(0,0,0,0.4)), inset 0 0 12px rgba(255,255,255,0.06);
+    transform:translateY(-1px);
+  }
+  .pt-attck-mitre-link {
+    position:absolute; bottom:4px; right:6px;
+    font-size:9px; color:var(--accent); opacity:0.75;
+    text-decoration:none;
+  }
+  .pt-attck-mitre-link:hover { opacity:1; text-decoration:underline; }
+  .pt-attack-path {
+    border:1px solid var(--border); border-left:3px solid #ff3a4a;
+    padding:10px 14px; margin:8px 0; border-radius:6px; background:var(--surface);
+    cursor:pointer; transition:border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+  }
+  .pt-attack-path:hover {
+    border-color:var(--accent);
+    transform:translateY(-1px);
+    box-shadow:0 0 14px var(--accent-glow, rgba(0,0,0,0.3));
+  }
+
+  /* Scope marker — visible only when an item is the Security Agent's current focus */
+  .pt-scope-mark {
+    display: none;
+    font-size: 10px;
+    color: var(--accent);
+    text-shadow: 0 0 6px var(--accent);
+    margin-left: 4px;
+    flex-shrink: 0;
+  }
+  .pt-attack-path .pt-scope-mark { font-size: 11px; }
+  .pt-attck-cell .pt-scope-mark {
+    position: absolute; top: 4px; left: 6px;
+  }
+  /* In-scope state — applied by _ptUpdateScopeMarkers() to the active tile/path */
+  .pt-attck-cell.in-scope, .pt-attack-path.in-scope {
+    border-color: var(--accent);
+    background: var(--bg-deep);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 14px var(--accent-glow, rgba(0,0,0,0.4));
+  }
+  .pt-attck-cell.in-scope .pt-scope-mark,
+  .pt-attack-path.in-scope .pt-scope-mark {
+    display: inline-block;
+    animation: ptScopePulse 1.6s ease-in-out infinite;
+  }
+  /* When a hit-tile is in scope, hide the default ::before dot to avoid double-marker */
+  .pt-attck-cell.hit.in-scope::before { display: none; }
+  @keyframes ptScopePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.5; transform: scale(0.85); }
+  }
+  .pt-evidence-drawer {
+    position:fixed; top:0; right:0; bottom:0; width:480px; max-width:90vw;
+    background:var(--bg-card); border-left:1px solid var(--accent);
+    z-index:200; overflow-y:auto;
+    transform:translateX(100%); transition:transform 0.25s;
+    box-shadow:-6px 0 24px rgba(0,0,0,0.5);
+  }
+  .pt-evidence-drawer.open { transform:translateX(0); }
+  .pt-engagement-row {
+    border:1px solid var(--border); border-radius:6px; padding:10px 14px;
+    background:var(--surface); cursor:pointer;
+    display:flex; align-items:center; gap:14px;
+    transition:border-color 0.15s, border-radius 0.15s;
+  }
+  .pt-engagement-row:hover { border-color:var(--accent); }
+  .pt-engagement-row.expanded {
+    border-color:var(--accent);
+    border-radius:6px 6px 0 0; border-bottom-color:transparent;
+    background:linear-gradient(180deg, rgba(0,212,255,0.05) 0%, var(--surface) 100%);
+  }
+  .pt-engagement-row .pt-chev {
+    color:var(--text-dim); font-size:10px; width:12px; flex-shrink:0;
+    transition:transform 0.2s, color 0.2s;
+  }
+  .pt-engagement-row.expanded .pt-chev { transform:rotate(90deg); color:var(--accent); }
+  .pt-engagement-detail {
+    display:none;
+    border:1px solid var(--accent); border-top:none;
+    border-radius:0 0 6px 6px;
+    padding:18px 22px;
+    background:var(--surface);
+    flex-direction:column; gap:14px;
+    margin-top:-10px;  /* tuck under the row */
+    margin-bottom:6px;
+  }
+  .pt-engagement-detail.open { display:flex; }
+
+  .pt-summary-grid {
+    display:grid;
+    grid-template-columns:repeat(auto-fit, minmax(420px, 1fr));
+    gap:14px;
+  }
+  .pt-summary-card {
+    padding:18px 22px; border:1px solid var(--border); border-radius:6px;
+    background:var(--surface);
+  }
+  .pt-summary-card .pt-summary-label {
+    font-family:var(--font-mono); font-size:10px; letter-spacing:2px;
+    color:var(--accent); margin-bottom:12px;
+    padding-bottom:8px; border-bottom:1px solid var(--border);
+  }
+  .pt-prose { font-size:13px; line-height:1.65; color:var(--text); }
+  .pt-prose p { margin:0 0 12px 0; }
+  .pt-prose p:last-child { margin-bottom:0; }
+  .pt-prose strong {
+    color:var(--accent); font-weight:600;
+    display:inline-block; letter-spacing:0.3px;
+  }
+  .pt-prose ul, .pt-prose ol { margin:0 0 12px 18px; padding:0; }
+  .pt-prose li { margin-bottom:4px; }
+  .pt-prose code {
+    font-family:var(--font-mono); font-size:12px;
+    background:var(--bg); padding:1px 5px; border-radius:3px;
+    border:1px solid var(--border);
+  }
+  .pt-prose .pt-cve {
+    font-family:var(--font-mono); font-size:11px;
+    color:#ff8c1a; background:rgba(255,140,26,0.10);
+    padding:0 6px; border-radius:3px; border:1px solid rgba(255,140,26,0.3);
+    white-space:nowrap;
+  }
+  .pt-prose .pt-cvss {
+    font-family:var(--font-mono); font-size:11px;
+    color:#ff3a4a; font-weight:600; white-space:nowrap;
+  }
   /* copy-code button on <pre> blocks */
   .code-block-wrap                    { position:relative; }
   .copy-code-btn                      { position:absolute; top:6px; right:6px; font-family:var(--font-mono); font-size:10px; padding:3px 8px; border-radius:4px; border:1px solid var(--border); color:var(--text-dim); background:var(--surface); cursor:pointer; opacity:0; transition:opacity 0.15s, color 0.15s, border-color 0.15s; z-index:2; }
@@ -2948,6 +3170,313 @@
   .ping-modal                         { background:var(--bg-panel); border:1px solid var(--border); border-radius:8px; padding:20px; width:420px; max-width:95vw; }
   .ping-modal h3                      { font-family:var(--font-mono); font-size:12px; letter-spacing:0.08em; color:var(--accent); margin:0 0 16px 0; }
 
+  /* ── Gladius styled alert/confirm dialog (replaces window.alert + window.confirm) ── */
+  .gladius-dialog-overlay {
+    position: fixed; inset: 0; z-index: 5000;
+    background: rgba(0,0,0,0.65);
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(3px);
+    font-family: var(--font-mono);
+    animation: gladiusDialogFadeIn 0.12s ease-out;
+  }
+  @keyframes gladiusDialogFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .gladius-dialog {
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 20px 22px;
+    width: 480px; max-width: 92vw;
+    box-shadow: 0 16px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(0,212,255,0.06);
+    animation: gladiusDialogSlideIn 0.18s ease-out;
+  }
+  @keyframes gladiusDialogSlideIn {
+    from { transform: translateY(-12px) scale(0.985); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  .gladius-dialog.danger { border-color: #ff3a4a; box-shadow: 0 16px 60px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,58,74,0.1); }
+  .gladius-dialog-title {
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .gladius-dialog.danger .gladius-dialog-title { color: #ff3a4a; }
+  .gladius-dialog-msg {
+    font-size: 13px; color: var(--text-primary, var(--text)); line-height: 1.55;
+    margin: 0 0 18px 0; white-space: pre-wrap;
+  }
+  .gladius-dialog-buttons {
+    display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap;
+  }
+  .gladius-dialog-btn {
+    font-family: var(--font-mono); font-size: 12px;
+    padding: 7px 16px; border-radius: 5px; cursor: pointer;
+    background: transparent; color: var(--text-primary, var(--text));
+    border: 1px solid var(--border);
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+    min-width: 80px;
+  }
+  .gladius-dialog-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .gladius-dialog-btn-primary {
+    background: var(--accent); color: var(--bg-deep, #0a0e1a); border-color: var(--accent);
+  }
+  .gladius-dialog-btn-primary:hover { opacity: 0.85; color: var(--bg-deep, #0a0e1a); border-color: var(--accent); }
+  .gladius-dialog-btn-danger {
+    background: #ff3a4a; color: #fff; border-color: #ff3a4a;
+  }
+  .gladius-dialog-btn-danger:hover { opacity: 0.85; color: #fff; border-color: #ff3a4a; }
+
+  /* ── Floating Security Agent chat widget (bottom-right) ─────────────── */
+  /* All accent colours pull from the active theme via var(--accent) so the
+     widget re-skins automatically when the operator switches themes.
+     Hidden by default; shown only on the pentest-reports page (toggled by
+     showPage → _fsecUpdateVisibility).                                     */
+  #fsec-widget {
+    position: fixed; bottom: 16px; right: 16px;
+    z-index: 4500;
+    font-family: var(--font-mono);
+    pointer-events: none;
+    display: none;
+  }
+  #fsec-widget > * { pointer-events: auto; }
+  #fsec-fab {
+    display: flex; align-items: center; gap: 8px;
+    background: var(--accent);
+    color: var(--bg-deep);
+    border: 1px solid var(--accent);
+    border-radius: 24px; padding: 10px 16px 10px 12px;
+    cursor: pointer;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px;
+    box-shadow: 0 6px 20px var(--accent-glow, rgba(0,0,0,0.35));
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+    position: relative;
+  }
+  #fsec-fab:hover { transform: translateY(-1px); filter: brightness(1.08); }
+  .fsec-fab-icon { font-size: 16px; line-height: 1; }
+  .fsec-fab-label { font-weight: 700; text-transform: uppercase; }
+  .fsec-fab-pulse {
+    position: absolute; top: -2px; right: -2px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--success, #5cd99a); box-shadow: 0 0 8px var(--success, #5cd99a);
+    animation: fsecPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes fsecPulse { 0%,100% { opacity:0.85 } 50% { opacity:0.35 } }
+
+  #fsec-panel {
+    display: none;
+    width: 520px; max-width: 92vw;
+    height: 640px; max-height: 80vh;
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.45);
+    flex-direction: column;
+    overflow: hidden;
+    animation: fsecSlideUp 0.18s ease-out;
+  }
+  @keyframes fsecSlideUp { from { transform: translateY(8px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+  #fsec-widget.open #fsec-panel { display: flex; }
+  #fsec-widget.open #fsec-fab { display: none; }
+
+  #fsec-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px 10px 22px;          /* extra left padding to clear the resize handle */
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-panel);
+  }
+  .fsec-head-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+    color: var(--accent);
+  }
+  .fsec-head-sep { color: var(--text-dim); font-size: 11px; }
+  .fsec-scope-chip {
+    font-size: 10px; color: var(--text-primary, var(--text));
+    background: var(--bg-deep);
+    border: 1px solid var(--accent);
+    padding: 2px 8px; border-radius: 10px;
+    max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .fsec-scope-chip.empty { opacity: 0.55; font-style: italic; background: transparent; border-style: dashed; border-color: var(--border); }
+  .fsec-head-spacer { flex: 1; }
+  .fsec-head-btn {
+    background: transparent; color: var(--text-primary, var(--text));
+    border: 1px solid var(--border); border-radius: 4px;
+    font-family: var(--font-mono); font-size: 10px;
+    padding: 3px 9px; cursor: pointer;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .fsec-head-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .fsec-head-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .fsec-head-btn:disabled:hover { border-color: var(--border); color: var(--text-primary, var(--text)); }
+
+  #fsec-msgs {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px 12px;
+    background: var(--bg-deep);
+    font-size: 12px; line-height: 1.55;
+    color: var(--text-primary, var(--text));
+  }
+  .fsec-empty { color: var(--text-dim); font-style: italic; text-align: center; padding: 20px 8px; }
+  .fsec-welcome {
+    padding: 8px 4px 12px 4px;
+    color: var(--text-primary, var(--text));
+    font-size: 12px; line-height: 1.6;
+  }
+  .fsec-welcome-title {
+    font-family: var(--font-mono);
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+  .fsec-welcome-body p { margin: 0 0 9px 0; }
+  .fsec-welcome-body p:last-child { margin-bottom: 0; }
+  .fsec-welcome-body ul { margin: 6px 0 9px 0; padding-left: 20px; }
+  .fsec-welcome-body li { margin: 3px 0; }
+  .fsec-welcome-body strong { color: var(--accent); font-weight: 700; }
+
+  /* Chat bubbles — assistant left, user right */
+  .fsec-msg {
+    display: flex; align-items: flex-end; gap: 7px;
+    margin-bottom: 12px;
+    animation: fsecMsgIn 0.15s ease-out;
+  }
+  @keyframes fsecMsgIn { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: translateY(0) } }
+  .fsec-msg.user { flex-direction: row-reverse; }
+  .fsec-msg-avatar {
+    width: 24px; height: 24px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .fsec-msg.user .fsec-msg-avatar {
+    background: var(--accent); color: var(--bg-deep);
+  }
+  /* Bot avatar: outlined + accent-tinted to distinguish from user's filled style */
+  .fsec-msg.bot .fsec-msg-avatar {
+    background: var(--bg-deep);
+    color: var(--accent);
+    border: 1.5px solid var(--accent);
+  }
+  .fsec-bubble {
+    max-width: 78%;
+    padding: 9px 13px;
+    border-radius: 14px;
+    font-size: 12px; line-height: 1.55;
+    white-space: pre-wrap; word-wrap: break-word;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  }
+  /* User bubble: solid accent fill */
+  .fsec-msg.user .fsec-bubble {
+    background: var(--accent);
+    color: var(--bg-deep);
+    border-bottom-right-radius: 4px;
+  }
+  /* Bot bubble: surface with accent border (outlined) — same accent, different style */
+  .fsec-msg.bot .fsec-bubble {
+    background: var(--surface);
+    color: var(--text-primary, var(--text));
+    border: 1px solid var(--accent);
+    border-bottom-left-radius: 4px;
+  }
+
+  /* Bouncing-dots typing indicator (used while waiting for first stream chunk) */
+  .fsec-typing {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 0;
+    height: 16px;
+  }
+  .fsec-typing span {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent);
+    animation: fsecBounce 1.3s infinite ease-in-out both;
+  }
+  .fsec-typing span:nth-child(1) { animation-delay: -0.32s; }
+  .fsec-typing span:nth-child(2) { animation-delay: -0.16s; }
+  @keyframes fsecBounce {
+    0%, 80%, 100% { transform: scale(0.55); opacity: 0.45; }
+    40%           { transform: scale(1.0);  opacity: 1.0;  }
+  }
+
+  /* Inline rich-text formatting inside bot bubbles */
+  .fsec-bubble strong { font-weight: 700; color: var(--accent); }
+  .fsec-msg.user .fsec-bubble strong { color: var(--bg-deep); }
+  .fsec-bubble em { font-style: italic; opacity: 0.9; }
+  .fsec-bubble a { color: var(--accent); text-decoration: underline; word-break: break-all; }
+  .fsec-msg.user .fsec-bubble a { color: var(--bg-deep); }
+  .fsec-bubble .fsec-inline-code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    color: var(--accent);
+    padding: 1px 5px; border-radius: 3px;
+  }
+  .fsec-msg.user .fsec-bubble .fsec-inline-code {
+    background: rgba(0,0,0,0.20); border-color: rgba(0,0,0,0.30); color: var(--bg-deep);
+  }
+  .fsec-bubble .fsec-code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--bg-deep);
+    border: 1px solid var(--border);
+    color: var(--text-primary, var(--text));
+    border-radius: 5px; padding: 8px 10px; margin: 6px 0;
+    overflow-x: auto; line-height: 1.45;
+    white-space: pre;
+  }
+  .fsec-bubble .fsec-list {
+    margin: 6px 0; padding-left: 20px;
+  }
+  .fsec-bubble .fsec-list li { margin: 2px 0; }
+  .fsec-bubble p { margin: 0; }
+
+  /* Top-left resize handle */
+  #fsec-panel { position: relative; }
+  #fsec-resize-handle {
+    position: absolute; top: 0; left: 0;
+    width: 16px; height: 16px;
+    cursor: nwse-resize;
+    z-index: 5;
+    /* diagonal grip lines — drawn as a 3-line stack inheriting accent */
+    background-image:
+      linear-gradient(135deg,
+        transparent 0%, transparent 35%,
+        var(--accent) 35%, var(--accent) 42%,
+        transparent 42%, transparent 56%,
+        var(--accent) 56%, var(--accent) 63%,
+        transparent 63%, transparent 78%,
+        var(--accent) 78%, var(--accent) 85%,
+        transparent 85%);
+    opacity: 0.55;
+    border-top-left-radius: 10px;
+    transition: opacity 0.15s;
+  }
+  #fsec-resize-handle:hover { opacity: 1; }
+
+  #fsec-input-row {
+    display: flex; gap: 6px;
+    padding: 10px;
+    border-top: 1px solid var(--border);
+  }
+  #fsec-input {
+    flex: 1;
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 7px 10px;
+    font-family: var(--font-mono); font-size: 12px;
+    outline: none;
+  }
+  #fsec-input:focus { border-color: var(--accent); }
+  .fsec-send {
+    background: var(--accent); color: var(--bg-deep);
+    border: 1px solid var(--accent); border-radius: 5px;
+    padding: 7px 14px;
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    cursor: pointer;
+    transition: filter 0.12s;
+  }
+  .fsec-send:hover { filter: brightness(1.08); }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -3024,6 +3553,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>
         <span>ITSM</span>
       </div>
+      <div class="nav-item" onclick="showPage('pentest', this); closeSidebarSections();" title="PenTest Agent — adaptive penetration testing">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2L19 6.5L8.5 17L4 17L4 12.5L14.5 2Z"/><path d="M11 5L16 10"/><circle cx="20" cy="20" r="2"/></svg>
+        <span>PenTest</span>
+      </div>
     </div>
   </div>
 
@@ -3050,10 +3583,14 @@
   <div class="sidebar-section collapsible" style="position:relative;">
     <div class="sidebar-label" onclick="toggleSidebarSection(this)">Intel</div>
     <div class="nav-items-group">
-      <div class="nav-item" onclick="showPage('reports', this); closeSidebarSections();" title="Reports">
+      <div class="nav-item" onclick="showPage('reports', this); closeSidebarSections();" title="Audit Reports">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-        <span>Reports</span>
+        <span>Audit Reports</span>
         <div class="nav-badge" id="badge-reports" style="display:none"></div>
+      </div>
+      <div class="nav-item" onclick="showPage('pentest-reports', this); closeSidebarSections();" title="PenTest Reports — saved engagements, kill chains, ATT&amp;CK">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>PenTest Reports</span>
       </div>
       <div class="nav-item" onclick="showPage('cve', this); closeSidebarSections();" title="CVE Lookup">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
@@ -4462,6 +4999,71 @@
     </div>
     <!-- /ITSM AGENT PAGE -->
 
+    <!-- PENTEST AGENT PAGE -->
+    <div id="page-pentest" class="page">
+      <div class="chat-container">
+        <div class="chat-header">
+          <div class="agent-indicator">
+            <div class="agent-avatar">P</div>
+            <div class="agent-info">
+              <div class="name">PENTEST AGENT</div>
+            </div>
+          </div>
+          <div style="flex:1"></div>
+          <button id="pentest-go-active-btn" class="pentest-go-active" onclick="pentestToggleActive()" title="Operator approval required for active scanning (port_scan, smb_enum, hydra, etc.). Passive recon (dig, whois, crt.sh) runs without this.">
+            <span class="dot"></span><span id="pentest-go-active-label">GO ACTIVE</span>
+          </button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="exportChat('pentest-messages','PENTEST AGENT')">Export</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="clearPentestChat()">Clear Chat</button>
+        </div>
+
+        <div class="chat-messages" id="pentest-messages">
+          <div class="msg agent">
+            <div class="msg-avatar agent">P</div>
+            <div>
+              <div class="msg-bubble" id="pentest-welcome-bubble">
+                Gladius PenTest online. Tell me your scope (host, CIDR, or domain) and I'll lead the engagement — passive recon by default; active scans only after you flip GO ACTIVE.
+              </div>
+              <div class="msg-meta">PENTEST AGENT · READY</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="quick-cmds" id="pentest-quick-cmds-row"></div>
+
+        <div class="chat-input-area">
+          <textarea class="chat-input" id="pentest-input" placeholder="Set scope, ask for next move, or say 'stop' to wrap the engagement…" rows="1" onkeydown="pentestHandleKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="send-btn" id="pentest-send-btn" onclick="pentestSendChat()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <!-- /PENTEST AGENT PAGE -->
+
+    <!-- PENTEST REPORTS PAGE -->
+    <div id="page-pentest-reports" class="page">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="font-family:var(--font-mono);font-size:13px;letter-spacing:2px;color:var(--accent)">PENTEST ENGAGEMENTS</div>
+        <span id="pentest-reports-count" style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)"></span>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="renderPentestReports()">Refresh</button>
+      </div>
+      <div id="pentest-reports-list" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div id="pentest-report-detail" style="margin-top:6px;display:none;flex-direction:column;gap:14px;padding-top:10px;border-top:1px solid var(--border)"></div>
+    </div>
+    <!-- /PENTEST REPORTS PAGE -->
+
+    <!-- PENTEST EVIDENCE DRAWER -->
+    <div id="pentest-evidence-drawer" class="pt-evidence-drawer">
+      <div style="padding:14px 16px;border-bottom:1px solid var(--accent);display:flex;align-items:center;gap:8px;position:sticky;top:0;background:var(--bg-card);z-index:1">
+        <span style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent);letter-spacing:1px">FINDING DETAIL</span>
+        <div style="flex:1"></div>
+        <button onclick="pentestCloseDrawer()" style="background:none;border:1px solid var(--accent);color:var(--accent);border-radius:4px;padding:2px 8px;font-size:10px;cursor:pointer;font-family:var(--font-mono)">Close</button>
+      </div>
+      <div id="pentest-evidence-body" style="padding:14px 16px"></div>
+    </div>
+
     <!-- PING MONITOR PAGE -->
     <div id="page-ping" class="page">
       <!-- Top bar -->
@@ -5130,6 +5732,8 @@
   function showPage(name, el) {
     _currentPage = name;
     localStorage.setItem('gladius-active-page', name);
+    // Security Agent FAB is scoped to the pentest reports page only.
+    if (typeof _fsecUpdateVisibility === 'function') _fsecUpdateVisibility(name);
     // Clear any done (green) topbar chips for this tab
     clearTopbarChipsForTab(name);
     // Clear completion pulse on the tab we're navigating to
@@ -5284,6 +5888,100 @@
 
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Styled dialog primitive (replaces window.alert / window.confirm) ────
+  // Returns a Promise that resolves to the chosen button's value.
+  // Shape: _gladiusDialog({ title, message, buttons:[{label, value, cls, primary}], danger })
+  function _gladiusDialog({ title, message, buttons, danger }) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'gladius-dialog-overlay';
+      const box = document.createElement('div');
+      box.className = 'gladius-dialog' + (danger ? ' danger' : '');
+      const titleEl = document.createElement('div');
+      titleEl.className = 'gladius-dialog-title';
+      titleEl.textContent = title || 'Gladius';
+      const msgEl = document.createElement('div');
+      msgEl.className = 'gladius-dialog-msg';
+      msgEl.textContent = String(message || '');
+      const btnRow = document.createElement('div');
+      btnRow.className = 'gladius-dialog-buttons';
+
+      let primaryBtn = null;
+
+      const close = (val) => {
+        document.removeEventListener('keydown', keyHandler, true);
+        overlay.remove();
+        resolve(val);
+      };
+
+      const keyHandler = (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault(); e.stopPropagation();
+          // Resolve to the first non-primary (cancel-ish) button, else false
+          const cancel = buttons.find(b => !b.primary);
+          close(cancel ? cancel.value : false);
+        } else if (e.key === 'Enter') {
+          e.preventDefault(); e.stopPropagation();
+          const primary = buttons.find(b => b.primary) || buttons[buttons.length - 1];
+          close(primary.value);
+        }
+      };
+      document.addEventListener('keydown', keyHandler, true);
+
+      buttons.forEach(b => {
+        const el = document.createElement('button');
+        el.type = 'button';
+        el.className = 'gladius-dialog-btn' + (b.cls ? ' ' + b.cls : '');
+        el.textContent = b.label;
+        el.onclick = () => close(b.value);
+        btnRow.appendChild(el);
+        if (b.primary) primaryBtn = el;
+      });
+
+      box.appendChild(titleEl);
+      box.appendChild(msgEl);
+      box.appendChild(btnRow);
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+
+      setTimeout(() => {
+        if (primaryBtn) primaryBtn.focus();
+        else {
+          const last = btnRow.querySelector('button:last-child');
+          if (last) last.focus();
+        }
+      }, 30);
+    });
+  }
+
+  // gladiusAlert(message)                    — single OK; resolves true.
+  // gladiusAlert(message, { title })         — custom title.
+  function gladiusAlert(message, opts = {}) {
+    return _gladiusDialog({
+      title:   opts.title || 'Notice',
+      message,
+      buttons: [{ label: opts.okLabel || 'OK', value: true, cls: 'gladius-dialog-btn-primary', primary: true }],
+    });
+  }
+
+  // gladiusConfirm(message)                  — Cancel / Confirm; resolves boolean.
+  // gladiusConfirm(message, { danger:true }) — red Confirm button.
+  function gladiusConfirm(message, opts = {}) {
+    const danger = !!opts.danger;
+    return _gladiusDialog({
+      title:   opts.title || (danger ? 'Confirm action' : 'Confirm'),
+      message,
+      danger,
+      buttons: [
+        { label: opts.cancelLabel  || 'Cancel',  value: false },
+        { label: opts.confirmLabel || (danger ? 'Delete' : 'Confirm'),
+          value: true,
+          cls: danger ? 'gladius-dialog-btn-danger' : 'gladius-dialog-btn-primary',
+          primary: true },
+      ],
+    });
   }
 
   let _editingIdx = null;
@@ -7607,9 +8305,9 @@ ${cves.length ? `<!-- CVE TAB -->
       jira_auto_ticket: document.getElementById('sched-jira').value,
       enabled: true,
     };
-    if (!payload.name) { alert('Enter a schedule name'); return; }
-    if (payload.device_ids.length === 0) { alert('Select at least one device'); return; }
-    if (payload.features.length === 0) { alert('Select at least one feature'); return; }
+    if (!payload.name) { await gladiusAlert('Enter a schedule name'); return; }
+    if (payload.device_ids.length === 0) { await gladiusAlert('Select at least one device'); return; }
+    if (payload.features.length === 0) { await gladiusAlert('Select at least one feature'); return; }
     try {
       if (editId) {
         await fetch(`/api/automation/learn/schedules/${editId}`, {
@@ -7655,7 +8353,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   async function schedDelete(id) {
-    if (!confirm('Delete this schedule?')) return;
+    if (!await gladiusConfirm('Delete this schedule?', { danger: true })) return;
     try {
       await fetch(`/api/automation/learn/schedules/${id}`, { method: 'DELETE' });
       await schedLoadList();
@@ -7686,7 +8384,7 @@ ${cves.length ? `<!-- CVE TAB -->
       // Poll for completion
       const beforeCount = sched._histCount || 0;
       _schedPollCompletion(id, name, typeLabel, chipId);
-    } catch(e) { alert('Failed to trigger: ' + e.message); }
+    } catch(e) { await gladiusAlert('Failed to trigger: ' + e.message, { title: 'Trigger failed' }); }
   }
 
   async function _schedPollCompletion(id, name, typeLabel, chipId) {
@@ -7743,7 +8441,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const d = await r.json();
       const history = d.history || [];
       if (history.length === 0) {
-        alert('No history yet for this schedule');
+        await gladiusAlert('No history yet for this schedule', { title: 'No history' });
         return;
       }
       const schedName = sched ? sched.name : '';
@@ -8523,7 +9221,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   async function pingDeleteDevice(id) {
-    if (!confirm('Delete this device?')) return;
+    if (!await gladiusConfirm('Delete this device?', { danger: true })) return;
     try {
       await fetch(`${PING_API}/devices/${id}`, { method: 'DELETE' });
       if (_pingSelectedId === id) _pingSelectedId = null;
@@ -8595,8 +9293,8 @@ ${cves.length ? `<!-- CVE TAB -->
     try {
       const resp = await fetch(`${PING_API}/settings/test-${type}`, { method: 'POST' });
       const r = await resp.json();
-      alert(r.ok ? `${type} test sent!` : `Failed: ${r.detail || 'unknown error'}`);
-    } catch(e) { alert('Test failed: ' + e.message); }
+      await gladiusAlert(r.ok ? `${type} test sent!` : `Failed: ${r.detail || 'unknown error'}`, { title: r.ok ? 'Sent' : 'Failed' });
+    } catch(e) { await gladiusAlert('Test failed: ' + e.message, { title: 'Test failed' }); }
   }
 
   async function pingLoadAlerts() {
@@ -8855,7 +9553,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   async function snmpDeleteDevice(id) {
-    if (!confirm('Remove this device from monitoring?')) return;
+    if (!await gladiusConfirm('Remove this device from monitoring?', { danger: true, confirmLabel: 'Remove' })) return;
     await fetch(`/api/snmp/devices/${id}`, { method: 'DELETE' });
     snmpRefresh();
   }
@@ -9638,17 +10336,17 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   async function killTask(taskId) {
-    if (!confirm('Kill this running task?')) return;
+    if (!await gladiusConfirm('Kill this running task?', { danger: true, confirmLabel: 'Kill task' })) return;
     try {
       const res = await fetch(`/api/tasks/${taskId}/kill`, { method: 'POST' });
       if (res.ok) {
         refreshRunningTasks();
       } else {
         const d = await res.json().catch(() => ({}));
-        alert(d.detail || d.reason || 'Failed to kill task');
+        await gladiusAlert(d.detail || d.reason || 'Failed to kill task', { title: 'Kill failed' });
       }
     } catch (e) {
-      alert('Error killing task: ' + e.message);
+      await gladiusAlert('Error killing task: ' + e.message, { title: 'Error' });
     }
   }
 
@@ -12969,8 +13667,8 @@ ${cves.length ? `<!-- CVE TAB -->
     }
   }
 
-  function autoOpenMultiRun() {
-    if (!_autoScripts.length) { alert('No scripts in repository.'); return; }
+  async function autoOpenMultiRun() {
+    if (!_autoScripts.length) { await gladiusAlert('No scripts in repository.', { title: 'Empty repo' }); return; }
     const PLAT = {iosxe:'IOS-XE', ios:'IOS', nxos:'NX-OS', eos:'EOS'};
     // Populate device select
     const devSel = document.getElementById('auto-multirun-device');
@@ -13009,13 +13707,13 @@ ${cves.length ? `<!-- CVE TAB -->
 
   async function autoExecuteMultiRun() {
     const deviceId   = document.getElementById('auto-multirun-device').value;
-    if (!deviceId) { alert('Select a target device first.'); return; }
+    if (!deviceId) { await gladiusAlert('Select a target device first.'); return; }
     const deviceName = document.getElementById('auto-multirun-device').selectedOptions[0]?.text || 'device';
     const outputMode = document.getElementById('auto-multirun-output-mode')?.value || 'deterministic';
     const reviewModel = outputMode === 'agent' ? (document.getElementById('auto-multirun-model')?.value || undefined) : undefined;
     const forceAgent  = outputMode === 'agent';
     const checked    = Array.from(document.querySelectorAll('.auto-multirun-cb:checked'));
-    if (!checked.length) { alert('Select at least one script.'); return; }
+    if (!checked.length) { await gladiusAlert('Select at least one script.'); return; }
     document.getElementById('auto-multirun-modal').classList.remove('open');
 
     // Run scripts sequentially — devices have limited SSH sessions
@@ -13119,7 +13817,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const name     = document.getElementById('auto-save-name').value.trim();
     const desc     = document.getElementById('auto-save-desc').value.trim();
     const platform = document.getElementById('auto-save-platform').value;
-    if (!name) { alert('Enter a script name'); return; }
+    if (!name) { await gladiusAlert('Enter a script name'); return; }
     try {
       const r = await fetch('/api/automation/scripts', {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -13129,7 +13827,7 @@ ${cves.length ? `<!-- CVE TAB -->
       document.getElementById('auto-save-modal').classList.remove('open');
       _autoPendingScript = null;
       await _autoLoadScripts();
-    } catch(e) { alert('Save failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Save failed: ' + e.message, { title: 'Save failed' }); }
   }
 
   async function autoValidateBeforeSave() {
@@ -13137,7 +13835,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const name     = document.getElementById('auto-save-name').value.trim();
     const desc     = document.getElementById('auto-save-desc').value.trim();
     const platform = document.getElementById('auto-save-platform').value;
-    if (!name) { alert('Enter a script name'); return; }
+    if (!name) { await gladiusAlert('Enter a script name'); return; }
     try {
       const r = await fetch('/api/automation/scripts', {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -13149,7 +13847,7 @@ ${cves.length ? `<!-- CVE TAB -->
       _autoPendingScript = null;
       await _autoLoadScripts();
       await autoValidateScript(saved.id);
-    } catch(e) { alert('Failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Failed: ' + e.message, { title: 'Failed' }); }
   }
 
   // ── Validate & Run ────────────────────────────────────────────────────────
@@ -13267,7 +13965,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
   async function autoExecuteRunWithReview() {
     const deviceId   = document.getElementById('auto-run-device').value;
-    if (!deviceId) { alert('Select a device first'); return; }
+    if (!deviceId) { await gladiusAlert('Select a device first'); return; }
     const deviceName = document.getElementById('auto-run-device').selectedOptions[0]?.text || 'device';
     const scriptId   = _autoRunScriptId;
     const scriptName = _autoScripts.find(s => String(s.id) === String(scriptId))?.name || '';
@@ -13418,15 +14116,15 @@ ${cves.length ? `<!-- CVE TAB -->
       a.href     = URL.createObjectURL(blob);
       a.download = name.toLowerCase().replace(/[^a-z0-9]+/g,'_') + '.py';
       a.click();
-    } catch(e) { alert('Export failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Export failed: ' + e.message, { title: 'Export failed' }); }
   }
 
   async function autoDeleteScript(id) {
-    if (!confirm('Delete this script?')) return;
+    if (!await gladiusConfirm('Delete this script?', { danger: true })) return;
     try {
       await fetch(`/api/automation/scripts/${id}`, {method:'DELETE'});
       await _autoLoadScripts();
-    } catch(e) { alert('Delete failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Delete failed: ' + e.message, { title: 'Delete failed' }); }
   }
 
   // ── Templates ─────────────────────────────────────────────────────────────
@@ -13495,11 +14193,11 @@ ${cves.length ? `<!-- CVE TAB -->
     navigator.clipboard.writeText(code).then(() => {
       const btn = document.querySelector('#auto-codeview-modal .auto-tbtn');
       if (btn) { const orig = btn.textContent; btn.textContent = '✓ Copied!'; setTimeout(() => btn.textContent = orig, 1500); }
-    }).catch(e => alert('Copy failed: ' + e.message));
+    }).catch(e => gladiusAlert('Copy failed: ' + e.message, { title: 'Copy failed' }));
   }
 
   async function autoDeleteFromRepo(id, name) {
-    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    if (!await gladiusConfirm(`Delete "${name}"? This cannot be undone.`, { danger: true })) return;
     try {
       await fetch(`/api/automation/scripts/${id}`, {method: 'DELETE'});
       // Remove tile from the modal
@@ -13513,7 +14211,7 @@ ${cves.length ? `<!-- CVE TAB -->
       // Refresh dropdown + viewer
       await _autoLoadScripts();
       if (String(_autoRunScriptId) === String(id)) _autoClearViewer();
-    } catch(e) { alert('Delete failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Delete failed: ' + e.message, { title: 'Delete failed' }); }
   }
 
   async function autoShowTemplates() {
@@ -13554,7 +14252,7 @@ ${cves.length ? `<!-- CVE TAB -->
       await _autoLoadScripts();
     } catch(e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Deploy to Repo'; }
-      alert('Deploy failed: ' + e.message);
+      await gladiusAlert('Deploy failed: ' + e.message, { title: 'Deploy failed' });
     }
   }
 
@@ -13603,16 +14301,16 @@ ${cves.length ? `<!-- CVE TAB -->
     try {
       await fetch(`/api/automation/devices/${id}/set_dev_switch`, {method:'POST'});
       await _autoRenderDeviceTable();
-    } catch(e) { alert('Failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Failed: ' + e.message, { title: 'Failed' }); }
   }
 
   async function autoDeleteDevice(id) {
-    if (!confirm('Remove this device?')) return;
+    if (!await gladiusConfirm('Remove this device?', { danger: true, confirmLabel: 'Remove' })) return;
     try {
       await fetch(`/api/automation/devices/${id}`, {method:'DELETE'});
       await _autoRenderDeviceTable();
       await _autoLoadDevices();
-    } catch(e) { alert('Failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Failed: ' + e.message, { title: 'Failed' }); }
   }
 
   async function autoAddDevice() {
@@ -13622,7 +14320,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const username      = document.getElementById('auto-dev-user').value.trim() || null;
     const password      = document.getElementById('auto-dev-pass').value || null;
     const is_dev_switch = document.getElementById('auto-dev-isdev').checked;
-    if (!hostname || !ip) { alert('Hostname and IP required'); return; }
+    if (!hostname || !ip) { await gladiusAlert('Hostname and IP required'); return; }
     try {
       const r = await fetch('/api/automation/devices', {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -13635,7 +14333,7 @@ ${cves.length ? `<!-- CVE TAB -->
       document.getElementById('auto-dev-isdev').checked = false;
       await _autoRenderDeviceTable();
       await _autoLoadDevices();
-    } catch(e) { alert('Failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('Failed: ' + e.message, { title: 'Failed' }); }
   }
 
   // ── SNMP Sync ─────────────────────────────────────────────────────────────
@@ -13648,7 +14346,7 @@ ${cves.length ? `<!-- CVE TAB -->
         `SNMP sync complete — <strong>${data.synced}</strong> new device(s) added (${data.total} total in inventory).`,
         `SNMP sync complete — ${data.synced} new device(s) added.`
       );
-    } catch(e) { alert('SNMP sync failed: ' + e.message); }
+    } catch(e) { await gladiusAlert('SNMP sync failed: ' + e.message, { title: 'SNMP sync failed' }); }
   }
 
   async function autoSyncSnmpModal() {
@@ -13779,8 +14477,8 @@ ${cves.length ? `<!-- CVE TAB -->
   async function learnRun() {
     const features = [...document.querySelectorAll('.learn-chip.selected')].map(el => el.dataset.feature);
     const deviceIds = [...document.querySelectorAll('.learn-dev-cb:checked')].map(cb => cb.value);
-    if (features.length === 0) { alert('Select at least one feature'); return; }
-    if (deviceIds.length === 0) { alert('Select at least one device'); return; }
+    if (features.length === 0) { await gladiusAlert('Select at least one feature'); return; }
+    if (deviceIds.length === 0) { await gladiusAlert('Select at least one device'); return; }
 
     const btn = document.getElementById('learn-run-btn');
     const status = document.getElementById('learn-status');
@@ -13834,7 +14532,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
   async function learnDiff() {
     const checked = [...document.querySelectorAll('.learn-snap-cb:checked')].map(cb => cb.value);
-    if (checked.length !== 2) { alert('Select exactly 2 snapshots to diff'); return; }
+    if (checked.length !== 2) { await gladiusAlert('Select exactly 2 snapshots to diff'); return; }
 
     // Always send older snapshot as A (before), newer as B (after)
     const snapA = _learnSnapshots.find(s => s.id === checked[0]);
@@ -14064,7 +14762,7 @@ ${cves.length ? `<!-- CVE TAB -->
   async function learnDeleteSelected() {
     const checked = [...document.querySelectorAll('.learn-snap-cb:checked')].map(cb => cb.value);
     if (checked.length === 0) return;
-    if (!confirm(`Delete ${checked.length} snapshot(s)?`)) return;
+    if (!await gladiusConfirm(`Delete ${checked.length} snapshot(s)?`, { danger: true })) return;
     for (const id of checked) {
       try {
         await fetch(`/api/automation/learn/snapshots/${id}`, {method: 'DELETE'});
@@ -15368,6 +16066,1578 @@ ${cves.length ? `<!-- CVE TAB -->
       notify('alerts', 'JIRA', 'Error: ' + e.message);
     }
   }
+
+  // ── PENTEST AGENT ────────────────────────────────────────────────────────
+  let pentestConversation = [];
+  let pentestActiveState  = false;
+  let pentestSending      = false;
+  let pentestCurrentBubble = null;
+
+  const PENTEST_DEFAULT_QCMDS = [
+    { label: 'Test: Metasploitable2',      prompt: 'Engagement target: gladius-target (172.18.0.36) — authorized homelab vulnerable test rig (Metasploitable2). Everything is in scope. Drive the full engagement: passive recon first, then through active phases adaptively. When you are done, save the engagement so I can see the kill chain in Reports.' },
+    { label: 'Set scope: 192.168.1.0/24',  prompt: 'Set scope: 192.168.1.0/24 — homelab range, intensity active.' },
+    { label: 'Recon: example.com',         prompt: 'Run passive recon on example.com — DNS, WHOIS, certificate transparency.' },
+    { label: 'Go active',                  prompt: 'Operator approval given — proceed to active phases.' },
+    { label: 'What did you find?',         prompt: 'Summarise findings so far and what you would probe next.' },
+    { label: 'Skip this phase',            prompt: 'Skip this phase and move to the next logical step.' },
+    { label: 'Generate report',            prompt: 'You have enough. Wrap the engagement and call save_pentest_results.' },
+    { label: 'Email report',               prompt: 'Email me the engagement report.' },
+  ];
+
+  // Migration: if the user already has saved quick-cmds (no test button), prepend it.
+  function pentestEnsureTestTargetCmd() {
+    const cmds = pentestLoadQcmds();
+    const has = cmds.some(c => /gladius-target/i.test(c.prompt || ''));
+    if (has) return;
+    cmds.unshift({
+      label: 'Test: Metasploitable2',
+      prompt: 'Engagement target: gladius-target (172.18.0.36) — authorized homelab vulnerable test rig (Metasploitable2). Everything is in scope. Drive the full engagement: passive recon first, then through active phases adaptively. When you are done, save the engagement so I can see the kill chain in Reports.',
+    });
+    pentestSaveQcmds(cmds);
+  }
+
+  const PENTEST_ATTACK_TECHNIQUES = [
+    ['T1046','Network Service Discovery','Discovery'],
+    ['T1018','Remote System Discovery','Discovery'],
+    ['T1135','Network Share Discovery','Discovery'],
+    ['T1083','File and Directory Discovery','Discovery'],
+    ['T1110','Brute Force','Credential Access'],
+    ['T1110.001','Password Guessing','Credential Access'],
+    ['T1078','Valid Accounts','Initial Access'],
+    ['T1078.003','Local Accounts','Initial Access'],
+    ['T1190','Exploit Public-Facing Application','Initial Access'],
+    ['T1133','External Remote Services','Initial Access'],
+    ['T1021','Remote Services','Lateral Movement'],
+    ['T1021.002','SMB/Windows Admin Shares','Lateral Movement'],
+    ['T1021.004','SSH','Lateral Movement'],
+    ['T1021.006','Windows Remote Management','Lateral Movement'],
+    ['T1071','Application Layer Protocol','Command and Control'],
+    ['T1071.001','Web Protocols','Command and Control'],
+    ['T1213','Data from Information Repositories','Collection'],
+    ['T1592','Gather Victim Host Information','Reconnaissance'],
+    ['T1592.002','Software','Reconnaissance'],
+    ['T1595','Active Scanning','Reconnaissance'],
+    ['T1595.001','Scanning IP Blocks','Reconnaissance'],
+    ['T1595.002','Vulnerability Scanning','Reconnaissance'],
+    ['T1595.003','Wordlist Scanning','Reconnaissance'],
+    ['T1596','Search Open Technical Databases','Reconnaissance'],
+    ['T1596.001','DNS/Passive DNS','Reconnaissance'],
+    ['T1589','Gather Victim Identity Information','Reconnaissance'],
+    ['T1590','Gather Victim Network Information','Reconnaissance'],
+    ['T1590.001','Domain Properties','Reconnaissance'],
+    ['T1590.002','DNS','Reconnaissance'],
+    ['T1590.005','IP Addresses','Reconnaissance'],
+    ['T1591','Gather Victim Org Information','Reconnaissance'],
+    ['T1552','Unsecured Credentials','Credential Access'],
+    ['T1552.001','Credentials In Files','Credential Access'],
+    ['T1552.004','Private Keys','Credential Access'],
+    ['T1212','Exploitation for Credential Access','Credential Access'],
+    ['T1003','OS Credential Dumping','Credential Access'],
+    ['T1499','Endpoint Denial of Service','Impact'],
+    ['T1219','Remote Access Software','Command and Control'],
+    ['T1040','Network Sniffing','Credential Access'],
+    ['T1199','Trusted Relationship','Initial Access'],
+    ['T1059','Command and Scripting Interpreter','Execution'],
+    ['T1554','Compromise Client Software Binary','Persistence'],
+    ['T1574','Hijack Execution Flow','Persistence'],
+    ['T1530','Data from Cloud Storage','Collection'],
+    ['T1119','Automated Collection','Collection'],
+    ['T1592.004','Client Configurations','Reconnaissance'],
+    ['T1596.005','Scan Databases','Reconnaissance'],
+    ['T1589.001','Credentials','Reconnaissance'],
+    ['T1003.005','Cached Domain Credentials','Credential Access'],
+  ];
+
+  function pentestLoadQcmds() {
+    try {
+      const raw = localStorage.getItem('gladius-pentest-qcmds');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return PENTEST_DEFAULT_QCMDS.slice();
+  }
+  function pentestSaveQcmds(arr) { localStorage.setItem('gladius-pentest-qcmds', JSON.stringify(arr)); }
+
+  function pentestRenderQuickCmds() {
+    const row = document.getElementById('pentest-quick-cmds-row');
+    if (!row) return;
+    const cmds = pentestLoadQcmds();
+    row.innerHTML = '';
+    cmds.forEach((cmd, i) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'quick-cmd-wrap';
+      const tip = document.createElement('div'); tip.className = 'quick-cmd-tooltip'; tip.textContent = cmd.prompt;
+      const btn = document.createElement('button'); btn.className = 'quick-cmd'; btn.textContent = cmd.label;
+      btn.addEventListener('click', () => { document.getElementById('pentest-input').value = cmd.prompt; pentestSendChat(); });
+      const edit = document.createElement('button'); edit.className = 'quick-cmd-edit'; edit.title = 'Edit'; edit.textContent = '✎';
+      edit.addEventListener('click', () => pentestOpenQcmdModal(i));
+      wrap.appendChild(tip); wrap.appendChild(btn); wrap.appendChild(edit);
+      row.appendChild(wrap);
+    });
+    const addBtn = document.createElement('button');
+    addBtn.className = 'quick-cmd'; addBtn.style.opacity = '0.5'; addBtn.textContent = '+ Add';
+    addBtn.addEventListener('click', () => pentestOpenQcmdModal(-1));
+    row.appendChild(addBtn);
+  }
+
+  let _pentestEditIdx = null;
+  function pentestOpenQcmdModal(idx) {
+    _pentestEditIdx = idx;
+    const cmds = pentestLoadQcmds();
+    const cmd = idx >= 0 ? cmds[idx] : { label: '', prompt: '' };
+    document.getElementById('qcmd-label-input').value = cmd.label;
+    document.getElementById('qcmd-prompt-input').value = cmd.prompt;
+    document.getElementById('qcmd-modal-title').textContent = idx >= 0 ? 'EDIT QUICK COMMAND' : 'ADD QUICK COMMAND';
+    document.getElementById('qcmd-delete-btn').style.display = idx >= 0 ? 'inline-block' : 'none';
+    document.getElementById('qcmd-save-btn').onclick   = pentestSaveQcmdModal;
+    document.getElementById('qcmd-delete-btn').onclick = pentestDeleteQcmd;
+    document.getElementById('qcmd-modal-overlay').classList.add('active');
+    document.getElementById('qcmd-label-input').focus();
+  }
+  function pentestSaveQcmdModal() {
+    const label  = document.getElementById('qcmd-label-input').value.trim();
+    const prompt = document.getElementById('qcmd-prompt-input').value.trim();
+    if (!label || !prompt) return;
+    const cmds = pentestLoadQcmds();
+    if (_pentestEditIdx >= 0) cmds[_pentestEditIdx] = { label, prompt };
+    else cmds.push({ label, prompt });
+    pentestSaveQcmds(cmds);
+    pentestRenderQuickCmds();
+    document.getElementById('qcmd-modal-overlay').classList.remove('active');
+  }
+  function pentestDeleteQcmd() {
+    if (_pentestEditIdx < 0) return;
+    const cmds = pentestLoadQcmds();
+    cmds.splice(_pentestEditIdx, 1);
+    pentestSaveQcmds(cmds);
+    pentestRenderQuickCmds();
+    document.getElementById('qcmd-modal-overlay').classList.remove('active');
+  }
+
+  function pentestHandleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); pentestSendChat(); }
+  }
+
+  function clearPentestChat() {
+    const msgs = document.getElementById('pentest-messages');
+    if (msgs) msgs.innerHTML = `
+      <div class="msg agent">
+        <div class="msg-avatar agent">P</div>
+        <div>
+          <div class="msg-bubble">Engagement reset. Give me a new scope.</div>
+          <div class="msg-meta">PENTEST AGENT · READY</div>
+        </div>
+      </div>`;
+    pentestConversation = [];
+  }
+
+  async function pentestSyncActive() {
+    try {
+      const r = await fetch('/api/pentest/active');
+      const d = await r.json();
+      pentestActiveState = !!d.active;
+    } catch (e) { pentestActiveState = false; }
+    pentestUpdateActiveBtn();
+  }
+
+  function pentestUpdateActiveBtn() {
+    const btn = document.getElementById('pentest-go-active-btn');
+    const lbl = document.getElementById('pentest-go-active-label');
+    if (!btn) return;
+    btn.classList.toggle('active', pentestActiveState);
+    if (lbl) lbl.textContent = pentestActiveState ? 'ACTIVE' : 'GO ACTIVE';
+  }
+
+  async function pentestToggleActive() {
+    const next = !pentestActiveState;
+    if (next && !await gladiusConfirm(
+      'Active tools (port_scan, smb_enum, hydra, etc.) will probe live targets and may show up in IDS/SIEM logs. Stays on until you toggle off.',
+      { title: 'Enable active scanning?', confirmLabel: 'Go active', danger: true }
+    )) return;
+    try {
+      const r = await fetch('/api/pentest/active', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ active: next }),
+      });
+      const d = await r.json();
+      pentestActiveState = !!d.active;
+    } catch (e) {
+      await gladiusAlert('Toggle failed: ' + e.message, { title: 'Toggle failed' });
+      return;
+    }
+    pentestUpdateActiveBtn();
+    notify('pentest', 'PENTEST', pentestActiveState ? 'ACTIVE mode enabled' : 'ACTIVE mode disabled');
+  }
+
+  function pentestAppendUser(text) {
+    const msgs = document.getElementById('pentest-messages');
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const el = document.createElement('div');
+    el.className = 'msg user';
+    el.innerHTML = `<div class="msg-avatar user">SJ</div><div><div class="msg-bubble">${escHtml(text)}</div><div class="msg-meta">YOU · ${now}</div></div>`;
+    msgs.appendChild(el);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function pentestNewAgentBubble() {
+    const msgs = document.getElementById('pentest-messages');
+    const id = 'pt-bubble-' + Date.now();
+    const orbitId = 'pt-orbit-' + Date.now();
+    const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const el = document.createElement('div');
+    el.className = 'msg agent';
+    el.innerHTML = `
+      <div class="avatar-orbit active" id="${orbitId}">
+        <div class="msg-avatar agent">P</div>
+        <div class="orbit-dot"></div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div class="msg-bubble" id="${id}"></div>
+        <div class="msg-meta">PENTEST AGENT · ${now}</div>
+      </div>`;
+    msgs.appendChild(el);
+    msgs.scrollTop = msgs.scrollHeight;
+    return { id, orbitId, fullText: '', tools: [], findingsRendered: 0 };
+  }
+
+  function pentestRenderBubble(b) {
+    const el = document.getElementById(b.id);
+    if (!el) return;
+    let html = '';
+    for (const tool of b.tools) html += `<div class="tool-call"><span class="tool-name">→ ${escHtml(tool)}</span></div>`;
+    html += formatMessage(b.fullText);
+    // Append finding cards already streamed (rendered separately)
+    el.innerHTML = html + (b.findingsHtml || '');
+  }
+
+  function pentestPhaseDivider(phase) {
+    const msgs = document.getElementById('pentest-messages');
+    const div = document.createElement('div');
+    div.className = 'phase-divider';
+    div.textContent = phase.replace('_',' ');
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function pentestRenderFindingCard(f) {
+    const sev = (f.severity || 'INFO').toUpperCase();
+    return `<div class="pt-finding-card sev-${sev}">
+      <div><span class="sev-tag">${escHtml(sev)}</span><strong>${escHtml(f.title || '(untitled)')}</strong></div>
+      <div style="opacity:0.7;margin-top:3px">${escHtml(f.host || '')} · ${escHtml(f.phase || '')} · ${escHtml(f.attack_technique || '')}</div>
+    </div>`;
+  }
+
+  async function pentestSendChat() {
+    const input = document.getElementById('pentest-input');
+    const text = (input.value || '').trim();
+    if (!text || pentestSending) return;
+    pentestSending = true;
+    pentestAppendUser(text);
+    pentestConversation.push({ role: 'user', content: text });
+    input.value = '';
+    input.style.height = 'auto';
+
+    const b = pentestNewAgentBubble();
+    pentestCurrentBubble = b;
+
+    try {
+      const resp = await fetch('/api/pentest/chat', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ messages: pentestConversation }),
+      });
+      if (!resp.ok) throw new Error('API error ' + resp.status);
+
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      let savedThisTurn = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const lines = buf.split('\n'); buf = lines.pop();
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          let ev; try { ev = JSON.parse(line.slice(6)); } catch (e) { continue; }
+          if (ev.type === 'text') {
+            b.fullText += ev.content;
+            pentestRenderBubble(b);
+            document.getElementById('pentest-messages').scrollTop = document.getElementById('pentest-messages').scrollHeight;
+          } else if (ev.type === 'tool_start') {
+            if (!b.tools.includes(ev.tool)) b.tools.push(ev.tool);
+            pentestRenderBubble(b);
+          } else if (ev.type === 'tool_done') {
+            // visual nudge handled by orbit
+          } else if (ev.type === 'phase_change') {
+            pentestPhaseDivider(ev.phase);
+          } else if (ev.type === 'finding') {
+            b.findingsHtml = (b.findingsHtml || '') + pentestRenderFindingCard(ev.finding);
+            pentestRenderBubble(b);
+            document.getElementById('pentest-messages').scrollTop = document.getElementById('pentest-messages').scrollHeight;
+          } else if (ev.type === 'go_active_request') {
+            const tip = document.createElement('div');
+            tip.className = 'phase-divider';
+            tip.style.color = '#ff8c1a';
+            tip.innerHTML = `🔓 AGENT REQUESTED GO ACTIVE — reason: ${escHtml(ev.reason || '')}`;
+            document.getElementById('pentest-messages').appendChild(tip);
+          } else if (ev.type === 'pentest_saved') {
+            try {
+              const eng = ev.engagement;
+              localStorage.setItem('gladius-pentest-latest', JSON.stringify(eng));
+              let hist = [];
+              try { hist = JSON.parse(localStorage.getItem('gladius-pentest-history') || '[]'); } catch(e) {}
+              hist = hist.filter(h => h.engagement_id !== eng.engagement_id);
+              hist.unshift(eng);
+              if (hist.length > 20) hist.length = 20;
+              localStorage.setItem('gladius-pentest-history', JSON.stringify(hist));
+              renderPentestReports();
+              logActivity(`Pentest engagement saved — ${eng.engagement_id} (${(eng.findings||[]).length} findings)`, eng.engagement_id);
+              savedThisTurn = true;
+              notify('pentest-reports', 'PENTEST', 'Engagement saved — open Reports');
+            } catch (e) { console.error('pentest save error', e); }
+          } else if (ev.type === 'error') {
+            const el = document.getElementById(b.id);
+            if (el) el.innerHTML += `<div style="color:var(--danger)">${escHtml(ev.content)}</div>`;
+          } else if (ev.type === 'done') {
+            pentestConversation.push({ role: 'assistant', content: b.fullText });
+            const orb = document.getElementById(b.orbitId); if (orb) orb.classList.remove('active');
+            notify('pentest', 'PENTEST', 'Response ready');
+          }
+        }
+      }
+    } catch (e) {
+      const el = document.getElementById(b.id);
+      if (el) el.innerHTML = `<span style="color:var(--danger)">Connection error: ${escHtml(e.message)}</span>`;
+    } finally {
+      pentestSending = false;
+    }
+  }
+
+  // ── PENTEST REPORTS ──────────────────────────────────────────────────────
+  // Auto-paragraph a wall-of-text summary: split on sentence boundaries every
+  // ~3 sentences, then highlight CVE IDs and CVSS scores so they pop.
+  function pentestFormatProse(text) {
+    if (!text) return '(none)';
+    let body = text.trim();
+    if (!body.includes('\n\n')) {
+      // Split on sentence boundaries that are followed by a capital letter or end-of-string.
+      const sents = body.match(/[^.!?]+[.!?]+(?=\s+[A-Z(]|\s*$)/g) || [body];
+      const groups = [];
+      for (let i = 0; i < sents.length; i += 3) {
+        groups.push(sents.slice(i, i + 3).join(' ').trim());
+      }
+      body = groups.filter(Boolean).join('\n\n');
+    }
+    let html = formatMessage(body);
+    // Highlight CVE IDs
+    html = html.replace(/CVE-\d{4}-\d{4,7}/g, m => `<span class="pt-cve">${m}</span>`);
+    // Highlight CVSS markers like "CVSS 10.0" or "CVSS:3.1/AV:N/..."
+    html = html.replace(/CVSS[\s:]\d+(?:\.\d+)?/g, m => `<span class="pt-cvss">${m}</span>`);
+    return html;
+  }
+
+  let _pentestServerHistory = [];
+  function loadPentestHistory() {
+    let local = [];
+    try { local = JSON.parse(localStorage.getItem('gladius-pentest-history') || '[]'); } catch (e) {}
+    // Merge server-side and local, dedupe by engagement_id (server wins on conflict).
+    const byId = new Map();
+    for (const e of _pentestServerHistory) byId.set(e.engagement_id, e);
+    for (const e of local) if (!byId.has(e.engagement_id)) byId.set(e.engagement_id, e);
+    return Array.from(byId.values());
+  }
+
+  async function fetchPentestServerHistory() {
+    try {
+      const r = await fetch('/api/pentest/history');
+      const d = await r.json();
+      _pentestServerHistory = d.engagements || [];
+    } catch (e) { _pentestServerHistory = []; }
+  }
+
+  async function renderPentestReports() {
+    await fetchPentestServerHistory();
+    const list = document.getElementById('pentest-reports-list');
+    const count = document.getElementById('pentest-reports-count');
+    const detail = document.getElementById('pentest-report-detail');
+    if (!list) return;
+    const hist = loadPentestHistory();
+    if (count) count.textContent = `${hist.length} engagements`;
+    if (!hist.length) {
+      list.innerHTML = '<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:12px">No engagements yet. Run one in the PenTest agent — it will appear here on save.</div>';
+      if (detail) { detail.style.display = 'none'; detail.innerHTML = ''; }
+      return;
+    }
+    list.innerHTML = '';
+    hist.forEach((eng, idx) => {
+      const sum = eng.summary || {};
+      const sev = `${sum.findings_critical||0}C ${sum.findings_high||0}H · ${(eng.findings||[]).length} total`;
+      const row = document.createElement('div');
+      row.className = 'pt-engagement-row';
+      row.id = `pt-eng-row-${idx}`;
+      const scope = (eng.scope && (eng.scope.in_scope||[]).join(', ')) || '—';
+      row.innerHTML = `
+        <span class="pt-chev">▶</span>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);min-width:200px">${escHtml(eng.engagement_id||'')}</div>
+        <div style="font-size:11px;color:var(--text-dim);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(scope)}</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${escHtml(sev)}</div>
+        <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${escHtml(((eng.attack_paths||[]).length)+' paths')}</div>
+      `;
+      row.onclick = () => togglePentestEngagement(idx);
+      list.appendChild(row);
+
+      const det = document.createElement('div');
+      det.className = 'pt-engagement-detail';
+      det.id = `pt-eng-detail-${idx}`;
+      list.appendChild(det);
+    });
+    if (detail) { detail.style.display = 'none'; detail.innerHTML = ''; }
+  }
+
+  function togglePentestEngagement(idx) {
+    const hist = loadPentestHistory();
+    const row = document.getElementById(`pt-eng-row-${idx}`);
+    const det = document.getElementById(`pt-eng-detail-${idx}`);
+    if (!row || !det) return;
+    const wasOpen = row.classList.contains('expanded');
+    // Accordion: close any other expanded engagement first
+    document.querySelectorAll('.pt-engagement-row.expanded').forEach(r => {
+      r.classList.remove('expanded');
+      const otherIdx = r.id.replace('pt-eng-row-', '');
+      const otherDet = document.getElementById(`pt-eng-detail-${otherIdx}`);
+      if (otherDet) { otherDet.classList.remove('open'); otherDet.innerHTML = ''; }
+    });
+    if (!wasOpen) {
+      row.classList.add('expanded');
+      det.classList.add('open');
+      det.innerHTML = renderPentestEngagementBody(hist[idx], idx);
+      // Bring it into view if it dropped below the fold
+      setTimeout(() => row.scrollIntoView({ behavior:'smooth', block:'start' }), 50);
+    }
+  }
+
+  function renderPentestEngagementBody(eng, idx) {
+    if (!eng) return '';
+    const eid = eng.engagement_id || '';
+    // Tell the floating Security Agent widget about this engagement so it can
+    // pick up scope when the operator opens it.
+    setTimeout(() => fsecSetScope({ engagement_id: eid, label: eid }), 0);
+    return `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="font-family:var(--font-mono);font-size:13px;color:var(--accent);letter-spacing:1px">${escHtml(eid)}</div>
+        <div style="flex:1"></div>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="event.stopPropagation();exportPentestReport(${idx})">Export HTML</button>
+        <button class="btn btn-ghost" style="font-size:11px" onclick="event.stopPropagation();emailPentestReport(${idx})">✉ Email</button>
+      </div>
+
+      <div class="pt-summary-grid">
+        <div class="pt-summary-card">
+          <div class="pt-summary-label">EXECUTIVE SUMMARY</div>
+          <div class="pt-prose">${pentestFormatProse(eng.executive_summary)}</div>
+        </div>
+        <div class="pt-summary-card">
+          <div class="pt-summary-label">TECHNICAL SUMMARY</div>
+          <div class="pt-prose">${pentestFormatProse(eng.technical_summary)}</div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-bottom:6px;letter-spacing:1px">ATTACK PATHS</div>
+        ${renderPentestAttackPaths(eng)}
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-bottom:6px;letter-spacing:1px">KILL CHAIN</div>
+        <div style="border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:10px" class="pt-killchain-tree">${renderPentestKillChain(eng)}</div>
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-bottom:6px;letter-spacing:1px">MITRE ATT&CK COVERAGE</div>
+        ${renderPentestAttackMatrix(eng)}
+      </div>
+
+      <div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-bottom:6px;letter-spacing:1px">FINDINGS (${(eng.findings||[]).length})</div>
+        <div>${renderPentestFindingsList(eng)}</div>
+      </div>
+
+      <div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);letter-spacing:1px">REMEDIATION PLAN</div>
+          <div style="flex:1"></div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">grouped by severity → host</div>
+        </div>
+        ${renderPentestRemediation(eng)}
+      </div>
+    `;
+  }
+
+  // SEVERITY → numerical sort key (so CRITICAL > HIGH > MEDIUM > LOW > INFO).
+  // Prefixed _pt to avoid collision with _sevRank lookup defined elsewhere.
+  const _PT_SEV_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+  function _ptSevRank(s) { return _PT_SEV_ORDER[(s||'INFO').toUpperCase()] ?? 5; }
+  function _ptSevColour(s) {
+    return ({CRITICAL:'#ff3a4a', HIGH:'#ff8c1a', MEDIUM:'#f3c623', LOW:'#5cd99a', INFO:'var(--text-dim)'})[(s||'INFO').toUpperCase()] || 'var(--text-dim)';
+  }
+
+  function renderPentestRemediation(eng) {
+    const findings = eng.findings || [];
+    if (!findings.length) {
+      return '<div style="font-size:11px;color:var(--text-dim)">No findings to remediate.</div>';
+    }
+    // Group: severity → host → [findings]
+    const groups = {};
+    let withFix = 0, missingFix = 0;
+    for (const f of findings) {
+      const sev = (f.severity || 'INFO').toUpperCase();
+      const host = f.host || '(no host)';
+      groups[sev] = groups[sev] || {};
+      groups[sev][host] = groups[sev][host] || [];
+      groups[sev][host].push(f);
+      if ((f.fix && f.fix.trim()) || (f.commands && f.commands.trim())) withFix++;
+      else missingFix++;
+    }
+    const sevOrder = Object.keys(groups).sort((a,b) => _ptSevRank(a) - _ptSevRank(b));
+    const blocks = sevOrder.map(sev => {
+      const colour = _ptSevColour(sev);
+      const hosts = Object.keys(groups[sev]).sort();
+      const hostBlocks = hosts.map(host => {
+        const fs = groups[sev][host].sort((a,b) => (a.id||'').localeCompare(b.id||''));
+        const items = fs.map(f => {
+          const hasFix = (f.fix && f.fix.trim()) || (f.commands && f.commands.trim());
+          const fixHtml = (f.fix && f.fix.trim())
+            ? `<div style="font-size:12px;line-height:1.55;margin:4px 0">${formatMessage(f.fix)}</div>`
+            : '';
+          const cmdHtml = (f.commands && f.commands.trim())
+            ? `<div style="position:relative;margin-top:6px">
+                 <button class="btn btn-ghost" style="position:absolute;top:5px;right:5px;font-size:10px;padding:2px 7px;z-index:1" onclick="copyToClipboard(this, ${escHtml(JSON.stringify(f.commands))})">Copy</button>
+                 <pre style="font-size:11px;background:var(--surface);padding:8px 10px;padding-right:60px;border-radius:4px;border:1px solid var(--border);white-space:pre-wrap;margin:0">${escHtml(f.commands)}</pre>
+               </div>`
+            : '';
+          const tagsHtml = `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${escHtml(f.id||'?')}${f.attack_technique ? ' · ' + escHtml(f.attack_technique) : ''}${f.cve ? ' · ' + escHtml(f.cve) : ''}</span>`;
+          if (!hasFix) {
+            return `<div style="border-left:2px solid ${colour};padding:8px 10px;margin:6px 0;background:rgba(0,0,0,0.05);border-radius:4px;opacity:0.78">
+              <div style="font-size:12px"><strong>${escHtml(f.title||'(untitled)')}</strong></div>
+              <div style="font-family:var(--font-mono);font-size:10px;color:#ff8c1a;margin-top:3px">⚠ NO REMEDIATION RECORDED — agent did not populate fix/commands</div>
+              <div style="margin-top:3px">${tagsHtml}</div>
+            </div>`;
+          }
+          return `<div style="border-left:2px solid ${colour};padding:8px 10px;margin:6px 0;background:rgba(0,0,0,0.05);border-radius:4px">
+            <div style="display:flex;align-items:center;gap:6px"><strong style="font-size:12px">${escHtml(f.title||'(untitled)')}</strong><span style="flex:1"></span>${tagsHtml}</div>
+            ${fixHtml}${cmdHtml}
+          </div>`;
+        }).join('');
+        return `<div style="margin:6px 0">
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);letter-spacing:1px;margin:8px 0 4px 0">↳ ${escHtml(host)}  (${fs.length})</div>
+          ${items}
+        </div>`;
+      }).join('');
+      return `<div style="margin:10px 0 14px 0">
+        <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);padding-bottom:5px;margin-bottom:6px">
+          <span style="background:${colour}22;color:${colour};padding:1px 7px;border-radius:3px;font-family:var(--font-mono);font-size:10px;letter-spacing:1px">${sev}</span>
+          <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${Object.values(groups[sev]).reduce((n,a)=>n+a.length,0)} finding(s) across ${hosts.length} host(s)</span>
+        </div>
+        ${hostBlocks}
+      </div>`;
+    }).join('');
+    const summary = missingFix
+      ? `<div style="font-family:var(--font-mono);font-size:10px;color:#ff8c1a;margin-bottom:8px">⚠ ${missingFix} of ${findings.length} findings have no remediation recorded — flagged below.</div>`
+      : `<div style="font-family:var(--font-mono);font-size:10px;color:#5cd99a;margin-bottom:8px">✓ All ${findings.length} findings have remediation guidance.</div>`;
+    return summary + blocks;
+  }
+
+  function copyToClipboard(btn, text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        const orig = btn.textContent; btn.textContent = '✓ Copied'; btn.disabled = true;
+        setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1400);
+      }).catch(e => gladiusAlert('Copy failed: ' + e.message, { title: 'Copy failed' }));
+    } else {
+      // Fallback for non-secure contexts
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); btn.textContent = '✓ Copied'; setTimeout(() => btn.textContent = 'Copy', 1400); }
+      finally { document.body.removeChild(ta); }
+    }
+  }
+
+  // Backwards-compat shim — still used by older code paths if any.
+  function openPentestReport(idx) { togglePentestEngagement(idx); }
+
+  // ── SECURITY AGENT FLOATING WIDGET ─────────────────────────────────────
+  // (Backed by the local Foundation-Sec-8B model via /api/foundation_sec/*.)
+  // One persistent FAB bottom-right. Click → expands into a chat panel.
+  // Scope-aware: when the operator clicks an engagement / finding / ATT&CK tile,
+  // the widget picks up that scope automatically. Per-scope chat history is
+  // kept in localStorage. Streams via SSE so Cloudflare tunnel never drops.
+
+  const _fsec = {
+    open: false,                                  // panel expanded?
+    busy: false,                                  // a request is in flight
+    scope: null,                                  // { engagement_id, finding_id?, technique_id?, label, sublabel? }
+    history: [],                                  // current scope's chat turns
+    followBottom: true,                           // pause auto-scroll if user scrolls up
+  };
+
+  // Tiny markdown renderer for chat bubbles. Handles **bold**, *italic*, `code`,
+  // ```fenced code```, lines starting with -/* (bullets), 1./2. (numbered), and
+  // bare URLs. Input is plain text from the model; we escape first then layer
+  // formatting so it's safe.
+  function _fsecFormat(text) {
+    if (!text) return '';
+    // 1. Pull fenced code blocks out so their contents aren't touched
+    const codeBlocks = [];
+    text = String(text).replace(/```([a-zA-Z0-9]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      const i = codeBlocks.length;
+      codeBlocks.push({ lang: lang || '', code });
+      return ` FCB${i} `;
+    });
+    // 2. HTML-escape everything else
+    let s = escHtml(text);
+    // 3. Inline code
+    s = s.replace(/`([^`\n]+)`/g, '<code class="fsec-inline-code">$1</code>');
+    // 4. Bold + italic (bold first to avoid * eating ** boundaries)
+    s = s.replace(/\*\*([^*\n][^*]*?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[\s(])\*([^*\n][^*]*?)\*(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+    s = s.replace(/(^|[\s(])_([^_\n][^_]*?)_(?=[\s).,!?:;]|$)/g, '$1<em>$2</em>');
+    // 5. Auto-link bare URLs (after escaping so http:// → http:&#x2F;&#x2F;? no, escHtml only handles & < > ").
+    s = s.replace(/(https?:\/\/[^\s<>()"']+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+    // 6. Lists. Group consecutive bullet/numbered lines into <ul>/<ol>.
+    const lines = s.split('\n');
+    const out = [];
+    let listType = null;
+    const flush = () => { if (listType) { out.push(`</${listType}>`); listType = null; } };
+    for (const ln of lines) {
+      const bm = ln.match(/^\s*[-*]\s+(.*)$/);
+      const nm = ln.match(/^\s*\d+\.\s+(.*)$/);
+      if (bm) {
+        if (listType !== 'ul') { flush(); out.push('<ul class="fsec-list">'); listType = 'ul'; }
+        out.push(`<li>${bm[1]}</li>`);
+      } else if (nm) {
+        if (listType !== 'ol') { flush(); out.push('<ol class="fsec-list">'); listType = 'ol'; }
+        out.push(`<li>${nm[1]}</li>`);
+      } else {
+        flush();
+        out.push(ln);
+      }
+    }
+    flush();
+    s = out.join('\n');
+    // 7. Restore fenced code blocks
+    s = s.replace(/ FCB(\d+) /g, (_, i) => {
+      const cb = codeBlocks[parseInt(i, 10)];
+      const lang = cb.lang ? ` data-lang="${escHtml(cb.lang)}"` : '';
+      return `<pre class="fsec-code"${lang}><code>${escHtml(cb.code)}</code></pre>`;
+    });
+    return s;
+  }
+
+  function _fsecScopeKey(s) {
+    if (!s || !s.engagement_id) return '';
+    let k = `gladius-fsec-chat::${s.engagement_id}`;
+    if (s.finding_id)   k += `::F=${s.finding_id}`;
+    if (s.technique_id) k += `::T=${s.technique_id}`;
+    return k;
+  }
+  function _fsecLoadHistory(s) {
+    const k = _fsecScopeKey(s); if (!k) return [];
+    try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch (e) { return []; }
+  }
+  function _fsecSaveHistory(s, msgs) {
+    const k = _fsecScopeKey(s); if (!k) return;
+    try { localStorage.setItem(k, JSON.stringify(msgs.slice(-30))); } catch (e) {}
+  }
+
+  // Build the persistent widget DOM once, on first call.
+  function _fsecEnsureMount() {
+    if (document.getElementById('fsec-widget')) return;
+    const w = document.createElement('div');
+    w.id = 'fsec-widget';
+    w.innerHTML = `
+      <button id="fsec-fab" type="button" title="Chat — local cybersecurity model (Cisco Foundation-Sec-8B)">
+        <span class="fsec-fab-icon">🛡</span>
+        <span class="fsec-fab-label">Chat</span>
+        <span class="fsec-fab-pulse"></span>
+      </button>
+      <div id="fsec-panel" role="dialog" aria-label="Chat">
+        <div id="fsec-resize-handle" title="Drag to resize"></div>
+        <div id="fsec-head">
+          <span class="fsec-head-title">CHAT</span>
+          <span class="fsec-head-sep">·</span>
+          <span id="fsec-scope-chip" class="fsec-scope-chip"></span>
+          <div class="fsec-head-spacer"></div>
+          <button type="button" id="fsec-btn-analyze" class="fsec-head-btn" title="Run a focused analysis on the current scope">Analyze</button>
+          <button type="button" id="fsec-btn-clear"   class="fsec-head-btn" title="Clear chat history for this scope">Clear</button>
+          <button type="button" id="fsec-btn-min"     class="fsec-head-btn" title="Minimise">_</button>
+        </div>
+        <div id="fsec-msgs"></div>
+        <div id="fsec-input-row">
+          <input id="fsec-input" type="text" placeholder="Ask a question…" autocomplete="off" />
+          <button type="button" id="fsec-send" class="fsec-send">Send</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(w);
+    document.getElementById('fsec-fab').onclick = fsecToggle;
+    document.getElementById('fsec-btn-min').onclick = () => fsecToggle(false);
+    document.getElementById('fsec-btn-analyze').onclick = fsecRunAnalyze;
+    document.getElementById('fsec-btn-clear').onclick = fsecClear;
+    document.getElementById('fsec-send').onclick = fsecSend;
+    document.getElementById('fsec-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); fsecSend(); }
+    });
+    // Track whether the user has scrolled up — pause auto-scroll if they have,
+    // resume when they reach the bottom again.
+    const msgs = document.getElementById('fsec-msgs');
+    msgs.addEventListener('scroll', () => {
+      const atBottom = (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight) < 24;
+      _fsec.followBottom = atBottom;
+    });
+    // Resizable from top-left corner. Persists size in localStorage.
+    _fsecWireResize();
+    _fsecApplySavedSize();
+    _fsecRenderScope();
+    _fsecRenderMessages();
+  }
+
+  function _fsecWireResize() {
+    const panel = document.getElementById('fsec-panel');
+    const handle = document.getElementById('fsec-resize-handle');
+    if (!panel || !handle) return;
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX, startY = e.clientY;
+      const startW = panel.offsetWidth, startH = panel.offsetHeight;
+      document.body.style.userSelect = 'none';
+      const onMove = (mv) => {
+        // Drag top-left → grows up/left. Width grows as cursor moves left, height as cursor moves up.
+        const dx = startX - mv.clientX;
+        const dy = startY - mv.clientY;
+        const w = Math.max(320, Math.min(window.innerWidth  - 40, startW + dx));
+        const h = Math.max(320, Math.min(window.innerHeight - 60, startH + dy));
+        panel.style.width  = w + 'px';
+        panel.style.height = h + 'px';
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.userSelect = '';
+        try {
+          localStorage.setItem('gladius-fsec-size', JSON.stringify({
+            w: panel.offsetWidth, h: panel.offsetHeight,
+          }));
+        } catch (e) {}
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+
+  function _fsecApplySavedSize() {
+    try {
+      const raw = localStorage.getItem('gladius-fsec-size');
+      if (!raw) return;
+      const { w, h } = JSON.parse(raw);
+      const panel = document.getElementById('fsec-panel');
+      if (!panel) return;
+      if (w && Number.isFinite(w)) panel.style.width  = Math.min(w, window.innerWidth - 40) + 'px';
+      if (h && Number.isFinite(h)) panel.style.height = Math.min(h, window.innerHeight - 60) + 'px';
+    } catch (e) {}
+  }
+
+  // Scope is set by other parts of the page when the operator interacts with
+  // an engagement/finding/technique/attack-path. Public entry point.
+  function fsecSetScope(scope) {
+    _fsecEnsureMount();
+    if (!scope || !scope.engagement_id) { _fsec.scope = null; }
+    else { _fsec.scope = { ...scope }; }
+    _fsec.history = _fsecLoadHistory(_fsec.scope);
+    _fsecRenderScope();
+    _fsecRenderMessages();
+    _ptUpdateScopeMarkers();
+  }
+
+  // Highlight the engagement-detail tile / row / path that corresponds to the
+  // current Security Agent scope, so the operator sees the link between what
+  // they clicked and what the chat is now scoped to.
+  function _ptUpdateScopeMarkers() {
+    document.querySelectorAll('.pt-attck-cell.in-scope, .pt-attack-path.in-scope')
+      .forEach(el => el.classList.remove('in-scope'));
+    const s = _fsec.scope;
+    if (!s) return;
+    if (s.technique_id) {
+      const cell = document.querySelector(`.pt-attck-cell[data-tid="${CSS.escape(s.technique_id)}"]`);
+      if (cell) cell.classList.add('in-scope');
+    }
+    if (s.attack_path_id) {
+      const path = document.querySelector(`.pt-attack-path[data-pid="${CSS.escape(s.attack_path_id)}"]`);
+      if (path) path.classList.add('in-scope');
+    }
+  }
+
+  function fsecToggle(force) {
+    _fsecEnsureMount();
+    const target = (typeof force === 'boolean') ? force : !_fsec.open;
+    _fsec.open = target;
+    document.getElementById('fsec-widget').classList.toggle('open', target);
+    if (target) {
+      setTimeout(() => { const i = document.getElementById('fsec-input'); if (i) i.focus(); }, 80);
+      _fsecScrollMsgs();
+    }
+  }
+
+  // Force-open with a scope already set (used by tile/finding click handlers).
+  function fsecOpenWithScope(scope) {
+    fsecSetScope(scope);
+    fsecToggle(true);
+  }
+
+  function _fsecRenderScope() {
+    const chip = document.getElementById('fsec-scope-chip');
+    const analyzeBtn = document.getElementById('fsec-btn-analyze');
+    if (!chip) return;
+    const s = _fsec.scope;
+    if (!s) {
+      chip.textContent = 'no engagement selected';
+      chip.classList.add('empty');
+      if (analyzeBtn) analyzeBtn.disabled = true;
+      return;
+    }
+    chip.classList.remove('empty');
+    let label = s.label || s.engagement_id;
+    if (s.finding_id)   label = `${s.engagement_id} · 🎯 ${s.finding_id}`;
+    if (s.technique_id) label = `${s.engagement_id} · 🎯 ${s.technique_id}`;
+    if (s.sublabel)     label += ` — ${s.sublabel}`;
+    chip.textContent = label;
+    if (analyzeBtn) analyzeBtn.disabled = false;
+  }
+
+  function _fsecRenderMessages() {
+    const box = document.getElementById('fsec-msgs');
+    if (!box) return;
+    if (!_fsec.scope) {
+      box.innerHTML = `<div class="fsec-welcome">
+        <div class="fsec-welcome-title">Hi — I’m a local security chat.</div>
+        <div class="fsec-welcome-body">
+          <p>I’m powered by <strong>Cisco Foundation-Sec-8B</strong>, a cybersecurity-tuned Llama-3.1 model running locally on your homelab Ollama instance. Nothing leaves the network.</p>
+          <p>I can help with:</p>
+          <ul>
+            <li>Explaining a finding in plain English — what it is, why it matters, how to fix it</li>
+            <li>Walking through an attack path step by step and pointing out the highest-leverage break</li>
+            <li>Translating raw scan/banner output into operator-friendly summaries</li>
+            <li>Mapping observations to MITRE ATT&CK techniques and suggesting detections</li>
+            <li>Drafting remediation steps with concrete commands</li>
+          </ul>
+          <p>To get started, <strong>open or expand a pentest engagement</strong> on the Reports page. Once you click a finding, an attack path, or a hit ATT&CK tile, I’ll pick up that scope automatically.</p>
+        </div>
+      </div>`;
+      return;
+    }
+    if (!_fsec.history.length) {
+      box.innerHTML = '<div class="fsec-empty">Hit <strong>Analyze</strong> for a structured review of the current scope, or just ask a question below.</div>';
+      return;
+    }
+    box.innerHTML = _fsec.history.map(m => {
+      const isUser = m.role === 'user';
+      const cls = isUser ? 'fsec-msg user' : 'fsec-msg bot';
+      const avatar = isUser ? 'Y' : 'S';
+      const body = isUser ? escHtml(m.content) : _fsecFormat(m.content);
+      return `<div class="${cls}"><div class="fsec-msg-avatar">${avatar}</div><div class="fsec-bubble">${body}</div></div>`;
+    }).join('');
+    _fsec.followBottom = true;
+    _fsecScrollMsgs(true);
+  }
+
+  // Auto-scroll only when the user is already at the bottom; otherwise leave
+  // them where they are so they can read while the model streams.
+  function _fsecScrollMsgs(force) {
+    const box = document.getElementById('fsec-msgs');
+    if (!box) return;
+    if (force || _fsec.followBottom) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+
+  // Append a streaming bot bubble. Initially shows bouncing-dots typing
+  // indicator; first text chunk replaces it. Returns the bubble DOM node so
+  // the caller can write into it.
+  function _fsecAppendStreamingBubble() {
+    const box = document.getElementById('fsec-msgs'); if (!box) return null;
+    if (box.querySelector('.fsec-empty')) box.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'fsec-msg bot';
+    wrap.innerHTML = `
+      <div class="fsec-msg-avatar">S</div>
+      <div class="fsec-bubble fsec-msg-pending">
+        <span class="fsec-typing"><span></span><span></span><span></span></span>
+      </div>`;
+    box.appendChild(wrap);
+    _fsec.followBottom = true;     // a fresh bubble: snap to bottom, then user can scroll up
+    _fsecScrollMsgs(true);
+    return wrap.querySelector('.fsec-bubble');
+  }
+
+  // SSE consumer — same shape as the previous _fsecStreamInto.
+  async function _fsecStream(payload, onChunk, onDone, onError) {
+    let buf = '';
+    try {
+      const r = await fetch('/api/foundation_sec/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) { const t = await r.text(); onError(`Error ${r.status}: ${t.slice(0, 400)}`); return; }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, i); buf = buf.slice(i + 2);
+          for (const line of frame.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              const obj = JSON.parse(line.slice(6));
+              if (obj.type === 'text') onChunk(obj.content || '');
+              else if (obj.type === 'error') { onError(obj.content || 'unknown error'); return; }
+              else if (obj.type === 'done')  { onDone(); return; }
+            } catch (e) { /* ignore */ }
+          }
+        }
+      }
+      onDone();
+    } catch (e) { onError(`Request failed: ${e}`); }
+  }
+
+  function _fsecPayloadBase() {
+    const s = _fsec.scope || {};
+    const out = { engagement_id: s.engagement_id };
+    if (s.finding_id)   out.finding_id   = s.finding_id;
+    if (s.technique_id) out.technique_id = s.technique_id;
+    return out;
+  }
+
+  async function fsecRunAnalyze() {
+    if (_fsec.busy || !_fsec.scope) return;
+    _fsec.busy = true;
+    fsecToggle(true);
+    const bubble = _fsecAppendStreamingBubble();
+    let acc = '', started = false;
+    await _fsecStream(
+      { ..._fsecPayloadBase(), mode: 'analyze' },
+      (chunk) => {
+        if (!started) { bubble.classList.remove('fsec-msg-pending'); bubble.textContent = ''; started = true; }
+        acc += chunk; bubble.textContent = acc; _fsecScrollMsgs();
+      },
+      () => {
+        const final = (acc || '(empty response)').trim();
+        bubble.innerHTML = _fsecFormat(final);
+        _fsec.history.push({ role: 'user', content: '(structured analysis)' });
+        _fsec.history.push({ role: 'assistant', content: final });
+        _fsecSaveHistory(_fsec.scope, _fsec.history);
+        _fsecScrollMsgs();
+        _fsec.busy = false;
+      },
+      (err) => {
+        // Preserve any partial response we already streamed
+        if (started && acc.trim()) {
+          const partial = acc.trim();
+          bubble.innerHTML = _fsecFormat(partial) +
+            `<div style="margin-top:8px;font-size:10px;color:var(--warn,#f3c623);font-style:italic">⚠ Connection dropped — partial response shown. ${escHtml(err)}</div>`;
+          _fsec.history.push({ role: 'user', content: '(structured analysis)' });
+          _fsec.history.push({ role: 'assistant', content: partial + '\n\n[connection dropped before completion]' });
+          _fsecSaveHistory(_fsec.scope, _fsec.history);
+        } else {
+          bubble.classList.remove('fsec-msg-pending');
+          bubble.textContent = err;
+        }
+        _fsec.busy = false;
+      }
+    );
+  }
+
+  async function fsecSend() {
+    const inp = document.getElementById('fsec-input');
+    const text = (inp.value || '').trim();
+    if (!text || _fsec.busy) return;
+    if (!_fsec.scope) {
+      bubbleErr('Open a pentest engagement first — the chat needs an engagement to ground its answers.');
+      return;
+    }
+    inp.value = '';
+    _fsec.busy = true;
+    _fsec.history.push({ role: 'user', content: text });
+    _fsecSaveHistory(_fsec.scope, _fsec.history);
+    _fsecRenderMessages();
+    const bubble = _fsecAppendStreamingBubble();
+    let acc = '', started = false;
+    await _fsecStream(
+      { ..._fsecPayloadBase(), mode: 'chat', user_message: text, history: _fsec.history.slice(-10) },
+      (chunk) => {
+        if (!started) { bubble.classList.remove('fsec-msg-pending'); bubble.textContent = ''; started = true; }
+        acc += chunk; bubble.textContent = acc; _fsecScrollMsgs();
+      },
+      () => {
+        const final = (acc || '(empty response)').trim();
+        bubble.innerHTML = _fsecFormat(final);
+        _fsec.history.push({ role: 'assistant', content: final });
+        _fsecSaveHistory(_fsec.scope, _fsec.history);
+        _fsecScrollMsgs();
+        _fsec.busy = false;
+      },
+      (err) => {
+        if (started && acc.trim()) {
+          const partial = acc.trim();
+          bubble.innerHTML = _fsecFormat(partial) +
+            `<div style="margin-top:8px;font-size:10px;color:var(--warn,#f3c623);font-style:italic">⚠ Connection dropped — partial response shown. ${escHtml(err)}</div>`;
+          _fsec.history.push({ role: 'assistant', content: partial + '\n\n[connection dropped before completion]' });
+        } else {
+          bubble.classList.remove('fsec-msg-pending');
+          bubble.textContent = err;
+          _fsec.history.push({ role: 'assistant', content: `[error] ${err}` });
+        }
+        _fsecSaveHistory(_fsec.scope, _fsec.history);
+        _fsec.busy = false;
+      }
+    );
+
+    function bubbleErr(msg) {
+      const b = _fsecAppendStreamingBubble();
+      if (b) { b.classList.remove('fsec-msg-pending'); b.textContent = msg; }
+    }
+  }
+
+  async function fsecClear() {
+    if (!_fsec.scope) return;
+    if (!await gladiusConfirm('Clear chat history for this scope?', { danger: true, confirmLabel: 'Clear' })) return;
+    _fsec.history = [];
+    try { localStorage.removeItem(_fsecScopeKey(_fsec.scope)); } catch (e) {}
+    _fsecRenderMessages();
+  }
+
+  // Show the floating widget only on the pentest reports page. Called by
+  // showPage() on every navigation. If the panel is open and we navigate
+  // away, also collapse it so it's not still showing scope from a stale page.
+  function _fsecUpdateVisibility(pageName) {
+    const w = document.getElementById('fsec-widget');
+    if (!w) return;
+    const visible = (pageName === 'pentest-reports');
+    // setting to '' would clear the inline style and fall back to the
+    // stylesheet's `display:none`, hiding it; set 'block' explicitly.
+    w.style.display = visible ? 'block' : 'none';
+    if (!visible && _fsec.open) fsecToggle(false);
+  }
+
+  // Mount on load. Visibility is then set by showPage(); if showPage hasn't
+  // run yet, fall back to the persisted active page.
+  function _fsecBoot() {
+    _fsecEnsureMount();
+    const initial = (typeof _currentPage !== 'undefined' && _currentPage)
+      || localStorage.getItem('gladius-active-page')
+      || 'dashboard';
+    _fsecUpdateVisibility(initial);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _fsecBoot);
+  } else {
+    _fsecBoot();
+  }
+
+  function renderPentestAttackPaths(eng) {
+    const paths = eng.attack_paths || [];
+    if (!paths.length) return '<div style="font-size:11px;color:var(--text-dim)">No attack paths identified.</div>';
+    const eid = eng.engagement_id || '';
+    const fmap = Object.fromEntries((eng.findings||[]).map(f => [f.id, f]));
+    return paths.map((p, i) => {
+      const pid = p.id || `path-${i}`;
+      const chain = (p.finding_chain||[]).map(fid => {
+        const f = fmap[fid];
+        return f ? `<span style="opacity:0.85">${escHtml(f.title||fid)}</span>` : `<span style="opacity:0.5">${escHtml(fid)}</span>`;
+      }).join(' <span style="color:#ff3a4a">→</span> ');
+      const sublabel = (p.narrative || '').trim().slice(0, 60).replace(/\s+\S*$/, '') || pid;
+      return `<div class="pt-attack-path" data-pid="${escHtml(pid)}" onclick="fsecOpenWithScope({engagement_id:'${escHtml(eid)}', attack_path_id:'${escHtml(pid)}', label:'${escHtml(eid)}', sublabel:${escHtml(JSON.stringify(sublabel))}})" title="Discuss this attack path in the chat">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <div style="font-family:var(--font-mono);font-size:10px;color:#ff3a4a">${escHtml((p.severity||'').toUpperCase())} · path</div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${escHtml(pid)}</div>
+          <div style="flex:1"></div>
+          <div class="pt-scope-mark" title="In Security Agent scope">●</div>
+        </div>
+        <div style="font-size:12px;margin:6px 0">${formatMessage(p.narrative||'')}</div>
+        <div style="font-size:11px;opacity:0.85">${chain}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderPentestKillChain(eng) {
+    const nodes = eng.kill_chain || [];
+    if (!nodes.length) return '<div style="padding:8px;font-size:11px;color:var(--text-dim)">No kill chain recorded.</div>';
+    const byId = Object.fromEntries(nodes.map(n => [n.id, n]));
+    const phaseOrder = ['passive_recon','active_recon','service_enum','safe_checks','correlation','synthesis'];
+    const byPhase = {};
+    for (const n of nodes) {
+      const p = n.phase || 'other';
+      (byPhase[p] = byPhase[p] || []).push(n);
+    }
+    const phases = phaseOrder.filter(p => byPhase[p]).concat(Object.keys(byPhase).filter(p => !phaseOrder.includes(p)));
+    let html = '';
+    for (const ph of phases) {
+      html += `<div class="pt-kc-phase"><div class="pt-kc-phase-label">${escHtml(ph.replace(/_/g,' '))}</div><div class="pt-kc-phase-nodes">`;
+      for (const n of byPhase[ph]) {
+        const parent = n.parent_id ? byId[n.parent_id] : null;
+        const parentTag = parent ? `<span class="kc-parent">← ${escHtml(parent.tool || parent.id || '')}</span>` : '';
+        html += `<div class="pt-kc-node">
+          <div><span class="kc-tool">${escHtml(n.tool||'?')}</span>${parentTag}</div>
+          ${n.target ? `<div class="kc-target">${escHtml(n.target)}</div>` : ''}
+          ${n.result_summary ? `<div class="kc-summary">${escHtml(n.result_summary)}</div>` : ''}
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+    return html;
+  }
+
+  function renderPentestAttackMatrix(eng) {
+    const hits = new Set(((eng.attack_techniques||[]).map(t => t.id))
+      .concat((eng.findings||[]).map(f => f.attack_technique).filter(Boolean)));
+    const eid = eng.engagement_id || '';
+    const cells = PENTEST_ATTACK_TECHNIQUES.map(([id,name,tactic]) => {
+      const isHit = hits.has(id);
+      const cls = isHit ? 'pt-attck-cell hit' : 'pt-attck-cell';
+      // attack.mitre.org URLs use a slash for sub-technique IDs (T1110/001)
+      const mitreId = id.replace('.', '/');
+      const click = isHit
+        ? `onclick="fsecOpenWithScope({engagement_id:'${escHtml(eid)}', technique_id:'${escHtml(id)}', label:'${escHtml(eid)}', sublabel:${escHtml(JSON.stringify(name))}})"`
+        : '';
+      const link = isHit
+        ? `<a class="pt-attck-mitre-link" href="https://attack.mitre.org/techniques/${mitreId}/" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Open MITRE ATT&CK page in a new tab">↗</a>`
+        : '';
+      const titleAttr = isHit ? ` title="Discuss ${id} in the chat (click) — ${escHtml(name)}"` : '';
+      const scopeMark = isHit ? `<div class="pt-scope-mark" title="In Security Agent scope">●</div>` : '';
+      return `<div class="${cls}" data-tid="${escHtml(id)}"${titleAttr} ${click}><div class="tid">${escHtml(id)}</div><div>${escHtml(name)}</div><div style="opacity:0.6;font-size:9px">${escHtml(tactic)}</div>${link}${scopeMark}</div>`;
+    }).join('');
+    return `<div class="pt-attck-grid">${cells}</div>`;
+  }
+
+  function renderPentestFindingsList(eng) {
+    const fs = eng.findings || [];
+    if (!fs.length) return '<div style="font-size:11px;color:var(--text-dim)">None.</div>';
+    return fs.map((f,i) => {
+      const sev = (f.severity||'INFO').toUpperCase();
+      return `<div class="pt-finding-card sev-${sev}" onclick="pentestOpenDrawer('${escHtml(eng.engagement_id||'')}', '${escHtml(f.id||String(i))}')" style="cursor:pointer">
+        <div><span class="sev-tag">${escHtml(sev)}</span><strong>${escHtml(f.title||'(untitled)')}</strong></div>
+        <div style="opacity:0.7;margin-top:3px">${escHtml(f.host||'')} · ${escHtml(f.phase||'')} · ${escHtml(f.attack_technique||'')}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // ATT&CK technique name lookup — falls back to the engagement's own attack_techniques
+  // array, then to the known allowlist. Returns "T1234 — Name (Tactic)" or just the id.
+  const _attckAllowlist = {
+    'T1046':'Network Service Discovery (Discovery)', 'T1018':'Remote System Discovery (Discovery)',
+    'T1135':'Network Share Discovery (Discovery)', 'T1083':'File and Directory Discovery (Discovery)',
+    'T1110':'Brute Force (Credential Access)', 'T1110.001':'Password Guessing (Credential Access)',
+    'T1078':'Valid Accounts (Initial Access)', 'T1078.003':'Local Accounts (Initial Access)',
+    'T1190':'Exploit Public-Facing Application (Initial Access)', 'T1133':'External Remote Services (Initial Access)',
+    'T1021':'Remote Services (Lateral Movement)', 'T1021.002':'SMB/Windows Admin Shares (Lateral Movement)',
+    'T1021.004':'SSH (Lateral Movement)', 'T1021.006':'Windows Remote Management (Lateral Movement)',
+    'T1071':'Application Layer Protocol (C2)', 'T1071.001':'Web Protocols (C2)',
+    'T1213':'Data from Information Repositories (Collection)', 'T1592':'Gather Victim Host Info (Recon)',
+    'T1592.002':'Software (Recon)', 'T1595':'Active Scanning (Recon)',
+    'T1595.001':'Scanning IP Blocks (Recon)', 'T1595.002':'Vulnerability Scanning (Recon)',
+    'T1595.003':'Wordlist Scanning (Recon)', 'T1596':'Search Open Technical Databases (Recon)',
+    'T1596.001':'DNS/Passive DNS (Recon)', 'T1589':'Gather Victim Identity Info (Recon)',
+    'T1590':'Gather Victim Network Info (Recon)', 'T1590.001':'Domain Properties (Recon)',
+    'T1590.002':'DNS (Recon)', 'T1590.005':'IP Addresses (Recon)',
+    'T1591':'Gather Victim Org Info (Recon)', 'T1552':'Unsecured Credentials (Credential Access)',
+    'T1552.001':'Credentials In Files (Credential Access)', 'T1552.004':'Private Keys (Credential Access)',
+    'T1212':'Exploitation for Credential Access', 'T1003':'OS Credential Dumping',
+    'T1499':'Endpoint Denial of Service (Impact)', 'T1219':'Remote Access Software (C2)',
+    'T1040':'Network Sniffing (Credential Access)', 'T1199':'Trusted Relationship (Initial Access)',
+    'T1059':'Command and Scripting Interpreter (Execution)',
+  };
+  function _attckLabel(eng, id) {
+    if (!id) return '';
+    const fromEng = (eng && eng.attack_techniques || []).find(t => t.id === id);
+    if (fromEng && fromEng.name) {
+      const tac = fromEng.tactic ? ` (${fromEng.tactic})` : '';
+      return `${id} — ${fromEng.name}${tac}`;
+    }
+    if (_attckAllowlist[id]) return `${id} — ${_attckAllowlist[id]}`;
+    return id;
+  }
+
+  function _renderDrawerSection(label, html) {
+    if (!html && html !== 0) return '';
+    return `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:1.5px;margin:0 0 4px 0">${label}</div>
+            <div style="font-size:12px;line-height:1.55;margin:0 0 14px 0">${html}</div>`;
+  }
+
+  function pentestOpenDrawer(engId, findId) {
+    const eng = (loadPentestHistory().find(e => e.engagement_id === engId)) ||
+                (() => { try { return JSON.parse(localStorage.getItem('gladius-pentest-latest')||'null'); } catch(e) { return null; } })();
+    if (!eng) return;
+    const f = (eng.findings||[]).find(x => (x.id||'') === findId);
+    if (!f) return;
+
+    // Build adjacency context
+    const sev = (f.severity||'INFO').toUpperCase();
+    const sameHost = (eng.findings||[]).filter(x => x.host === f.host && x.id !== f.id);
+    const inPaths  = (eng.attack_paths||[]).filter(p => (p.finding_chain||[]).includes(f.id));
+    const parent   = f.parent_id ? (eng.findings||[]).find(x => x.id === f.parent_id) : null;
+
+    const safeEng = escHtml(engId);
+    const safeFid = escHtml(f.id || '');
+
+    const refLink = f.ref ? `<a href="${escHtml(f.ref)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">${escHtml(f.ref)}</a>` : '';
+    const cveLink = f.cve ? (String(f.cve).match(/^CVE-/i) ?
+        `<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">${escHtml(f.cve)}</a>` :
+        escHtml(f.cve)) : '';
+
+    const sameHostHtml = sameHost.length
+      ? `<ul style="margin:0;padding-left:18px">${sameHost.slice(0,8).map(o => {
+          const osev = (o.severity||'INFO').toUpperCase();
+          return `<li><a href="#" onclick="event.preventDefault();pentestOpenDrawer('${safeEng}','${escHtml(o.id||'')}')" style="color:var(--text);text-decoration:none"><span style="color:var(--text-dim);font-family:var(--font-mono);font-size:10px;margin-right:6px">[${osev}]</span>${escHtml(o.title||o.id||'?')}</a></li>`;
+        }).join('')}</ul>`
+      : '';
+
+    const pathsHtml = inPaths.length
+      ? `<ul style="margin:0;padding-left:18px">${inPaths.map(p => {
+          const psev = (p.severity||'').toUpperCase();
+          const chain = (p.finding_chain||[]).join(' → ');
+          return `<li><span style="color:var(--text-dim);font-family:var(--font-mono);font-size:10px;margin-right:6px">[${psev}]</span>${escHtml(p.id||'?')}<div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:2px">${escHtml(chain)}</div></li>`;
+        }).join('')}</ul>`
+      : '';
+
+    const parentHtml = parent
+      ? `<a href="#" onclick="event.preventDefault();pentestOpenDrawer('${safeEng}','${escHtml(parent.id||'')}')" style="color:var(--text);text-decoration:none"><span style="color:var(--text-dim);font-family:var(--font-mono);font-size:10px;margin-right:6px">[${(parent.severity||'?').toUpperCase()}]</span>${escHtml(parent.title||parent.id||'?')}</a>`
+      : '';
+
+    const body = document.getElementById('pentest-evidence-body');
+    body.innerHTML = `
+      <div class="pt-finding-card sev-${sev}" style="margin:0 0 14px 0">
+        <div><span class="sev-tag">${sev}</span><strong>${escHtml(f.title||'')}</strong></div>
+        <div style="opacity:0.7;margin-top:3px;font-size:11px">${escHtml(f.host||'')} · ${escHtml(f.phase||'')} · ${escHtml(f.id||'')}</div>
+      </div>
+
+      <div style="display:flex;gap:6px;margin:0 0 14px 0;flex-wrap:wrap">
+        <button class="btn btn-ghost" style="font-size:11px;border-color:var(--accent);color:var(--accent)" onclick="fsecOpenWithScope({engagement_id:'${safeEng}', finding_id:'${safeFid}', label:'${safeEng}', sublabel:${escHtml(JSON.stringify(f.title||''))}})" title="Discuss this finding in the chat">🛡 Discuss in chat</button>
+        ${f.ref ? `<a href="${escHtml(f.ref)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:11px;text-decoration:none">↗ Reference</a>` : ''}
+        ${f.cve && String(f.cve).match(/^CVE-/i) ? `<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:11px;text-decoration:none">↗ NVD</a>` : ''}
+      </div>
+
+      ${_renderDrawerSection('NARRATIVE', formatMessage(f.narrative||'(none)'))}
+      ${_renderDrawerSection('IMPACT',    f.impact ? formatMessage(f.impact) : '')}
+      ${_renderDrawerSection('FIX',       f.fix ? formatMessage(f.fix) : '')}
+      ${f.commands ? `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:1.5px;margin:0 0 4px 0">COMMANDS</div>
+        <pre style="font-size:11px;background:var(--surface);padding:8px;border-radius:4px;border:1px solid var(--border);white-space:pre-wrap;margin:0 0 14px 0">${escHtml(f.commands)}</pre>` : ''}
+      ${_renderDrawerSection('ATT&CK TECHNIQUE', escHtml(_attckLabel(eng, f.attack_technique)))}
+      ${_renderDrawerSection('CVE',  cveLink)}
+      ${_renderDrawerSection('TOOL', escHtml(f.tool||''))}
+      ${parentHtml ? _renderDrawerSection('PARENT KILL-CHAIN STEP', parentHtml) : ''}
+      ${sameHostHtml ? _renderDrawerSection(`OTHER FINDINGS ON ${escHtml(f.host||'this host')}`, sameHostHtml) : ''}
+      ${pathsHtml ? _renderDrawerSection('ATTACK PATHS INCLUDING THIS', pathsHtml) : ''}
+      ${_renderDrawerSection('REFERENCE', refLink)}
+      ${f.evidence ? `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:1.5px;margin:0 0 4px 0">EVIDENCE</div>
+        <pre style="font-size:10px;background:var(--surface);padding:8px;border-radius:4px;border:1px solid var(--border);white-space:pre-wrap;max-height:300px;overflow:auto;margin:0 0 14px 0">${escHtml(f.evidence)}</pre>` : ''}
+    `;
+    document.getElementById('pentest-evidence-drawer').classList.add('open');
+    // Tell the floating Security Agent widget which finding we're now looking at,
+    // so the chat picks up the right scope when the operator opens it.
+    fsecSetScope({ engagement_id: engId, finding_id: f.id || '', label: engId, sublabel: f.title || '' });
+  }
+  function pentestCloseDrawer() {
+    document.getElementById('pentest-evidence-drawer').classList.remove('open');
+    // Reset Security Agent scope back to engagement-only when the drawer closes.
+    if (_fsec && _fsec.scope && _fsec.scope.finding_id) {
+      const eid = _fsec.scope.engagement_id;
+      fsecSetScope({ engagement_id: eid, label: eid });
+    }
+  }
+
+  function generatePentestReportHTML(eng) {
+    // Print-friendly light palette. Designed to look correct on white paper:
+    // muted accent (slate blue), severity tags use light backgrounds so they
+    // stay legible when printed in black & white as well as in colour.
+    const c = {
+      bg:      '#ffffff',
+      card:    '#fbfbfa',
+      surface: '#f4f4f3',
+      text:    '#1a1a1a',
+      muted:   '#5a6270',
+      dim:     '#8a93a0',
+      accent:  '#2c4a7c',     // navy slate — professional, prints well
+      accent2: '#5a738f',
+      border:  '#d8dade',
+      borderStrong: '#b3b8c2',
+    };
+    const sevBg = s => ({CRITICAL:'#fbeaec', HIGH:'#fdf0e2', MEDIUM:'#fdf8e0', LOW:'#e8f5ed', INFO:'#eef0f3'}[(s||'INFO').toUpperCase()] || '#eef0f3');
+    const sevFg = s => ({CRITICAL:'#a3162a', HIGH:'#a44a0c', MEDIUM:'#7a5e08', LOW:'#1f6a3a', INFO:'#5a6270'}[(s||'INFO').toUpperCase()] || '#5a6270');
+    const sevBorder = s => ({CRITICAL:'#c93443', HIGH:'#d97725', MEDIUM:'#c2a226', LOW:'#3aa363', INFO:'#9aa1ad'}[(s||'INFO').toUpperCase()] || '#9aa1ad');
+
+    const fmap = Object.fromEntries((eng.findings||[]).map(f => [f.id, f]));
+
+    const findingsHtml = (eng.findings||[]).map(f => {
+      const sev = (f.severity||'INFO').toUpperCase();
+      const cve = f.cve && String(f.cve).match(/^CVE-/i)
+        ? `<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener">${escHtml(f.cve)}</a>`
+        : (f.cve ? escHtml(f.cve) : '');
+      const meta = [
+        f.host && `<strong>Host:</strong> ${escHtml(f.host)}`,
+        f.phase && `<strong>Phase:</strong> ${escHtml(f.phase)}`,
+        f.tool && `<strong>Tool:</strong> ${escHtml(f.tool)}`,
+        f.attack_technique && `<strong>ATT&amp;CK:</strong> <a href="https://attack.mitre.org/techniques/${escHtml(String(f.attack_technique).replace('.','/'))}/" target="_blank" rel="noopener">${escHtml(f.attack_technique)}</a>`,
+        cve && `<strong>CVE:</strong> ${cve}`,
+      ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+      return `<div class="finding" style="border:1px solid ${c.border};border-left:4px solid ${sevBorder(f.severity)};border-radius:3px;padding:12px 16px;margin:10px 0;background:${c.bg};page-break-inside:avoid">
+        <div style="display:flex;align-items:baseline;gap:10px">
+          <span style="background:${sevBg(f.severity)};color:${sevFg(f.severity)};padding:2px 8px;border-radius:2px;font-family:monospace;font-size:10px;letter-spacing:1px;font-weight:600">${sev}</span>
+          <strong style="font-size:14px">${escHtml(f.title||'')}</strong>
+          <span style="flex:1"></span>
+          <span style="font-family:monospace;font-size:10px;color:${c.dim}">${escHtml(f.id||'')}</span>
+        </div>
+        <div style="margin-top:6px;font-size:11px;color:${c.muted}">${meta}</div>
+        ${f.narrative ? `<div style="font-size:12px;line-height:1.55;margin-top:10px">${formatMessage(f.narrative)}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    const pathsHtml = (eng.attack_paths||[]).map(p => {
+      const chain = (p.finding_chain||[]).map(fid => fmap[fid] ? escHtml(fmap[fid].title||fid) : escHtml(fid)).join(' → ');
+      const sev = (p.severity||'').toUpperCase();
+      return `<div style="border:1px solid ${c.border};border-left:4px solid ${sevBorder(sev)};border-radius:3px;padding:12px 16px;margin:10px 0;background:${c.bg};page-break-inside:avoid">
+        <div><span style="background:${sevBg(sev)};color:${sevFg(sev)};padding:2px 8px;border-radius:2px;font-family:monospace;font-size:10px;letter-spacing:1px;font-weight:600">${sev || 'PATH'}</span></div>
+        <div style="font-size:12px;line-height:1.55;margin-top:8px">${formatMessage(p.narrative||'')}</div>
+        <div style="font-size:11px;color:${c.muted};margin-top:8px;font-family:monospace">${chain}</div>
+      </div>`;
+    }).join('') || `<div style="color:${c.muted};font-style:italic">No attack paths recorded.</div>`;
+
+    // Remediation — grouped by severity → host. Uses the same logic as the
+    // inline view so the report and live UI stay consistent.
+    const sevOrder = ['CRITICAL','HIGH','MEDIUM','LOW','INFO'];
+    const remGroups = {};
+    let withFix = 0, missingFix = 0;
+    for (const f of (eng.findings||[])) {
+      const sev = (f.severity || 'INFO').toUpperCase();
+      const host = f.host || '(no host)';
+      remGroups[sev] = remGroups[sev] || {};
+      remGroups[sev][host] = remGroups[sev][host] || [];
+      remGroups[sev][host].push(f);
+      if ((f.fix && f.fix.trim()) || (f.commands && f.commands.trim())) withFix++; else missingFix++;
+    }
+    const remHtml = (eng.findings||[]).length ? sevOrder.filter(s => remGroups[s]).map(sev => {
+      const hosts = Object.keys(remGroups[sev]).sort();
+      const total = Object.values(remGroups[sev]).reduce((n,a)=>n+a.length,0);
+      const hostBlocks = hosts.map(host => {
+        const items = remGroups[sev][host].sort((a,b)=>(a.id||'').localeCompare(b.id||'')).map(f => {
+          const hasFix = (f.fix && f.fix.trim()) || (f.commands && f.commands.trim());
+          if (!hasFix) {
+            return `<div style="border:1px dashed ${c.border};border-left:2px solid ${sevBorder(sev)};border-radius:3px;padding:8px 12px;margin:6px 0;background:${c.surface};page-break-inside:avoid">
+              <div style="font-size:12px"><strong>${escHtml(f.title||'')}</strong> <span style="font-family:monospace;font-size:10px;color:${c.dim}">${escHtml(f.id||'')}</span></div>
+              <div style="font-size:11px;color:${sevFg('HIGH')};margin-top:4px;font-family:monospace">⚠ NO REMEDIATION RECORDED</div>
+            </div>`;
+          }
+          const fixHtml = (f.fix && f.fix.trim())
+            ? `<div style="font-size:12px;line-height:1.55;margin:6px 0">${formatMessage(f.fix)}</div>` : '';
+          const cmdHtml = (f.commands && f.commands.trim())
+            ? `<pre style="font-size:11px;background:${c.surface};color:${c.text};padding:10px;border-radius:3px;border:1px solid ${c.border};white-space:pre-wrap;margin:6px 0 0 0;font-family:monospace;line-height:1.45">${escHtml(f.commands)}</pre>` : '';
+          return `<div style="border:1px solid ${c.border};border-left:2px solid ${sevBorder(sev)};border-radius:3px;padding:10px 14px;margin:8px 0;background:${c.bg};page-break-inside:avoid">
+            <div style="display:flex;align-items:baseline;gap:8px"><strong style="font-size:13px">${escHtml(f.title||'')}</strong><span style="flex:1"></span><span style="font-family:monospace;font-size:10px;color:${c.dim}">${escHtml(f.id||'')}${f.attack_technique?' · '+escHtml(f.attack_technique):''}${f.cve?' · '+escHtml(f.cve):''}</span></div>
+            ${fixHtml}${cmdHtml}
+          </div>`;
+        }).join('');
+        return `<div style="margin:6px 0">
+          <div style="font-family:monospace;font-size:10px;color:${c.muted};margin:8px 0 4px 0">↳ ${escHtml(host)} (${remGroups[sev][host].length})</div>
+          ${items}
+        </div>`;
+      }).join('');
+      return `<div style="margin:14px 0;page-break-inside:avoid">
+        <div style="display:flex;align-items:center;gap:8px;border-bottom:1px solid ${c.borderStrong};padding-bottom:5px;margin-bottom:6px">
+          <span style="background:${sevBg(sev)};color:${sevFg(sev)};padding:2px 10px;border-radius:2px;font-family:monospace;font-size:11px;letter-spacing:1px;font-weight:700">${sev}</span>
+          <span style="font-family:monospace;font-size:10px;color:${c.muted}">${total} finding(s) across ${hosts.length} host(s)</span>
+        </div>
+        ${hostBlocks}
+      </div>`;
+    }).join('') : `<div style="color:${c.muted};font-style:italic">No findings to remediate.</div>`;
+    const remBanner = (eng.findings||[]).length
+      ? (missingFix
+          ? `<div style="background:${sevBg('HIGH')};color:${sevFg('HIGH')};padding:8px 12px;border-radius:3px;font-family:monospace;font-size:11px;margin-bottom:12px">⚠ ${missingFix} of ${(eng.findings||[]).length} findings have no remediation recorded.</div>`
+          : `<div style="background:${sevBg('LOW')};color:${sevFg('LOW')};padding:8px 12px;border-radius:3px;font-family:monospace;font-size:11px;margin-bottom:12px">✓ All ${(eng.findings||[]).length} findings have remediation guidance.</div>`)
+      : '';
+
+    const hits = new Set(((eng.attack_techniques||[]).map(t => t.id))
+      .concat((eng.findings||[]).map(f => f.attack_technique).filter(Boolean)));
+    const matrixHtml = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px">` +
+      PENTEST_ATTACK_TECHNIQUES.map(([id,name,tactic]) => {
+        const hit = hits.has(id);
+        const mitreId = id.replace('.','/');
+        if (hit) {
+          return `<a href="https://attack.mitre.org/techniques/${mitreId}/" target="_blank" rel="noopener" style="text-decoration:none;color:inherit"><div style="border:1.5px solid ${c.accent};border-radius:3px;padding:6px 8px;font-family:monospace;font-size:10px;background:#eef2f9;color:${c.text}">
+            <div style="color:${c.accent};font-weight:700">${escHtml(id)} ↗</div>
+            <div>${escHtml(name)}</div>
+            <div style="color:${c.muted};font-size:9px">${escHtml(tactic)}</div>
+          </div></a>`;
+        }
+        return `<div style="border:1px solid ${c.border};border-radius:3px;padding:6px 8px;font-family:monospace;font-size:10px;background:${c.surface};color:${c.dim};opacity:0.55">
+          <div style="font-weight:700">${escHtml(id)}</div>
+          <div>${escHtml(name)}</div>
+          <div style="color:${c.dim};font-size:9px">${escHtml(tactic)}</div>
+        </div>`;
+      }).join('') + '</div>';
+
+    // Kill chain — phase-grouped grid
+    const kcNodes = eng.kill_chain || [];
+    const kcById  = Object.fromEntries(kcNodes.map(n => [n.id, n]));
+    const phaseOrder = ['passive_recon','active_recon','service_enum','safe_checks','correlation','synthesis'];
+    const kcByPhase = {};
+    for (const n of kcNodes) { const p = n.phase || 'other'; (kcByPhase[p] = kcByPhase[p] || []).push(n); }
+    const kcPhases = phaseOrder.filter(p => kcByPhase[p]).concat(Object.keys(kcByPhase).filter(p => !phaseOrder.includes(p)));
+    const kcHtml = kcNodes.length ? kcPhases.map(ph => {
+      const cards = kcByPhase[ph].map(n => {
+        const parent = n.parent_id ? kcById[n.parent_id] : null;
+        const parentTag = parent ? `<span style="color:${c.dim};font-weight:normal;font-size:10px;margin-left:4px">← ${escHtml(parent.tool || parent.id || '')}</span>` : '';
+        return `<div style="border:1px solid ${c.border};border-left:2px solid ${c.accent};border-radius:3px;padding:6px 10px;background:${c.bg};font-family:monospace;font-size:11px;page-break-inside:avoid">
+          <div><span style="color:${c.accent};font-weight:700">${escHtml(n.tool||'?')}</span>${parentTag}</div>
+          ${n.target ? `<div style="color:${c.muted};font-size:10px;margin-top:2px">${escHtml(n.target)}</div>` : ''}
+          ${n.result_summary ? `<div style="color:${c.text};margin-top:4px;line-height:1.4">${escHtml(n.result_summary)}</div>` : ''}
+        </div>`;
+      }).join('');
+      return `<div style="margin-bottom:14px">
+        <div style="font-family:monospace;font-size:10px;letter-spacing:2px;color:${c.accent};text-transform:uppercase;margin-bottom:8px;padding:3px 0 3px 10px;border-left:3px solid ${c.accent}">${escHtml(ph.replace(/_/g,' '))}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:6px">${cards}</div>
+      </div>`;
+    }).join('') : `<div style="color:${c.muted};font-style:italic">No kill chain recorded.</div>`;
+
+    const sum = eng.summary || {};
+    const scope = (eng.scope && (eng.scope.in_scope||[]).join(', ')) || '—';
+    const intensity = (eng.scope && eng.scope.intensity) || '';
+    const ts = eng.timestamp || (eng.scope && eng.scope.ended) || '';
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Gladius PenTest — ${escHtml(eng.engagement_id||'')}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  body {
+    background: ${c.bg}; color: ${c.text};
+    font-family: Georgia, "Times New Roman", "Source Serif 4", system-ui, sans-serif;
+    margin: 0; padding: 28px 36px; line-height: 1.55;
+    font-size: 13px;
+  }
+  h1, h2, h3 { font-family: "Helvetica Neue", Arial, sans-serif; letter-spacing: 0.3px; color: ${c.text}; }
+  h1 { font-size: 24px; margin: 0 0 6px 0; color: ${c.accent}; }
+  h2 {
+    font-size: 16px; margin: 28px 0 10px 0;
+    padding: 4px 0 4px 10px;
+    border-left: 4px solid ${c.accent};
+    color: ${c.text};
+    page-break-after: avoid;
+  }
+  h3 { font-size: 13px; margin: 14px 0 6px 0; color: ${c.muted}; }
+  a { color: ${c.accent}; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
+  .meta { color: ${c.muted}; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 11px; margin: 2px 0; }
+  .kpis { margin: 16px 0 22px 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .kpi {
+    display: inline-flex; align-items: baseline; gap: 6px;
+    padding: 6px 12px; border: 1px solid ${c.border}; border-radius: 3px;
+    font-family: "Helvetica Neue", Arial, sans-serif; font-size: 11px;
+    background: ${c.surface}; color: ${c.muted};
+  }
+  .kpi b { color: ${c.accent}; font-size: 14px; font-weight: 700; }
+  .card {
+    background: ${c.bg}; border: 1px solid ${c.border}; border-radius: 4px;
+    padding: 16px 18px; margin: 8px 0 16px 0;
+    page-break-inside: avoid;
+  }
+  .card.summary { background: ${c.surface}; }
+  .card p { margin: 0 0 10px 0; }
+  .card p:last-child { margin-bottom: 0; }
+  .footer { margin-top: 36px; padding-top: 12px; border-top: 1px solid ${c.border};
+    font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10px; color: ${c.dim}; }
+  @media print {
+    body { padding: 0; }
+    a { color: ${c.text}; }
+    a[href]::after { content: " (" attr(href) ")"; font-size: 9px; color: ${c.dim}; }
+    /* don't decorate internal-only anchors */
+    a[href^="#"]::after, a:not([href^="http"])::after { content: ""; }
+  }
+</style></head><body>
+<h1>Gladius Penetration Test Report</h1>
+<div class="meta"><strong>Engagement:</strong> ${escHtml(eng.engagement_id||'')}</div>
+<div class="meta"><strong>Scope:</strong> ${escHtml(scope)}${intensity ? ` &nbsp;·&nbsp; <strong>Intensity:</strong> ${escHtml(intensity)}` : ''}</div>
+${ts ? `<div class="meta"><strong>Completed:</strong> ${escHtml(ts)}</div>` : ''}
+
+<div class="kpis">
+  <span class="kpi"><b>${sum.findings_total||(eng.findings||[]).length||0}</b> findings</span>
+  <span class="kpi"><b>${sum.findings_critical||0}</b> critical</span>
+  <span class="kpi"><b>${sum.findings_high||0}</b> high</span>
+  <span class="kpi"><b>${(eng.attack_paths||[]).length}</b> attack paths</span>
+  <span class="kpi"><b>${sum.hosts_live||0}</b> live hosts</span>
+</div>
+
+<h2>Executive Summary</h2>
+<div class="card summary">${formatMessage(eng.executive_summary || '(none provided)')}</div>
+
+<h2>Technical Summary</h2>
+<div class="card summary">${formatMessage(eng.technical_summary || '(none provided)')}</div>
+
+<h2>Attack Paths</h2>
+<div>${pathsHtml}</div>
+
+<h2>Remediation Plan</h2>
+${remBanner}
+<div>${remHtml}</div>
+
+<h2>Findings</h2>
+<div>${findingsHtml || `<div class="card" style="color:${c.muted}">No findings.</div>`}</div>
+
+<h2>Kill Chain</h2>
+<div class="card">${kcHtml}</div>
+
+<h2>MITRE ATT&CK Coverage</h2>
+<div class="card">${matrixHtml}</div>
+
+<div class="footer">Generated by Gladius — ${new Date().toISOString()} · Engagement ${escHtml(eng.engagement_id||'')}</div>
+</body></html>`;
+  }
+
+  function exportPentestReport(idx) {
+    const hist = loadPentestHistory();
+    const eng = hist[idx]; if (!eng) return;
+    const html = generatePentestReportHTML(eng);
+    const blob = new Blob([html], { type:'text/html' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `gladius-pentest-${eng.engagement_id||'report'}.html`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function emailPentestReport(idx) {
+    const hist = loadPentestHistory();
+    const eng = hist[idx]; if (!eng) return;
+    const html = generatePentestReportHTML(eng);
+    const subject = `[Gladius] PenTest Report — ${eng.engagement_id||''}`;
+    const filename = `gladius-pentest-${eng.engagement_id||'report'}.html`;
+    try {
+      const r = await fetch('/api/email', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ subject, html, filename }),
+      });
+      const d = await r.json();
+      if (d.ok) notify('pentest-reports', 'PENTEST', 'Report emailed');
+      else      notify('pentest-reports', 'PENTEST', 'Email failed: ' + (d.error||'?'));
+    } catch (e) {
+      notify('pentest-reports', 'PENTEST', 'Email failed: ' + e.message);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    pentestEnsureTestTargetCmd();
+    pentestRenderQuickCmds();
+    pentestSyncActive();
+    renderPentestReports();
+  });
 
 </script>
   <!-- FINDING DETAIL PANEL -->
