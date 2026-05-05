@@ -100,27 +100,105 @@ chroma-db  (ChromaDB :8000)
 
 ## Audit Flow
 
+When you type something like *"audit 192.168.1.1"* in the main chat, exactly one
+agent is involved — **Claude (`claude-sonnet-4-6`) inside `gladius-api`**, driven
+by the system prompt at `gladius-api/server.py`. Foundation-Sec, the PenTest
+agent, and pyATS are **not** called during a normal audit; they're separate
+flows. The system prompt enforces a strict 3-phase, max-3-loops structure to
+keep audits cheap and predictable.
+
 ```
-1. You type "audit 10.0.0.1"
-
-2. Gladius connects via SSH
-   └─ Runs show version, show run, show cdp, show snmp, show ntp, show aaa...
-
-3. Findings cross-referenced
-   └─ Semantic search against ChromaDB for NIST 800-53 / CIS guidance
-
-4. CVEs identified
-   └─ Detected IOS version queried against NIST NVD
-   └─ Applicable CVEs added with CVSS scores and advisory links
-
-5. Results saved automatically
-   └─ save_audit_results called without prompting
-   └─ Dashboard updates instantly via SSE
-   └─ Reports tab, findings list, compliance scores all refresh
-
-6. Export or email the report
-   └─ Standalone HTML with remediation plan and pre-deployment checklist
+browser  →  gladius-api  →  Claude (loop)  ─┬─→  network-audit-mcp  (stdio, persistent session)
+                                            │      └─ SSH / NVD / PSIRT / EOX / ChromaDB / SMTP
+                                            └─→  back to itself once findings are ready
 ```
+
+### Step 0 — trigger
+Browser `sendMessage()` POSTs to `/api/chat` and opens an SSE stream. Every
+intermediate step the agent takes is streamed back as an event so the UI can
+render live activity.
+
+### Phase 1 — single bulk collection (one Claude turn, six tools batched)
+
+Claude returns ONE response containing six `tool_use` blocks; `gladius-api`
+executes them in order:
+
+| Tool (`network-audit-mcp/server.py`) | Purpose |
+|---|---|
+| `connect_to_device` | Paramiko SSH session, kept alive in a global |
+| `run_show_command` × `show running-config` | Primary data source — every hardening finding derives from this |
+| `run_show_command` × `show version` | IOS / IOS-XE version + platform string |
+| `run_show_command` × `show inventory` | Hardware PIDs (for EOX) |
+| `run_show_command` × `show ip interface brief` | Interface state overview |
+| `disconnect_device` | Closes the SSH session (always batched in the same turn) |
+
+For each tool, the SSE stream emits `tool_start` then `tool_done` so the
+browser shows live activity.
+
+### Phase 2 — external intelligence (one Claude turn, four tools batched)
+
+| Tool | What it does |
+|---|---|
+| `query_knowledge_base` | Semantic search against ChromaDB (NIST 800-53 + CIS IOS XE benchmark, ~2,400 vectors) |
+| `query_nvd` | NIST NVD CVE lookup, scoped to the detected IOS version with `cisco_only=True` |
+| `query_psirt` | Cisco's official PSIRT openVuln API with the platform string (`ios-xe`, `nx-os`, etc.) |
+| `query_eox` | Cisco EOX API — checks every hardware PID for end-of-sale / end-of-support dates |
+
+Large results (`query_nvd`, `query_psirt`, `run_show_command`,
+`query_knowledge_base`) are truncated to 20 KB before being fed back to Claude
+so context doesn't blow up.
+
+### Phase 3 — synthesise + save (one Claude turn)
+
+Claude reasons over everything in memory and emits a single `save_audit_results`
+tool call with:
+
+- `device`, `ip`, `ios`, `timestamp`
+- `findings[]` — every check, including PASS entries, with `severity` /
+  `category` / `impact` / `fix` / `commands` / `ref` / `cve_id`
+- `score{overall, nist, cis}`
+
+Two things happen the moment that call returns:
+
+1. The MCP tool POSTs the JSON back to `gladius-api /api/audit/save` so it
+   persists server-side.
+2. `gladius-api` directly intercepts the tool input mid-stream and emits an
+   `audit_saved` SSE event with the full audit object. The browser writes it to
+   `gladius-audit-latest`, appends to `gladius-audit-history`, and refreshes
+   the dashboard and Reports tab.
+
+After save, the agent loop is force-broken — no extra Claude turn — so you get
+the closing one-liner ("Audit complete — N findings saved") without re-listing
+findings.
+
+### Optional follow-on — `send_email`
+
+If you ask Gladius to email the report, Claude calls `send_email`. The API
+**intercepts it** and emits a `send_templated_email` SSE event instead of
+forwarding to MCP. The browser's `generateReportHTML()` builds the templated
+HTML and POSTs it to `/api/email`, which then calls the MCP `send_email` tool
+with the rendered HTML as an attachment. This guarantees a properly templated
+report rather than Claude's improvised plain-text version.
+
+### SSE events the browser sees during an audit
+
+| Event | When |
+|---|---|
+| `text` | Claude prose chunks |
+| `tool_start` / `tool_done` | Each MCP call begins / ends — drives the live activity bubble |
+| `finding` | One per finding, streamed as `save_audit_results` unpacks |
+| `audit_saved` | Full audit object — browser persists + refreshes dashboard |
+| `send_templated_email` | Browser-side intercept hook for emailed reports |
+| `done` / `error` | Stream end states |
+
+### What's *not* called during a normal audit
+
+- **PenTest agent** (`gladius-pentest-mcp` + `/api/pentest/chat`) — separate
+  adaptive engagement flow with go-active gating
+- **Foundation-Sec / local Security Chat** — only invoked post-hoc from the
+  floating widget on the PenTest Reports page
+- **gladius-pyats** — only when you launch a pyATS script from the Automation tab
+- **NMAP / Scapy / dig** — only if you ask for them explicitly
 
 ---
 
