@@ -194,11 +194,136 @@ report rather than Claude's improvised plain-text version.
 ### What's *not* called during a normal audit
 
 - **PenTest agent** (`gladius-pentest-mcp` + `/api/pentest/chat`) — separate
-  adaptive engagement flow with go-active gating
+  adaptive engagement flow with go-active gating (see next section)
 - **Foundation-Sec / local Security Chat** — only invoked post-hoc from the
   floating widget on the PenTest Reports page
 - **gladius-pyats** — only when you launch a pyATS script from the Automation tab
 - **NMAP / Scapy / dig** — only if you ask for them explicitly
+
+---
+
+## PenTest Flow
+
+The PenTest tab runs a *separate* Claude agent against a *separate* MCP server
+(`gladius-pentest-mcp`, 20 tools). It's adaptive — Claude picks the next move
+based on what previous steps revealed — and gates active scanning behind an
+operator switch so accidental probes can't reach beyond the homelab.
+
+```
+browser (PenTest tab)
+  │  GO ACTIVE switch ──────────────────► gladius-api `_pentest_active` flag
+  │
+  ▼
+gladius-api `/api/pentest/chat`  →  Claude (loop)  ──►  gladius-pentest-mcp
+                                       │                  └─ nmap / masscan / smbclient /
+                                       │                     snmpwalk / ldapsearch / whatweb /
+                                       │                     sslyze / nikto / gobuster / hydra /
+                                       │                     resolve_target / cve_correlation /
+                                       │                     foundation_sec_analyze (local LLM)
+                                       │
+                                       └──► foundation_sec_analyze
+                                            └─ Ollama @ Foundation-Sec-8B
+                                               (Cisco's security-tuned Llama-3.1)
+```
+
+### Phases
+
+The system prompt drives Claude through six explicit phases. Each phase change
+is announced as `PHASE: <name>` text so the UI renders a divider; the API
+emits a `phase_change` SSE event for each new phase.
+
+| Phase | Tools | Gate |
+|---|---|---|
+| `passive_recon` | `dig_lookup`, `whois_lookup`, `cert_transparency`, `fetch_url`, `resolve_target` | none — always allowed |
+| `active_recon` | `port_scan` (nmap), `masscan_sweep` | requires GO ACTIVE |
+| `service_enum` | `smb_enum`, `snmp_walk`, `ldap_enum`, `web_fingerprint`, `ssl_audit` | requires GO ACTIVE |
+| `safe_checks` | `nikto_scan`, `dir_enum`, `default_creds_check`, `traversal_probe` | requires GO ACTIVE |
+| `correlation` | `cve_correlation`, `foundation_sec_analyze` | none |
+| `synthesis` | `save_pentest_results` | none |
+
+### The GO ACTIVE gate
+
+Before any non-passive tool, Claude calls `request_go_active`. The API
+intercepts that call (`server.py:stream_pentest`) and:
+- If `_pentest_active == True` (operator has flipped the switch on the PenTest
+  tab), returns `APPROVED` and the agent proceeds.
+- If `False`, emits a `go_active_request` SSE event so the browser can surface
+  the prompt, and returns `DENIED` so the agent falls back to passive recon.
+
+Even if Claude tries to call an active tool *without* requesting go-active
+first, the API blocks the call (`PENTEST_PASSIVE_TOOLS` allow-list at the
+gladius-api layer) — defence in depth.
+
+### Adaptive chaining
+
+The system prompt teaches Claude to chain probes off findings — e.g. port 445
+open → `smb_enum`; port 161 open → `snmp_walk`; SSH banner detected →
+`cve_correlation` on the version. There's no fixed playbook beyond the phase
+order; Claude picks the next move each loop based on what the previous tool
+returned, capped at 80 loops total.
+
+### Synthesis & save
+
+When the engagement is done, Claude calls `save_pentest_results` ONCE with the
+full structured engagement object:
+
+- `engagement_id` (`pt-YYYYMMDD-HHMMSS`)
+- `scope { in_scope, out_of_scope, intensity, started, ended }`
+- `targets[]` — host, hostnames, OS, open_ports, services, finding_ids
+- `findings[]` — id, host, title, severity, phase, tool, narrative, cve,
+  attack_technique (MITRE ID from a strict allowlist), parent_id
+- `kill_chain[]` — ordered tool invocations with parent_id pointers
+- `attack_paths[]` — narrative + ordered chain of finding IDs
+- `attack_techniques[]` — id, name, tactic, finding_ids
+- `executive_summary` (non-experts), `technical_summary` (skim layout)
+- `summary` counts
+
+The MCP tool persists locally to `/data/pentest/<engagement_id>/report.json`
+**and** POSTs to `gladius-api /api/pentest/save`. The API stores it server-side
+and emits a `pentest_saved` SSE event with the full engagement object so the
+browser writes it to localStorage and refreshes the PenTest Reports tab.
+
+### `resolve_target` — fixing rotating Docker IPs
+
+Container IPs on the homelab Docker network rotate on restart. The system
+prompt lists known aliases (e.g. `gladius-target` = Metasploitable2) and
+instructs the agent to call `resolve_target(name)` first, before any IP-taking
+tool. The MCP tool does a local `gethostbyname_ex` resolve via Docker DNS and
+returns the live primary IP. The agent never assumes an IP from a previous
+engagement.
+
+### Local Security Chat (post-hoc, not part of the agent loop)
+
+Separate from the PenTest agent. The floating chat widget on the PenTest
+Reports page calls `/api/foundation_sec/analyze` directly — bypassing Claude
+and MCP — and streams responses from **Cisco Foundation-Sec-8B** running
+locally on Ollama. It's scope-aware: clicking an engagement, finding, ATT&CK
+tile, or attack path picks up that context automatically. Two modes:
+
+- **`analyze`** — one-shot structured review (Verdict / Standouts / Strongest
+  attack path / Gaps / Remediation priorities). Layout adapts to scope: a
+  finding-scoped analysis becomes What this is / Why it matters / Exploitation
+  / Remediation / Detection signal; a technique scope becomes a
+  MITRE-style deep-dive; an attack-path scope becomes a step-by-step
+  walkthrough with a "break the chain" recommendation.
+- **`chat`** — multi-turn Q&A grounded in the same scope, with per-scope
+  history kept in `localStorage`.
+
+The MCP `foundation_sec_analyze` tool exposes the same model to the agent
+loop so Claude can also delegate domain reasoning mid-engagement (interpret a
+banner, classify severity, draft a finding narrative). It's text-in / text-out
+only — Foundation-Sec never calls tools.
+
+### SSE events specific to the PenTest flow
+
+| Event | When |
+|---|---|
+| `phase_change` | Agent declares a new phase |
+| `tool_start` / `tool_done` | Each MCP call begins / ends |
+| `go_active_request` | Agent asked for active scanning approval |
+| `finding` | One per finding, streamed as `save_pentest_results` unpacks |
+| `pentest_saved` | Full engagement object — browser persists + refreshes Reports |
+| `keepalive` | Periodic heartbeat during long-running tools (nmap, nikto, etc.) so Cloudflare doesn't drop the tunnel |
 
 ---
 
