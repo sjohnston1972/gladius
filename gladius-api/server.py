@@ -2020,6 +2020,15 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
 
                     elif tool_name in PENTEST_PASSIVE_TOOLS or _pentest_active:
                         if tool_name == "save_pentest_results":
+                            # Dedupe BEFORE forwarding to MCP so the local copy,
+                            # the API persist write, and the SSE event all share
+                            # the same final id. Claude can't know the next
+                            # sequence number for the day so it always picks 001.
+                            requested_id = tool_input.get("engagement_id") or _new_engagement_id()
+                            final_id = _dedupe_engagement_id(requested_id)
+                            if final_id != requested_id:
+                                log.info(f"[Pentest] engagement_id dedup: {requested_id!r} -> {final_id!r}")
+                            tool_input["engagement_id"] = final_id
                             _last_pentest = tool_input
                         # Wrap the MCP call so we can emit SSE keepalives every 15s while
                         # long-running tools (nmap, nikto, masscan, sslyze) are working.
@@ -2089,6 +2098,31 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
                 loop_messages.append({"role": "user", "content": tool_results})
 
             if _pentest_saved:
+                # One final text-only turn so Claude can write the closing
+                # wrap-up the system prompt asks for. No tools allowed.
+                # Costs one extra API call but gives the chat a clear ending.
+                try:
+                    nudge = (
+                        "Engagement saved successfully. Now write a SHORT wrap-up message "
+                        "for the operator (2-3 sentences). Cover: overall posture verdict, "
+                        "the single most urgent finding to fix tonight, and a one-liner pointing "
+                        "them to the Reports tab to drill in. NO bullet lists, NO re-listing of "
+                        "findings. Pure prose, professional tone. After this message you stop."
+                    )
+                    loop_messages.append({"role": "user", "content": [{"type": "text", "text": nudge}]})
+                    wrap_response = await client.messages.create(
+                        model=model, max_tokens=400, system=SYSTEM_PROMPT_PENTEST,
+                        messages=loop_messages, tools=tools,
+                        tool_choice={"type": "none"},
+                    )
+                    for block in wrap_response.content:
+                        if block.type == "text":
+                            for i, word in enumerate(block.text.split(" ")):
+                                chunk = word + (" " if i < len(block.text.split(" ")) - 1 else "")
+                                yield f"data: {json.dumps({'type':'text','content':chunk})}\n\n"
+                                await asyncio.sleep(0.01)
+                except Exception as e:
+                    log.warning(f"[Pentest] wrap-up turn failed (engagement was already saved): {type(e).__name__}: {e}")
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type':'done'})}\n\n"
                 break
@@ -2123,6 +2157,24 @@ async def pentest_chat(request: ChatRequest):
 
 
 PENTEST_HISTORY_DIR = "/data/pentest"
+
+
+def _dedupe_engagement_id(requested: str) -> str:
+    """
+    Claude always picks engagement_id 'pt-YYYY-MM-DD-001' because it can't
+    know the next sequence number for the day. Same-day runs would overwrite
+    each other on disk. Find the next free suffix so each save is unique.
+    """
+    base = (requested or "").strip() or _new_engagement_id()
+    candidate = base
+    n = 2
+    while os.path.exists(os.path.join(PENTEST_HISTORY_DIR, candidate)):
+        candidate = f"{base}-{n}"
+        n += 1
+        if n > 999:
+            # Pathological — fall back to a guaranteed-unique timestamp id
+            return _new_engagement_id()
+    return candidate
 PENTEST_HISTORY_MAX = 20
 
 

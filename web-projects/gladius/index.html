@@ -3225,6 +3225,54 @@
   }
   .gladius-dialog-btn-danger:hover { opacity: 0.85; color: #fff; border-color: #ff3a4a; }
 
+  /* ── Persistent "engagement saved" card in the pentest chat ────────── */
+  .pentest-saved-card {
+    margin: 14px 8px;
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--success, #5cd99a);
+    border-left: 4px solid var(--success, #5cd99a);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    color: var(--text-primary, var(--text));
+    box-shadow: 0 0 14px var(--accent-glow, rgba(0,0,0,0.15));
+    animation: pscSlideIn 0.25s ease-out;
+  }
+  @keyframes pscSlideIn { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:translateY(0) } }
+  .pentest-saved-card .psc-head {
+    display: flex; align-items: baseline; gap: 8px;
+    margin-bottom: 8px;
+  }
+  .pentest-saved-card .psc-check {
+    color: var(--success, #5cd99a); font-weight: 700; font-size: 14px;
+  }
+  .pentest-saved-card .psc-title {
+    font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--success, #5cd99a);
+  }
+  .pentest-saved-card .psc-id {
+    margin-left: auto;
+    font-size: 10px; color: var(--text-dim);
+  }
+  .pentest-saved-card .psc-stats {
+    display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px 0;
+  }
+  .pentest-saved-card .psc-stat {
+    font-size: 10px; color: var(--text-dim);
+    padding: 3px 9px; border-radius: 3px;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .pentest-saved-card .psc-stat b {
+    color: var(--text-primary, var(--text)); font-weight: 700; margin-right: 4px;
+  }
+  .pentest-saved-card .psc-crit b { color: #ff3a4a; }
+  .pentest-saved-card .psc-high b { color: #ff8c1a; }
+  .pentest-saved-card .psc-actions { display: flex; }
+  .pentest-saved-card .psc-open {
+    font-size: 11px; padding: 6px 14px;
+    border-color: var(--accent); color: var(--accent);
+  }
+
   /* ── Floating Security Agent chat widget (bottom-right) ─────────────── */
   /* All accent colours pull from the active theme via var(--accent) so the
      widget re-skins automatically when the operator switches themes.
@@ -16394,6 +16442,38 @@ ${cves.length ? `<!-- CVE TAB -->
               logActivity(`Pentest engagement saved — ${eng.engagement_id} (${(eng.findings||[]).length} findings)`, eng.engagement_id);
               savedThisTurn = true;
               notify('pentest-reports', 'PENTEST', 'Engagement saved — open Reports');
+              // Persistent in-chat confirmation card so the operator has a
+              // visible "we're done" anchor (toast is transient).
+              const sum = eng.summary || {};
+              const fcrit = sum.findings_critical || (eng.findings||[]).filter(f => (f.severity||'').toUpperCase()==='CRITICAL').length;
+              const fhigh = sum.findings_high     || (eng.findings||[]).filter(f => (f.severity||'').toUpperCase()==='HIGH').length;
+              const ftot  = sum.findings_total    || (eng.findings||[]).length;
+              const paths = (eng.attack_paths||[]).length;
+              const hosts = sum.hosts_live        || (eng.targets||[]).length;
+              const card  = document.createElement('div');
+              card.className = 'pentest-saved-card';
+              card.innerHTML = `
+                <div class="psc-head">
+                  <span class="psc-check">✓</span>
+                  <span class="psc-title">Engagement saved</span>
+                  <span class="psc-id">${escHtml(eng.engagement_id||'')}</span>
+                </div>
+                <div class="psc-stats">
+                  <span class="psc-stat"><b>${ftot}</b> findings</span>
+                  <span class="psc-stat psc-crit"><b>${fcrit}</b> critical</span>
+                  <span class="psc-stat psc-high"><b>${fhigh}</b> high</span>
+                  <span class="psc-stat"><b>${paths}</b> attack paths</span>
+                  <span class="psc-stat"><b>${hosts}</b> hosts</span>
+                </div>
+                <div class="psc-actions">
+                  <button type="button" class="btn btn-ghost psc-open" onclick="pentestOpenSavedEngagement('${escHtml(eng.engagement_id||'')}')">Open in Reports →</button>
+                </div>
+              `;
+              const msgs = document.getElementById('pentest-messages');
+              if (msgs) {
+                msgs.appendChild(card);
+                msgs.scrollTop = msgs.scrollHeight;
+              }
             } catch (e) { console.error('pentest save error', e); }
           } else if (ev.type === 'error') {
             const el = document.getElementById(b.id);
@@ -16616,10 +16696,29 @@ ${cves.length ? `<!-- CVE TAB -->
             : '';
           const tagsHtml = `<span style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${escHtml(f.id||'?')}${f.attack_technique ? ' · ' + escHtml(f.attack_technique) : ''}${f.cve ? ' · ' + escHtml(f.cve) : ''}</span>`;
           if (!hasFix) {
-            return `<div style="border-left:2px solid ${colour};padding:8px 10px;margin:6px 0;background:rgba(0,0,0,0.05);border-radius:4px;opacity:0.78">
+            // Agent didn't fill in fix/commands. Don't dead-end the operator —
+            // surface whatever external references this finding *does* have so
+            // they can look up remediation themselves.
+            const links = [];
+            if (f.cve && String(f.cve).match(/^CVE-/i)) {
+              links.push(`<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">↗ NVD ${escHtml(f.cve)}</a>`);
+            }
+            if (f.attack_technique) {
+              const tid = String(f.attack_technique).replace('.', '/');
+              links.push(`<a href="https://attack.mitre.org/techniques/${escHtml(tid)}/" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">↗ MITRE ${escHtml(f.attack_technique)}</a>`);
+            }
+            if (f.ref && /^https?:/i.test(f.ref)) {
+              links.push(`<a href="${escHtml(f.ref)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">↗ Reference</a>`);
+            }
+            // Always include a Google fallback keyed on the finding title — gives the
+            // operator at least one click-through even when no structured ref exists.
+            const q = encodeURIComponent(`${f.title || ''} remediation`);
+            links.push(`<a href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">🔎 Search</a>`);
+            return `<div style="border-left:2px solid ${colour};padding:8px 10px;margin:6px 0;background:rgba(0,0,0,0.05);border-radius:4px">
               <div style="font-size:12px"><strong>${escHtml(f.title||'(untitled)')}</strong></div>
-              <div style="font-family:var(--font-mono);font-size:10px;color:#ff8c1a;margin-top:3px">⚠ NO REMEDIATION RECORDED — agent did not populate fix/commands</div>
-              <div style="margin-top:3px">${tagsHtml}</div>
+              <div style="font-family:var(--font-mono);font-size:10px;color:#ff8c1a;margin-top:3px">⚠ Agent didn't populate remediation — use these references to look it up:</div>
+              <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px">${links.join('')}</div>
+              <div style="margin-top:6px">${tagsHtml}</div>
             </div>`;
           }
           return `<div style="border-left:2px solid ${colour};padding:8px 10px;margin:6px 0;background:rgba(0,0,0,0.05);border-radius:4px">
@@ -16664,6 +16763,21 @@ ${cves.length ? `<!-- CVE TAB -->
 
   // Backwards-compat shim — still used by older code paths if any.
   function openPentestReport(idx) { togglePentestEngagement(idx); }
+
+  // Jump from the saved-card in the pentest chat into the Reports tab and
+  // auto-expand the engagement we just saved.
+  async function pentestOpenSavedEngagement(engId) {
+    const navItem = document.querySelector(".nav-item[onclick*='pentest-reports']");
+    showPage('pentest-reports', navItem);
+    await fetchPentestServerHistory();
+    await renderPentestReports();
+    const hist = loadPentestHistory();
+    const idx = hist.findIndex(e => (e.engagement_id||'') === engId);
+    if (idx >= 0) {
+      // Slight delay so the page has finished rendering before we expand
+      setTimeout(() => togglePentestEngagement(idx), 80);
+    }
+  }
 
   // ── SECURITY AGENT FLOATING WIDGET ─────────────────────────────────────
   // (Backed by the local Foundation-Sec-8B model via /api/foundation_sec/*.)
@@ -17433,9 +17547,24 @@ ${cves.length ? `<!-- CVE TAB -->
         const items = remGroups[sev][host].sort((a,b)=>(a.id||'').localeCompare(b.id||'')).map(f => {
           const hasFix = (f.fix && f.fix.trim()) || (f.commands && f.commands.trim());
           if (!hasFix) {
+            const refs = [];
+            if (f.cve && String(f.cve).match(/^CVE-/i)) {
+              refs.push(`<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener">NVD ${escHtml(f.cve)}</a>`);
+            }
+            if (f.attack_technique) {
+              const tid = String(f.attack_technique).replace('.', '/');
+              refs.push(`<a href="https://attack.mitre.org/techniques/${escHtml(tid)}/" target="_blank" rel="noopener">MITRE ${escHtml(f.attack_technique)}</a>`);
+            }
+            if (f.ref && /^https?:/i.test(f.ref)) {
+              refs.push(`<a href="${escHtml(f.ref)}" target="_blank" rel="noopener">${escHtml(f.ref)}</a>`);
+            }
+            const refLine = refs.length
+              ? `<div style="font-size:11px;margin-top:6px"><strong>References:</strong> ${refs.join(' &nbsp;·&nbsp; ')}</div>`
+              : '';
             return `<div style="border:1px dashed ${c.border};border-left:2px solid ${sevBorder(sev)};border-radius:3px;padding:8px 12px;margin:6px 0;background:${c.surface};page-break-inside:avoid">
               <div style="font-size:12px"><strong>${escHtml(f.title||'')}</strong> <span style="font-family:monospace;font-size:10px;color:${c.dim}">${escHtml(f.id||'')}</span></div>
-              <div style="font-size:11px;color:${sevFg('HIGH')};margin-top:4px;font-family:monospace">⚠ NO REMEDIATION RECORDED</div>
+              <div style="font-size:11px;color:${sevFg('HIGH')};margin-top:4px;font-family:monospace">⚠ Agent didn't populate remediation — see references below to look it up.</div>
+              ${refLine}
             </div>`;
           }
           const fixHtml = (f.fix && f.fix.trim())
