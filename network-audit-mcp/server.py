@@ -475,6 +475,76 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["host"]
             }
         ),
+        types.Tool(
+            name="device_copy_file",
+            description=(
+                "Drive the device's own `copy` command over the existing SSH session to transfer a file "
+                "via TFTP, FTP, SFTP, SCP, or HTTP. Use direction='to_device' to pull a file ONTO the "
+                "device (e.g. push an IOS image, restore a config, deploy a script) or 'from_device' to "
+                "push a file OFF the device (e.g. archive running-config to a TFTP server). "
+                "local_file is the on-device path/target — for example 'flash:image.bin', 'bootflash:foo', "
+                "'running-config', or 'startup-config'. remote_file is the path on the remote server. "
+                "Requires confirmed=true because this writes to device storage."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "direction":   {"type": "string", "description": "to_device (default) or from_device", "default": "to_device"},
+                    "protocol":    {"type": "string", "description": "tftp | ftp | sftp | scp | http"},
+                    "server":      {"type": "string", "description": "Remote server IP or hostname"},
+                    "remote_file": {"type": "string", "description": "File path on the remote server (no leading slash for tftp; relative or absolute for ftp/sftp/scp)"},
+                    "local_file":  {"type": "string", "description": "Destination/source on the device — e.g. flash:image.bin, bootflash:foo, running-config, startup-config"},
+                    "username":    {"type": "string", "description": "Username for ftp/sftp/scp (optional)"},
+                    "password":    {"type": "string", "description": "Password for ftp/sftp/scp (optional)"},
+                    "vrf":         {"type": "string", "description": "Optional VRF to source the copy from (uses 'copy /vrf <name> ...')"},
+                    "host":        {"type": "string", "description": "Target device host (omit if only one session is open)"},
+                    "confirmed":   {"type": "boolean", "description": "Must be true to proceed — this writes to device storage"}
+                },
+                "required": ["protocol", "server", "remote_file", "local_file", "confirmed"]
+            }
+        ),
+        types.Tool(
+            name="sftp_put_file",
+            description=(
+                "Push a file from the MCP container's filesystem directly to a network device via SFTP "
+                "(paramiko transport — does NOT use the device's copy command). The device must have "
+                "its SCP/SFTP server enabled (e.g. 'ip scp server enable' or 'ip ssh server enable'). "
+                "Opens its own short-lived SSH transport — does not require connect_to_device first. "
+                "Requires confirmed=true."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "host":        {"type": "string", "description": "Device IP or hostname"},
+                    "local_path":  {"type": "string", "description": "Path of the source file on the MCP container"},
+                    "remote_path": {"type": "string", "description": "Destination path on the device (e.g. /flash/foo.txt or flash:foo.txt — colon form is normalised)"},
+                    "username":    {"type": "string", "description": "SSH username (defaults to lab credentials)"},
+                    "password":    {"type": "string", "description": "SSH password (defaults to lab credentials)"},
+                    "confirmed":   {"type": "boolean", "description": "Must be true to proceed"}
+                },
+                "required": ["host", "local_path", "remote_path", "confirmed"]
+            }
+        ),
+        types.Tool(
+            name="sftp_get_file",
+            description=(
+                "Pull a file from a network device's filesystem directly to the MCP container via SFTP "
+                "(paramiko transport). The device must have its SCP/SFTP server enabled. "
+                "Useful for grabbing crashinfo, logs, or running-config archives off a device for "
+                "off-box analysis. Opens its own short-lived SSH transport."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "host":        {"type": "string", "description": "Device IP or hostname"},
+                    "remote_path": {"type": "string", "description": "Source path on the device (e.g. /flash/crashinfo.txt or flash:crashinfo.txt)"},
+                    "local_path":  {"type": "string", "description": "Destination path on the MCP container"},
+                    "username":    {"type": "string", "description": "SSH username (defaults to lab credentials)"},
+                    "password":    {"type": "string", "description": "SSH password (defaults to lab credentials)"}
+                },
+                "required": ["host", "remote_path", "local_path"]
+            }
+        ),
     ]
 
 
@@ -516,6 +586,12 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return await _snmp_get_devices()
     elif name == "snmp_poll":
         return await _snmp_poll(**arguments)
+    elif name == "device_copy_file":
+        return await _device_copy_file(**arguments)
+    elif name == "sftp_put_file":
+        return await _sftp_put_file(**arguments)
+    elif name == "sftp_get_file":
+        return await _sftp_get_file(**arguments)
     else:
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
 
@@ -688,6 +764,208 @@ async def _disconnect_device(host: str = None) -> list[types.TextContent]:
             pass
     _sessions.clear()
     return [types.TextContent(type="text", text=f"Disconnected from: {', '.join(closed)}")]
+
+
+def _normalise_device_path(path: str) -> str:
+    """Convert IOS-style colon paths (flash:foo) to SFTP-style (/flash/foo)."""
+    p = path.strip()
+    if ":" in p and not p.startswith("/"):
+        device, _, rest = p.partition(":")
+        rest = rest.lstrip("/")
+        return f"/{device}/{rest}" if rest else f"/{device}"
+    return p
+
+
+def _build_copy_url(protocol: str, server: str, remote_file: str,
+                    username: str = None, password: str = None) -> str:
+    """Build a Cisco IOS copy URL like ftp://user:pass@server/path or tftp://server/path."""
+    proto = protocol.lower().strip()
+    rf    = remote_file.lstrip("/")
+    if proto == "tftp":
+        return f"tftp://{server}/{rf}"
+    if proto == "http":
+        # http is download-only on most IOS — supports basic auth
+        if username:
+            cred = f"{username}:{password}@" if password else f"{username}@"
+            return f"http://{cred}{server}/{rf}"
+        return f"http://{server}/{rf}"
+    if proto in ("ftp", "sftp", "scp"):
+        if username:
+            cred = f"{username}:{password}@" if password else f"{username}@"
+            return f"{proto}://{cred}{server}/{rf}"
+        return f"{proto}://{server}/{rf}"
+    raise ValueError(f"Unsupported protocol: {protocol}")
+
+
+async def _device_copy_file(
+    protocol: str,
+    server: str,
+    remote_file: str,
+    local_file: str,
+    confirmed: bool,
+    direction: str = "to_device",
+    username: str = None,
+    password: str = None,
+    vrf: str = None,
+    host: str = None,
+) -> list[types.TextContent]:
+    if not confirmed:
+        return [types.TextContent(type="text", text="ERROR: Set confirmed=true to proceed (this writes to device storage).")]
+
+    proto = protocol.lower().strip()
+    if proto not in ("tftp", "ftp", "sftp", "scp", "http"):
+        return [types.TextContent(type="text", text=f"ERROR: Unsupported protocol '{protocol}'. Use tftp, ftp, sftp, scp, or http.")]
+
+    direction = direction.lower().strip()
+    if direction not in ("to_device", "from_device"):
+        return [types.TextContent(type="text", text="ERROR: direction must be 'to_device' or 'from_device'.")]
+    if direction == "from_device" and proto == "http":
+        return [types.TextContent(type="text", text="ERROR: HTTP is download-only on most Cisco devices — use tftp/ftp/sftp/scp for from_device.")]
+
+    h, channel = _resolve_session(host)
+    if not channel:
+        hint = f" (open sessions: {list(_sessions.keys())})" if _sessions else ""
+        return [types.TextContent(type="text", text=f"ERROR: No active session{' for ' + host if host else ''}{hint}. Call connect_to_device first.")]
+
+    try:
+        remote_url = _build_copy_url(proto, server, remote_file, username, password)
+    except ValueError as e:
+        return [types.TextContent(type="text", text=f"ERROR: {e}")]
+
+    if direction == "to_device":
+        src, dst = remote_url, local_file
+    else:
+        src, dst = local_file, remote_url
+
+    vrf_part = f"/vrf {vrf} " if vrf else ""
+    cmd = f"copy {vrf_part}{src} {dst}"
+    log.info(f"device_copy_file on {h}: {cmd.replace(password, '***') if password else cmd}")
+
+    try:
+        # Make sure we're at exec mode and clear anything stale
+        _clear_buffer(channel, timeout=2)
+        channel.send(cmd + "\n")
+        time.sleep(1.0)
+
+        # Cisco copy is interactive — auto-ack any prompts (Address/Source/Destination filename)
+        # by sending a blank line. Loop until prompt returns or timeout (5 min).
+        deadline = time.time() + 300
+        output   = ""
+        while time.time() < deadline:
+            time.sleep(0.5)
+            chunk = ""
+            while channel.recv_ready():
+                chunk += channel.recv(65536).decode("utf-8", errors="ignore")
+            output += chunk
+
+            stripped = output.rstrip()
+            last_line = stripped.split("\n")[-1].strip() if stripped else ""
+
+            # Done when we see a CLI prompt (hostname# or hostname>) on the last line
+            if last_line.endswith("#") or (last_line.endswith(">") and len(last_line) < 80 and "?" not in last_line):
+                break
+
+            # Interactive prompt — accept defaults
+            if last_line.endswith("?") or last_line.endswith(":") or "[confirm]" in last_line.lower():
+                channel.send("\n")
+                time.sleep(0.3)
+                continue
+
+            # Idle — keep waiting (transfer in progress)
+            if not chunk:
+                time.sleep(0.5)
+
+        clean = _sanitize_output(output)
+        err_markers = ("%Error", "Error opening", "Timed out", "%FTP:", "%SCP:", "%SSH:")
+        if any(m in clean for m in err_markers):
+            return [types.TextContent(type="text", text=f"Copy reported errors on {h}:\n{clean}")]
+        return [types.TextContent(type="text", text=f"copy completed on {h}:\n{clean}")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: copy failed on {h}: {e}")]
+
+
+def _open_sftp(host: str, username: str = None, password: str = None):
+    """Open a short-lived paramiko SFTP client (separate from interactive shell sessions)."""
+    username = username or LAB_USERNAME
+    password = password or LAB_PASSWORD
+    if not username or not password:
+        raise RuntimeError("No credentials provided and no lab defaults configured.")
+    transport = paramiko.Transport((host, 22))
+    transport.connect(username=username, password=password)
+    sftp = paramiko.SFTPClient.from_transport(transport)
+    return sftp, transport
+
+
+async def _sftp_put_file(
+    host: str,
+    local_path: str,
+    remote_path: str,
+    confirmed: bool,
+    username: str = None,
+    password: str = None,
+) -> list[types.TextContent]:
+    if not confirmed:
+        return [types.TextContent(type="text", text="ERROR: Set confirmed=true to proceed (this writes to device storage).")]
+    if not os.path.isfile(local_path):
+        return [types.TextContent(type="text", text=f"ERROR: Local file not found: {local_path}")]
+
+    remote = _normalise_device_path(remote_path)
+    log.info(f"sftp_put_file: {local_path} -> {host}:{remote}")
+    sftp = transport = None
+    try:
+        sftp, transport = _open_sftp(host, username, password)
+        size = os.path.getsize(local_path)
+        sftp.put(local_path, remote)
+        return [types.TextContent(type="text", text=f"Uploaded {local_path} ({size} bytes) to {host}:{remote}")]
+    except paramiko.AuthenticationException:
+        return [types.TextContent(type="text", text=f"ERROR: SFTP authentication failed for {host}.")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: SFTP put failed: {e}")]
+    finally:
+        try:
+            if sftp: sftp.close()
+        except Exception:
+            pass
+        try:
+            if transport: transport.close()
+        except Exception:
+            pass
+
+
+async def _sftp_get_file(
+    host: str,
+    remote_path: str,
+    local_path: str,
+    username: str = None,
+    password: str = None,
+) -> list[types.TextContent]:
+    remote = _normalise_device_path(remote_path)
+    parent = os.path.dirname(local_path) or "."
+    if not os.path.isdir(parent):
+        return [types.TextContent(type="text", text=f"ERROR: Local destination directory does not exist: {parent}")]
+
+    log.info(f"sftp_get_file: {host}:{remote} -> {local_path}")
+    sftp = transport = None
+    try:
+        sftp, transport = _open_sftp(host, username, password)
+        sftp.get(remote, local_path)
+        size = os.path.getsize(local_path) if os.path.isfile(local_path) else 0
+        return [types.TextContent(type="text", text=f"Downloaded {host}:{remote} ({size} bytes) to {local_path}")]
+    except paramiko.AuthenticationException:
+        return [types.TextContent(type="text", text=f"ERROR: SFTP authentication failed for {host}.")]
+    except FileNotFoundError:
+        return [types.TextContent(type="text", text=f"ERROR: Remote file not found: {host}:{remote}")]
+    except Exception as e:
+        return [types.TextContent(type="text", text=f"ERROR: SFTP get failed: {e}")]
+    finally:
+        try:
+            if sftp: sftp.close()
+        except Exception:
+            pass
+        try:
+            if transport: transport.close()
+        except Exception:
+            pass
 
 
 async def _query_nvd(

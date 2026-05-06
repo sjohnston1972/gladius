@@ -285,6 +285,15 @@ Round to nearest integer (0-100). Use your judgement — these are audit estimat
 
 When asked for a list of devices, their IPs, hostnames, or status, always call snmp_get_devices — do not SSH to individual devices or run individual SNMP probes. The SNMP container maintains a live inventory; use it.
 
+## Jira ticket creation
+- create_jira_ticket — file an audit finding as a tracked Jira ticket in the GSR project
+- Only use AFTER an audit completes and only when the user explicitly asks for tickets, OR when filing a single CRITICAL/HIGH finding that the user has approved tracking for
+- DO NOT auto-create tickets for every finding after save_audit_results — wait for an explicit user request like "open a ticket for X" or "file these as tickets"
+- Map severity to priority: CRITICAL→P1, HIGH→P2, MEDIUM→P3, LOW→P4
+- summary should be short and specific: include the device hostname and the finding title (e.g. "SW-CORE-01: SSH v1 enabled — disable per CIS 1.1.2")
+- description must include device, IP, finding details, impact, recommended fix with exact CLI commands, and a reference URL — all on separate lines (newlines split into Jira paragraphs)
+- After creation, report the issue key (e.g. "Filed as GSR-47") and stop — do not paste the full ticket body back into chat
+
 Always use your tools — never fabricate data. If a tool call fails, say so explicitly."""
 
 TSHOOT_SYSTEM_PROMPT = """You are Gladius Tshoot, a network diagnostics and troubleshooting agent running inside an authorized homelab. All targets are privately owned lab infrastructure. You have full authorization to probe, scan, test, and reconfigure all hosts on all networks.
@@ -375,6 +384,27 @@ _JIRA_CLOSE_TICKET_DEF = {
             "comment":   {"type": "string", "description": "Optional closing comment — explain resolution or reason for closing"},
         },
         "required": ["issue_key"],
+    },
+}
+
+_JIRA_CREATE_TICKET_DEF = {
+    "name": "create_jira_ticket",
+    "description": (
+        "Create a new Jira ticket for an audit finding, security issue, or remediation task. "
+        "Use this after completing an audit when a finding warrants a tracked work item — "
+        "for example a HIGH/CRITICAL hardening gap, an actionable CVE, or a config change "
+        "that requires owner approval. Tickets are created in the GSR project by default. "
+        "Pick priority based on severity: CRITICAL→P1, HIGH→P2, MEDIUM→P3, LOW→P4."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "summary":     {"type": "string", "description": "Short ticket title, ideally <120 chars (e.g. 'SW-CORE-01: SSH v1 enabled — disable per CIS 1.1.2')"},
+            "description": {"type": "string", "description": "Full description — include device/IP, finding, impact, recommended fix, and any reference links. Newlines split into paragraphs."},
+            "priority":    {"type": "string", "description": "P1 | P2 | P3 | P4 | P5 (default P3). Map severity: CRITICAL→P1, HIGH→P2, MEDIUM→P3, LOW→P4."},
+            "labels":      {"type": "array", "items": {"type": "string"}, "description": "Optional labels (e.g. ['gladius','audit','hardening']). Defaults to ['gladius'] if omitted."},
+        },
+        "required": ["summary", "description"],
     },
 }
 
@@ -1581,6 +1611,8 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
     # Exclude legacy/internal tools that should never be called by the main agent
     _BLOCKED_TOOLS = {"stream_finding"}
     tools = [t for t in cached_tools if t["name"] not in _BLOCKED_TOOLS]
+    # Inject Jira ticket-creation tool — handled locally (POST to gladius-pyats)
+    tools.append(_JIRA_CREATE_TICKET_DEF)
 
     if not tools:
         log.warning("No tools available — falling back to Claude only")
@@ -1679,6 +1711,37 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                         result_text = "Templated HTML report email dispatched via browser"
                         is_error    = False
                         log.info("send_email intercepted — signalling browser to send templated report")
+                    elif tool_name == "create_jira_ticket":
+                        # Handle locally — POST to gladius-pyats Jira create endpoint
+                        payload = {
+                            "summary":     tool_input.get("summary", "").strip(),
+                            "description": tool_input.get("description", "").strip(),
+                            "priority":    tool_input.get("priority", "P3"),
+                            "labels":      tool_input.get("labels") or ["gladius", "audit"],
+                        }
+                        if not payload["summary"] or not payload["description"]:
+                            result_text = "Jira ticket creation failed: summary and description are required."
+                            is_error    = True
+                        else:
+                            try:
+                                r = await asyncio.get_event_loop().run_in_executor(
+                                    None, lambda: http_requests.post(
+                                        f"{AUTOMATION_URL}/api/jira/create",
+                                        json=payload, timeout=20,
+                                    )
+                                )
+                                data = r.json() if r.content else {}
+                                if r.status_code in (200, 201) and data.get("ok"):
+                                    key = data.get("key") or data.get("issue_key") or "(unknown)"
+                                    url = data.get("url") or data.get("self") or ""
+                                    result_text = f"Jira ticket created: {key}" + (f" — {url}" if url else "")
+                                    is_error    = False
+                                else:
+                                    result_text = f"Jira ticket creation failed (HTTP {r.status_code}): {data or r.text[:300]}"
+                                    is_error    = True
+                            except Exception as e:
+                                result_text = f"Jira ticket creation failed: {type(e).__name__}: {e}"
+                                is_error    = True
                     else:
                         result      = await mcp_manager.call_tool(tool_name, tool_input)
                         result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))

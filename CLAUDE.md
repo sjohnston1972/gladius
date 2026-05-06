@@ -132,6 +132,9 @@ MCP server, runs as a stdio subprocess. All tools:
 | `get_cve_details` | Gets full details for a specific CVE ID |
 | `send_email` | Sends email via SMTP — supports plain text body or HTML attachment |
 | `save_audit_results` | POSTs structured audit data to `gladius-api /api/audit/save` |
+| `device_copy_file` | Drives the device's `copy` command for tftp/ftp/sftp/scp/http — uploads or downloads files via the device itself |
+| `sftp_put_file` | Pushes a file from the MCP container to a device via paramiko SFTP (no `copy` command) |
+| `sftp_get_file` | Pulls a file from a device to the MCP container via paramiko SFTP |
 
 ### save_audit_results (recently added — critical)
 
