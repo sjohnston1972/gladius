@@ -494,13 +494,17 @@ async def _poll_all():
                      dev.get("name", dev["host"]), dev["host"],
                      new_status, result["response_ms"])
 
-            # Fire alert on status degradation
+            # Fire alert on status degradation (suppressed for muted devices)
             if _should_alert(dev_id, new_status):
                 _last_alerted[dev_id] = new_status
-                asyncio.create_task(
-                    asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result))
-                )
-                # Device went down — generate event
+                if dev.get("muted"):
+                    log.debug("MUTED — skipping alert POST for %s (%s) %s→%s",
+                              dev.get("name", dev["host"]), dev["host"], old_status, new_status)
+                else:
+                    asyncio.create_task(
+                        asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result))
+                    )
+                # Device went down — generate event (also gated by mute inside _add_event)
                 if new_status == "error":
                     _add_event(dev, "device_down", "critical", f"Device unreachable ({result.get('error', 'no response')})")
             elif new_status == "ok" and _last_alerted.get(dev_id, "ok") != "ok":

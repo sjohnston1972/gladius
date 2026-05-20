@@ -2721,6 +2721,11 @@
     transition:box-shadow 0.15s, background 0.15s;
   }
   .alert-tshoot-btn:hover { box-shadow:0 0 10px var(--danger); background:rgba(255,68,68,0.18); }
+  /* Muted device alert: still visible but no glow/pulse and dimmed colours */
+  .alert-card.alert-muted { border-color:rgba(150,150,150,0.4); background:rgba(150,150,150,0.05); animation:none; opacity:0.6; }
+  .alert-card.alert-muted .alert-card-dot { background:var(--text-dim); box-shadow:none; animation:none; }
+  .alert-card.alert-muted .alert-card-name { color:var(--text-dim); }
+  .alert-card-muted-badge { font-family:var(--font-mono); font-size:8px; font-weight:400; color:var(--text-dim); border:1px solid var(--text-dim); border-radius:3px; padding:0 4px; letter-spacing:1px; }
 
   /* Protocol event cards */
   .evt-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
@@ -10843,13 +10848,16 @@ ${cves.length ? `<!-- CVE TAB -->
         const downSince   = _alertDownSince[d.id];
         const sinceStr    = downSince ? _fmtAlertTime(downSince) : '—';
         const elapsedStr  = downSince ? _fmtElapsed(now - downSince.getTime()) : '—';
-        return `<div class="alert-card">
+        const mutedCls    = d.muted ? ' alert-muted' : '';
+        const mutedBadge  = d.muted ? '<span class="alert-card-muted-badge">MUTED</span>' : '';
+        return `<div class="alert-card${mutedCls}">
           <div class="alert-card-header">
             <div class="alert-card-dot"></div>
             <div style="flex:1;min-width:0">
               <div class="alert-card-name">${hostname}</div>
               ${showIP ? `<div class="alert-card-host">${ip}</div>` : ''}
             </div>
+            ${mutedBadge}
           </div>
           <div class="alert-time-row">↓ down since ${sinceStr}</div>
           <div class="alert-time-row">⏱ down for <span id="alert-downfor-${d.id}">${elapsedStr}</span></div>
