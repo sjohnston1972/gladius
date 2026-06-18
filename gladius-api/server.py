@@ -285,6 +285,8 @@ Round to nearest integer (0-100). Use your judgement — these are audit estimat
 
 When asked for a list of devices, their IPs, hostnames, or status, always call snmp_get_devices — do not SSH to individual devices or run individual SNMP probes. The SNMP container maintains a live inventory; use it.
 
+When the user names a specific device (e.g. "audit S1-S1", "what interfaces are live on S2-R1"), you MUST resolve that name to its IP via snmp_get_devices BEFORE connecting. Match the requested name against each device's `sysName` (a FQDN such as "S1-S1.clydeford.net" — match the leading hostname label, case-insensitive) and its `name` field, then connect to that device's IP. NEVER reuse an IP from the audit context, conversation history, or a previous audit for a device with a different name — those IPs belong to other devices. If no inventory entry matches the requested name, tell the user the device was not found in the SNMP inventory and list the closest matches; do NOT connect to a different device, and do NOT claim the device does not exist without first checking snmp_get_devices.
+
 ## Jira ticket creation
 - create_jira_ticket — file an audit finding as a tracked Jira ticket in the GSR project
 - Only use AFTER an audit completes and only when the user explicitly asks for tickets, OR when filing a single CRITICAL/HIGH finding that the user has approved tracking for
@@ -320,6 +322,8 @@ TSHOOT_SYSTEM_PROMPT = """You are Gladius Tshoot, a network diagnostics and trou
 
 ## Device inventory:
 When asked for a list of devices, their IPs, hostnames, or status, always call snmp_get_devices — do not SSH to individual devices or run SNMP probes. The SNMP container maintains a live inventory; use it.
+
+When the user names a specific device (e.g. "troubleshoot S1-S1", "check S2-R1"), you MUST resolve that name to its IP via snmp_get_devices BEFORE connecting. Match the requested name against each device's `sysName` (a FQDN such as "S1-S1.clydeford.net" — match the leading hostname label, case-insensitive) and its `name` field, then connect to that device's IP. NEVER reuse an IP from conversation history or a previous task for a device with a different name — those IPs belong to other devices. If no inventory entry matches the requested name, tell the user the device was not found in the SNMP inventory and list the closest matches; do NOT connect to a different device, and do NOT claim the device does not exist without first checking snmp_get_devices.
 
 ## Jira integration:
 - get_jira_tickets — retrieves open Jira tickets; use this to check current tickets, find related issues, or get context before investigating
@@ -751,8 +755,13 @@ async def health():
 
 
 @app.get("/api/health/full")
-async def health_full():
-    """Full health check — polls all downstream dependencies and returns status of each."""
+def health_full():
+    """Full health check — polls all downstream dependencies and returns status of each.
+
+    NOTE: deliberately a sync `def`, not `async def`. Every probe below is a blocking
+    http_requests call (no awaits in this function), so FastAPI runs it in its threadpool.
+    If this were `async def`, each poll would block the event loop for the sum of all probe
+    timeouts — freezing chat/SSE/all traffic. Keep it sync."""
     results = {}
 
     # ── 1. Gladius API itself ──────────────────────────────────────────────────
@@ -791,7 +800,8 @@ async def health_full():
     # ── 4. NIST NVD API ───────────────────────────────────────────────────────
     try:
         t0 = time.monotonic()
-        r  = http_requests.get(NVD_TEST_URL, timeout=5)
+        headers = {"apiKey": NIST_API_KEY} if NIST_API_KEY else {}
+        r  = http_requests.get(NVD_TEST_URL, headers=headers, timeout=15)
         ms = int((time.monotonic() - t0) * 1000)
         if r.status_code == 200:
             results["nist_nvd"] = {"status": "ok", "detail": f"Responding ({ms}ms)"}
@@ -929,7 +939,7 @@ async def health_full():
 
 
 @app.get("/api/kb/stats")
-async def kb_stats():
+def kb_stats():  # sync on purpose — blocking http call, runs in threadpool (see health_full note)
     """Return live vector count from Chroma."""
     try:
         r = http_requests.get(
@@ -1017,7 +1027,7 @@ def _nvd_parse(item: dict) -> dict:
     }
 
 @app.get("/api/cve/latest")
-async def cve_latest():
+def cve_latest():  # sync on purpose — blocking NVD call, runs in threadpool (see health_full note)
     """Latest HIGH + CRITICAL CVEs from NVD (last 30 days, any vendor)."""
     cached = _cache_get("cve_latest")
     if cached:
@@ -1045,7 +1055,7 @@ async def cve_latest():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/cve/search")
-async def cve_search(q: str = "", severity: str = "", days_back: int = 30):
+def cve_search(q: str = "", severity: str = "", days_back: int = 30):  # sync — blocking NVD call, threadpool
     """Search NVD CVEs directly — used by the CVE tab search bar."""
     end_dt   = datetime.datetime.now(datetime.timezone.utc)
     start_dt = end_dt - datetime.timedelta(days=min(max(days_back, 1), 120))
@@ -1113,7 +1123,7 @@ def _psirt_parse(adv: dict) -> dict:
     }
 
 @app.get("/api/psirt/latest")
-async def psirt_latest():
+def psirt_latest():  # sync — blocking PSIRT call, threadpool
     """Latest CRITICAL + HIGH Cisco PSIRT advisories."""
     if not PSIRT_CLIENT_KEY:
         raise HTTPException(status_code=503, detail="PSIRT credentials not configured")
@@ -1141,7 +1151,7 @@ async def psirt_latest():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/psirt/search")
-async def psirt_search(q: str = "", severity: str = ""):
+def psirt_search(q: str = "", severity: str = ""):  # sync — blocking PSIRT call, threadpool
     """Search Cisco PSIRT advisories by product name or severity."""
     if not PSIRT_CLIENT_KEY:
         raise HTTPException(status_code=503, detail="PSIRT credentials not configured")
@@ -1213,7 +1223,7 @@ def _eox_parse(rec: dict) -> dict:
     }
 
 @app.get("/api/eox/search")
-async def eox_search(pids: str = "", start_date: str = "", end_date: str = ""):
+def eox_search(pids: str = "", start_date: str = "", end_date: str = ""):  # sync — blocking EOX call, threadpool
     """Query Cisco EOX API by product IDs or date range."""
     if not EOX_CLIENT_KEY:
         raise HTTPException(status_code=503, detail="EOX credentials not configured")
@@ -2972,7 +2982,7 @@ async def ingest_document(
 
 
 @app.get("/api/ingest/collections/{collection_id}/docs")
-async def ingest_collection_docs(collection_id: str):
+def ingest_collection_docs(collection_id: str):  # sync — blocking Chroma call, threadpool
     """Return unique source filenames ingested into a collection."""
     if collection_id not in COLLECTIONS:
         raise HTTPException(status_code=400, detail=f"Unknown collection: {collection_id}")
@@ -3006,7 +3016,7 @@ async def ingest_collection_docs(collection_id: str):
 
 
 @app.get("/api/ingest/collections")
-async def ingest_collections():
+def ingest_collections():  # sync — blocking Chroma calls, threadpool (see health_full note)
     """Return document counts for all known collections."""
     base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
     counts = {}
