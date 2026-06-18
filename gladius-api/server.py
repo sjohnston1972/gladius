@@ -806,9 +806,12 @@ def health_full():
         if r.status_code == 200:
             results["nist_nvd"] = {"status": "ok", "detail": f"Responding ({ms}ms)"}
         else:
-            results["nist_nvd"] = {"status": "error", "detail": f"HTTP {r.status_code}"}
-    except Exception as e:
-        results["nist_nvd"] = {"status": "error", "detail": str(e)}
+            # NVD is a flaky external dependency (frequent 5xx / slow). An NVD outage
+            # is not a platform fault — report it as a warn so it doesn't drag the
+            # overall status to degraded. CVE lookups degrade gracefully meanwhile.
+            results["nist_nvd"] = {"status": "warn", "detail": f"NVD unavailable (HTTP {r.status_code}) — upstream outage"}
+    except Exception:
+        results["nist_nvd"] = {"status": "warn", "detail": "NVD unreachable — upstream outage/slow"}
 
     # ── 5. Claude API ─────────────────────────────────────────────────────────
     if _last_claude_success > 0:
