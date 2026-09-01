@@ -20,6 +20,13 @@ COPY app.py .
 
 RUN mkdir -p /data
 
+# Dedicated, unprivileged, no-login system user that LLM-generated pyATS
+# scripts execute as (see PYATS_SANDBOX_USER / _spawn_pyats_subprocess in
+# app.py). It intentionally has no home directory and cannot log in — its
+# only purpose is to be a distinct uid the app can drop generated-script
+# subprocesses into, separate from this service's own (root) identity.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin pyats_sandbox
+
 EXPOSE 8090
 
 CMD ["python", "-u", "app.py"]

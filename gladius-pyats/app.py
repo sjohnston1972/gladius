@@ -24,6 +24,11 @@ from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Any, Optional, Union
 
+try:
+    import pwd  # POSIX-only; used to resolve the sandbox OS user
+except ImportError:
+    pwd = None
+
 import hmac
 import httpx
 import yaml
@@ -62,6 +67,126 @@ JIRA_API_TOKEN  = os.getenv("JIRA_API_TOKEN", "")
 JIRA_PROJECT    = os.getenv("JIRA_PROJECT", "")
 JIRA_ISSUE_TYPE = os.getenv("JIRA_ISSUE_TYPE", "Task")
 JIRA_CONFIGURED = bool(JIRA_URL and JIRA_EMAIL and JIRA_API_TOKEN and JIRA_PROJECT)
+
+
+# ── LLM-generated script sandbox ────────────────────────────────────────────────
+# Generated pyATS/Genie scripts are model output run against real network
+# devices — treat them as untrusted code. They execute with:
+#   1. A scrubbed environment: only a small allowlist of harmless variables is
+#      passed through, so ANTHROPIC_API_KEY / JIRA_API_TOKEN / LAB_PASSWORD /
+#      SMTP_* / GLADIUS_API_TOKEN / DB_PATH etc. are never visible to them.
+#      Device credentials reach the script only via the testbed YAML file
+#      that's already written into its scratch dir — nothing else is needed.
+#   2. A dropped-privilege OS user (PYATS_SANDBOX_USER), when that user is
+#      present in the container image, so the process runs as a distinct
+#      unprivileged uid rather than as this service.
+#   3. Filesystem hardening (_harden_fs_permissions): the app source tree and
+#      the sqlite data dir are chmod'd so only the owner (this service) can
+#      read them. This runs from inside the container at request time, so it
+#      takes effect on the real filesystem even when /app and /data are host
+#      bind mounts (as in docker-compose.yml) whose permissions the image
+#      build itself can't control.
+# If the sandbox user isn't configured (e.g. local/dev runs of this file),
+# execution falls back to running with the service's own OS privileges —
+# still with the scrubbed environment — and logs a loud warning rather than
+# failing closed, so dev environments keep working while a properly built
+# container image gets full isolation.
+PYATS_SANDBOX_USER = os.getenv("PYATS_SANDBOX_USER", "pyats_sandbox")
+APP_DIR  = Path(__file__).resolve().parent
+DATA_DIR = Path(DB_PATH).resolve().parent
+
+_SANDBOX_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM")
+_fs_hardened = False
+
+
+def _sandbox_env(tmpdir: str) -> dict:
+    """Environment for the sandboxed subprocess: an explicit allowlist only —
+    nothing from this service's own environment (secrets included) passes
+    through unless named here."""
+    env = {k: os.environ[k] for k in _SANDBOX_ENV_ALLOWLIST if k in os.environ}
+    env.setdefault("PATH", "/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin")
+    env["HOME"] = tmpdir
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+def _sandbox_ids() -> tuple[int, int] | None:
+    """Resolve the dedicated low-privilege sandbox user's (uid, gid), or None
+    if it isn't available (non-POSIX host, or the user doesn't exist here)."""
+    if pwd is None:
+        return None
+    try:
+        pw = pwd.getpwnam(PYATS_SANDBOX_USER)
+        return pw.pw_uid, pw.pw_gid
+    except KeyError:
+        return None
+
+
+def _harden_fs_permissions() -> None:
+    """Lock the app source tree and sqlite data dir down to owner-only access
+    so the (non-owning) sandbox user cannot read scripts.db or app.py — even
+    though both live under host bind mounts, this chmod is issued from
+    inside the container and applies to the real underlying files. Best
+    effort: only meaningful on POSIX, running as root, once per process."""
+    global _fs_hardened
+    if _fs_hardened or pwd is None or not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    for base in (APP_DIR, DATA_DIR):
+        try:
+            if not base.exists():
+                continue
+            os.chmod(base, 0o700)
+            for root, dirs, files in os.walk(base):
+                for d in dirs:
+                    try:
+                        os.chmod(os.path.join(root, d), 0o700)
+                    except OSError:
+                        pass
+                for f in files:
+                    try:
+                        os.chmod(os.path.join(root, f), 0o600)
+                    except OSError:
+                        pass
+        except Exception as e:
+            log.warning("Could not harden filesystem permissions on %s: %s", base, e)
+    _fs_hardened = True
+
+
+async def _spawn_pyats_subprocess(script_path: str, testbed_path: str, tmpdir: str) -> "asyncio.subprocess.Process":
+    """Launch a (possibly LLM-generated) pyATS/Genie script under the
+    execution sandbox described above. Shared by the validate dry-run, the
+    real run, and the auto-fix retry loop, so every path that executes
+    generated code gets the same isolation."""
+    _harden_fs_permissions()
+    kwargs: dict[str, Any] = {}
+    sandbox = _sandbox_ids()
+    if sandbox:
+        uid, gid = sandbox
+        try:
+            os.chown(tmpdir, uid, gid)
+            os.chown(script_path, uid, gid)
+            os.chown(testbed_path, uid, gid)
+        except Exception as e:
+            # We found a sandbox user but can't hand it the scratch dir —
+            # fail closed rather than silently running as ourselves.
+            raise RuntimeError(f"Failed to prepare pyATS sandbox scratch dir: {e}") from e
+        kwargs["user"]  = uid
+        kwargs["group"] = gid
+    else:
+        log.warning(
+            "PYATS sandbox user '%s' not found in this container — the generated "
+            "script will run with this service's own OS privileges (still under a "
+            "scrubbed environment). Add the '%s' system user to the container image "
+            "for full process isolation.",
+            PYATS_SANDBOX_USER, PYATS_SANDBOX_USER,
+        )
+    return await asyncio.create_subprocess_exec(
+        sys.executable, script_path, testbed_path,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        cwd=tmpdir,
+        env=_sandbox_env(tmpdir),
+        **kwargs,
+    )
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -2204,11 +2329,7 @@ async def validate_script(script_id: str, body: ValidateRequest):
         with open(testbed_path, "w") as f:
             f.write(testbed_yaml)
         try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, script_path, testbed_path,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                cwd=tmpdir
-            )
+            proc = await _spawn_pyats_subprocess(script_path, testbed_path, tmpdir)
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
             output = stdout.decode() + stderr.decode()
             passed = proc.returncode == 0 and _pyats_passed(output)
@@ -2272,11 +2393,7 @@ async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int 
             f.write(script_content)
         with open(testbed_path, "w") as f:
             f.write(testbed_yaml)
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, script_path, testbed_path,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            cwd=tmpdir
-        )
+        proc = await _spawn_pyats_subprocess(script_path, testbed_path, tmpdir)
         if task_id:
             _active_procs[task_id] = proc
         try:
