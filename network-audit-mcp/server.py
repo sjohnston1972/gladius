@@ -1601,6 +1601,14 @@ else:
     elif mode == "http_get":
         http_port = port if port != 80 else 80
         host_header = payload if payload else target
+        # Strict validation in addition to the printable-ASCII sanitisation
+        # above: a Host header value must look like a hostname/IP[:port],
+        # nothing that could look like Python source syntax.
+        if not re.match(r'^[a-zA-Z0-9.\-:\[\]]+$', host_header):
+            return [types.TextContent(
+                type="text",
+                text="ERROR: Invalid payload for http_get — must be a hostname, IP, or IP:port.",
+            )]
         script = f"""
 from scapy.all import IP, TCP, sr1, sr, send, conf
 import random, time
@@ -1624,9 +1632,10 @@ send(IP(dst="{target}")/TCP(sport=sport, dport={http_port}, flags="A",
 
 # HTTP GET
 crlf = "\\r\\n"
+host_header_value = {repr(host_header)}
 http_req = crlf.join([
     "GET / HTTP/1.1",
-    f"Host: {host_header}",
+    f"Host: {{host_header_value}}",
     "User-Agent: Gladius-Security-Scanner/1.0",
     "Accept: */*",
     "Connection: close",
