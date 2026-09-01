@@ -5,6 +5,7 @@ import os
 import uuid
 import json
 import time
+import hmac
 import asyncio
 import logging
 import requests
@@ -12,7 +13,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pysnmp.hlapi import (
@@ -26,10 +27,13 @@ from pysnmp.hlapi import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("gladius-snmp")
 
-DEVICES_FILE    = Path(os.getenv("DEVICES_FILE", "/data/devices.json"))
-POLL_INTERVAL   = int(os.getenv("POLL_INTERVAL", "60"))   # seconds between polls
-GLADIUS_API_URL = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
+DEVICES_FILE      = Path(os.getenv("DEVICES_FILE", "/data/devices.json"))
+POLL_INTERVAL     = int(os.getenv("POLL_INTERVAL", "60"))   # seconds between polls
+GLADIUS_API_URL   = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
+GLADIUS_API_TOKEN = os.getenv("GLADIUS_API_TOKEN")
 JIRA_AUTO_EVENTS = os.getenv("JIRA_AUTO_EVENTS", "true").lower() in ("true", "1", "yes")
+
+_GLADIUS_API_HEADERS = {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
 
 # Event types that should auto-create Jira tickets
 _JIRA_EVENT_TYPES = {"interface_down", "bgp_down", "ospf_down", "device_down"}
@@ -227,6 +231,7 @@ def _create_jira_for_event_sync(evt: dict):
         f"{GLADIUS_API_URL}/api/automation/jira/create",
         json={"summary": summary, "description": description, "priority": priority,
               "labels": ["gladius", "snmp-event", "auto-generated"]},
+        headers=_GLADIUS_API_HEADERS,
         timeout=15,
     )
     data = r.json()
@@ -252,6 +257,7 @@ def _trigger_auto_tshoot(evt: dict):
     r = requests.post(
         f"{GLADIUS_API_URL}/api/tshoot/auto",
         json=payload,
+        headers=_GLADIUS_API_HEADERS,
         timeout=10,
     )
     data = r.json()
@@ -472,7 +478,7 @@ def _send_alert_sync(dev: dict, old_status: str, new_status: str, snmp_data: dic
         "snmp_data":  snmp_data,
     }
     try:
-        r = requests.post(f"{GLADIUS_API_URL}/api/snmp/alert", json=payload, timeout=10)
+        r = requests.post(f"{GLADIUS_API_URL}/api/snmp/alert", json=payload, headers=_GLADIUS_API_HEADERS, timeout=10)
         log.info("Alert POSTed for %s: %s→%s (HTTP %d)", dev.get("name"), old_status, new_status, r.status_code)
     except Exception as e:
         log.warning("Failed to send alert for %s: %s", dev.get("name"), e)
@@ -536,8 +542,29 @@ async def lifespan(app: FastAPI):
     yield
 
 
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "https://gladius.clydeford.net").split(",")
+    if origin.strip()
+]
+
+
+async def require_token(authorization: str = Header(default="")) -> None:
+    """FastAPI dependency: requires 'Authorization: Bearer <GLADIUS_API_TOKEN>'."""
+    if not GLADIUS_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Server auth not configured")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, GLADIUS_API_TOKEN):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 app = FastAPI(title="Gladius SNMP Monitor", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 # ── Request models ─────────────────────────────────────────────────────────────
@@ -599,7 +626,7 @@ def health():
     return {"status": "ok", "service": "gladius-snmp", "devices": len(_devices)}
 
 
-@app.get("/devices")
+@app.get("/devices", dependencies=[Depends(require_token)])
 def list_devices():
     result = []
     for dev_id in _devices:
@@ -609,7 +636,7 @@ def list_devices():
     return {"devices": result}
 
 
-@app.post("/devices", status_code=201)
+@app.post("/devices", status_code=201, dependencies=[Depends(require_token)])
 async def add_device(body: DeviceIn):
     dev_id = str(uuid.uuid4())
     dev = {
@@ -635,7 +662,7 @@ async def add_device(body: DeviceIn):
     return _device_with_status(dev_id)
 
 
-@app.delete("/devices/{dev_id}", status_code=204)
+@app.delete("/devices/{dev_id}", status_code=204, dependencies=[Depends(require_token)])
 def delete_device(dev_id: str):
     if dev_id not in _devices:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -644,7 +671,7 @@ def delete_device(dev_id: str):
     _save_devices()
 
 
-@app.post("/devices/mute-all")
+@app.post("/devices/mute-all", dependencies=[Depends(require_token)])
 async def mute_all_devices(request: Request):
     body = await request.json()
     muted = body.get("muted", True)
@@ -654,7 +681,7 @@ async def mute_all_devices(request: Request):
     return {"ok": True, "muted": muted, "count": len(_devices)}
 
 
-@app.patch("/devices/{dev_id}")
+@app.patch("/devices/{dev_id}", dependencies=[Depends(require_token)])
 def patch_device(dev_id: str, body: DevicePatch):
     if dev_id not in _devices:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -664,7 +691,7 @@ def patch_device(dev_id: str, body: DevicePatch):
     return _device_with_status(dev_id)
 
 
-@app.post("/devices/{dev_id}/poll")
+@app.post("/devices/{dev_id}/poll", dependencies=[Depends(require_token)])
 async def poll_device(dev_id: str):
     if dev_id not in _devices:
         raise HTTPException(status_code=404, detail="Device not found")
@@ -770,7 +797,7 @@ class AdHocPollRequest(BaseModel):
     max_rows:      int    = 200
 
 
-@app.get("/events")
+@app.get("/events", dependencies=[Depends(require_token)])
 def get_events(
     limit: int = 100,
     event_type: str | None = None,
@@ -788,14 +815,14 @@ def get_events(
     return {"events": list(reversed(filtered[-limit:]))}
 
 
-@app.delete("/events", status_code=204)
+@app.delete("/events", status_code=204, dependencies=[Depends(require_token)])
 def clear_events():
     """Clear all stored events."""
     _events.clear()
     return
 
 
-@app.get("/proto_state")
+@app.get("/proto_state", dependencies=[Depends(require_token)])
 def get_proto_state(device_id: str | None = None):
     """Return current protocol state (interfaces, BGP, OSPF) per device."""
     if device_id:
@@ -806,7 +833,7 @@ def get_proto_state(device_id: str | None = None):
     return _proto_state
 
 
-@app.post("/poll")
+@app.post("/poll", dependencies=[Depends(require_token)])
 async def adhoc_poll(req: AdHocPollRequest):
     result = await asyncio.to_thread(
         _adhoc_poll_sync,

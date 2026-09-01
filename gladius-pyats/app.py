@@ -24,9 +24,10 @@ from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from typing import Any, Optional, Union
 
+import hmac
 import httpx
 import yaml
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -1025,8 +1026,37 @@ class ScheduleUpdate(BaseModel):
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
 
+GLADIUS_API_TOKEN = os.getenv("GLADIUS_API_TOKEN")
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "https://gladius.clydeford.net").split(",")
+    if origin.strip()
+]
+
+
+async def require_token(authorization: str = Header(default="")) -> None:
+    """FastAPI dependency: requires 'Authorization: Bearer <GLADIUS_API_TOKEN>'."""
+    if not GLADIUS_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Server auth not configured")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, GLADIUS_API_TOKEN):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _gladius_api_headers() -> dict:
+    """Headers for this service's own outbound calls to gladius-api / gladius-snmp,
+    which require the same GLADIUS_API_TOKEN bearer token."""
+    return {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
+
+
 app = FastAPI(title="Gladius Automation Factory")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 @app.on_event("startup")
@@ -1047,7 +1077,7 @@ async def _register_task(agent: str, description: str) -> str | None:
         async with httpx.AsyncClient(timeout=5.0) as client:
             r = await client.post(f"{GLADIUS_API_URL}/api/tasks/register", json={
                 "agent": agent, "description": description, "source": "automation",
-            })
+            }, headers=_gladius_api_headers())
             if r.status_code == 200:
                 return r.json().get("id")
     except Exception as e:
@@ -1063,12 +1093,12 @@ async def _complete_task(task_id: str | None):
     _cancelled_tasks.discard(task_id)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(f"{GLADIUS_API_URL}/api/tasks/{task_id}/complete")
+            await client.post(f"{GLADIUS_API_URL}/api/tasks/{task_id}/complete", headers=_gladius_api_headers())
     except Exception as e:
         log.warning("Failed to complete task %s: %s", task_id, e)
 
 
-@app.post("/api/tasks/{task_id}/kill")
+@app.post("/api/tasks/{task_id}/kill", dependencies=[Depends(require_token)])
 async def kill_task(task_id: str):
     """Kill a running task by terminating its subprocess."""
     _cancelled_tasks.add(task_id)
@@ -1458,7 +1488,7 @@ class ReviewRequest(BaseModel):
     device:  Optional[str] = None
 
 
-@app.post("/api/review")
+@app.post("/api/review", dependencies=[Depends(require_token)])
 async def review_output(req: ReviewRequest):
     model  = req.model or OLLAMA_MODEL
     device = req.device or "unknown"
@@ -1561,7 +1591,7 @@ APITEST_SYSTEM_PROMPT = """You are Gladius API, an API testing and validation ag
 
 CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
 
-@app.get("/api/models")
+@app.get("/api/models", dependencies=[Depends(require_token)])
 async def list_models():
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -1576,7 +1606,7 @@ async def list_models():
     return {"models": names, "default": OLLAMA_MODEL}
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(require_token)])
 async def chat(req: ChatRequest):
     model = req.model or OLLAMA_MODEL
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -1631,7 +1661,7 @@ class ApitestRequest(BaseModel):
     messages: list[ChatMessage]
     model:    Optional[str] = None
 
-@app.post("/api/coder")
+@app.post("/api/coder", dependencies=[Depends(require_token)])
 async def apitest_chat(req: ApitestRequest):
     model = req.model or "qwen2.5-coder:14b"
     messages = [{"role": "system", "content": APITEST_SYSTEM_PROMPT}]
@@ -1725,7 +1755,7 @@ class ItsmRequest(BaseModel):
     messages: list[ChatMessage]
     model:    Optional[str] = None
 
-@app.post("/api/itsm")
+@app.post("/api/itsm", dependencies=[Depends(require_token)])
 async def itsm_chat(req: ItsmRequest):
     model = req.model or "qwen2.5:7b"
 
@@ -1844,7 +1874,7 @@ async def _jira_search(jql: str, max_results: int = 50) -> list[dict]:
     return issues
 
 
-@app.get("/api/jira/issues")
+@app.get("/api/jira/issues", dependencies=[Depends(require_token)])
 async def jira_issues(status: str = "", assignee: str = "", label: str = "", q: str = ""):
     """Query Jira issues. Params build JQL filters."""
     if not JIRA_CONFIGURED:
@@ -1863,7 +1893,7 @@ async def jira_issues(status: str = "", assignee: str = "", label: str = "", q: 
     return {"issues": issues, "count": len(issues), "jql": jql}
 
 
-@app.get("/api/jira/open")
+@app.get("/api/jira/open", dependencies=[Depends(require_token)])
 async def jira_open_tickets():
     """Return all open (non-Done/Closed) tickets for the project."""
     if not JIRA_CONFIGURED:
@@ -1873,7 +1903,7 @@ async def jira_open_tickets():
     return {"issues": issues, "count": len(issues), "configured": True}
 
 
-@app.get("/api/jira/issue/{issue_key}")
+@app.get("/api/jira/issue/{issue_key}", dependencies=[Depends(require_token)])
 async def jira_issue_detail(issue_key: str):
     """Get full detail for a single Jira issue including description and comments."""
     if not JIRA_CONFIGURED:
@@ -1933,7 +1963,7 @@ class JiraCreateRequest(BaseModel):
     project_key: Optional[str] = None
 
 
-@app.get("/api/jira/status")
+@app.get("/api/jira/status", dependencies=[Depends(require_token)])
 async def jira_status():
     return {
         "configured": JIRA_CONFIGURED,
@@ -1942,7 +1972,7 @@ async def jira_status():
     }
 
 
-@app.post("/api/jira/create")
+@app.post("/api/jira/create", dependencies=[Depends(require_token)])
 async def jira_create(req: JiraCreateRequest):
     if not JIRA_CONFIGURED:
         raise HTTPException(503, "Jira not configured — set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_PROJECT env vars")
@@ -1961,7 +1991,7 @@ async def jira_create(req: JiraCreateRequest):
         raise HTTPException(500, str(e))
 
 
-@app.post("/api/jira/comment")
+@app.post("/api/jira/comment", dependencies=[Depends(require_token)])
 async def jira_add_comment(body: dict):
     """Add a comment to an existing Jira issue."""
     if not JIRA_CONFIGURED:
@@ -1988,7 +2018,7 @@ async def jira_add_comment(body: dict):
     return {"ok": True, "issue_key": issue_key}
 
 
-@app.post("/api/jira/close")
+@app.post("/api/jira/close", dependencies=[Depends(require_token)])
 async def jira_close_ticket(body: dict):
     """Transition a Jira issue to Done/Closed status."""
     if not JIRA_CONFIGURED:
@@ -2043,7 +2073,7 @@ async def jira_close_ticket(body: dict):
     return {"ok": True, "issue_key": issue_key, "status": "Done"}
 
 
-@app.post("/api/jira/parse-ticket")
+@app.post("/api/jira/parse-ticket", dependencies=[Depends(require_token)])
 async def jira_parse_ticket(body: dict):
     """Extract structured fields from ITSM agent markdown output."""
     text = body.get("text", "")
@@ -2071,7 +2101,7 @@ async def jira_parse_ticket(body: dict):
 
 # ── Script Repository ─────────────────────────────────────────────────────────
 
-@app.get("/api/scripts")
+@app.get("/api/scripts", dependencies=[Depends(require_token)])
 async def list_scripts():
     with get_db() as conn:
         rows = conn.execute(
@@ -2082,7 +2112,7 @@ async def list_scripts():
     return {"scripts": [dict(r) for r in rows]}
 
 
-@app.get("/api/scripts/{script_id}")
+@app.get("/api/scripts/{script_id}", dependencies=[Depends(require_token)])
 async def get_script(script_id: str):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone()
@@ -2091,7 +2121,7 @@ async def get_script(script_id: str):
     return dict(row)
 
 
-@app.post("/api/scripts")
+@app.post("/api/scripts", dependencies=[Depends(require_token)])
 async def create_script(body: ScriptCreate):
     now = datetime.now(timezone.utc).isoformat()
     sid = str(uuid.uuid4())
@@ -2105,7 +2135,7 @@ async def create_script(body: ScriptCreate):
     return {"id": sid, "name": body.name}
 
 
-@app.put("/api/scripts/{script_id}")
+@app.put("/api/scripts/{script_id}", dependencies=[Depends(require_token)])
 async def update_script(script_id: str, body: ScriptUpdate):
     now = datetime.now(timezone.utc).isoformat()
     with get_db() as conn:
@@ -2119,7 +2149,7 @@ async def update_script(script_id: str, body: ScriptUpdate):
     return {"id": script_id, "updated": True}
 
 
-@app.delete("/api/scripts/{script_id}")
+@app.delete("/api/scripts/{script_id}", dependencies=[Depends(require_token)])
 async def delete_script(script_id: str):
     with get_db() as conn:
         conn.execute("DELETE FROM scripts WHERE id=?", (script_id,))
@@ -2128,7 +2158,7 @@ async def delete_script(script_id: str):
 
 # ── Script Validation ─────────────────────────────────────────────────────────
 
-@app.post("/api/scripts/{script_id}/validate")
+@app.post("/api/scripts/{script_id}/validate", dependencies=[Depends(require_token)])
 async def validate_script(script_id: str, body: ValidateRequest):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone()
@@ -2266,7 +2296,7 @@ def _is_script_error(output: str) -> bool:
     return bool(re.search(r'(SyntaxError|IndentationError|NameError|ImportError|AttributeError|TypeError):', output))
 
 
-@app.post("/api/scripts/{script_id}/run")
+@app.post("/api/scripts/{script_id}/run", dependencies=[Depends(require_token)])
 async def run_script(script_id: str, body: RunRequest):
     with get_db() as conn:
         script_row = conn.execute("SELECT * FROM scripts WHERE id=?",    (script_id,)).fetchone()
@@ -2341,7 +2371,7 @@ async def run_script(script_id: str, body: RunRequest):
 
 # ── Template Library ──────────────────────────────────────────────────────────
 
-@app.get("/api/templates")
+@app.get("/api/templates", dependencies=[Depends(require_token)])
 async def list_templates():
     return {"templates": [
         {"id": t["id"], "name": t["name"], "description": t["description"], "platform": t["platform"]}
@@ -2349,7 +2379,7 @@ async def list_templates():
     ]}
 
 
-@app.get("/api/templates/{template_id}")
+@app.get("/api/templates/{template_id}", dependencies=[Depends(require_token)])
 async def get_template(template_id: str):
     for t in TEMPLATES:
         if t["id"] == template_id:
@@ -2357,7 +2387,7 @@ async def get_template(template_id: str):
     raise HTTPException(404, "Template not found")
 
 
-@app.post("/api/templates/{template_id}/deploy")
+@app.post("/api/templates/{template_id}/deploy", dependencies=[Depends(require_token)])
 async def deploy_template(template_id: str):
     for t in TEMPLATES:
         if t["id"] == template_id:
@@ -2375,7 +2405,7 @@ async def deploy_template(template_id: str):
 
 # ── Device Management ─────────────────────────────────────────────────────────
 
-@app.get("/api/devices")
+@app.get("/api/devices", dependencies=[Depends(require_token)])
 async def list_devices():
     with get_db() as conn:
         rows = conn.execute(
@@ -2384,7 +2414,7 @@ async def list_devices():
     return {"devices": [dict(r) for r in rows]}
 
 
-@app.post("/api/devices")
+@app.post("/api/devices", dependencies=[Depends(require_token)])
 async def add_device(body: DeviceCreate):
     did = str(uuid.uuid4())
     with get_db() as conn:
@@ -2399,14 +2429,14 @@ async def add_device(body: DeviceCreate):
     return {"id": did, "hostname": body.hostname}
 
 
-@app.delete("/api/devices/{device_id}")
+@app.delete("/api/devices/{device_id}", dependencies=[Depends(require_token)])
 async def delete_device(device_id: str):
     with get_db() as conn:
         conn.execute("DELETE FROM devices WHERE id=?", (device_id,))
     return {"deleted": device_id}
 
 
-@app.post("/api/devices/{device_id}/set_dev_switch")
+@app.post("/api/devices/{device_id}/set_dev_switch", dependencies=[Depends(require_token)])
 async def set_dev_switch(device_id: str):
     with get_db() as conn:
         conn.execute("UPDATE devices SET is_dev_switch=0")
@@ -2414,10 +2444,10 @@ async def set_dev_switch(device_id: str):
     return {"dev_switch": device_id}
 
 
-@app.post("/api/devices/sync_snmp")
+@app.post("/api/devices/sync_snmp", dependencies=[Depends(require_token)])
 async def sync_snmp_devices():
     try:
-        r = httpx.get(f"{SNMP_URL}/devices", timeout=10)
+        r = httpx.get(f"{SNMP_URL}/devices", headers=_gladius_api_headers(), timeout=10)
         r.raise_for_status()
         snmp_devices = r.json().get("devices", [])
     except Exception as e:
@@ -2442,7 +2472,7 @@ async def sync_snmp_devices():
 
 # ── Testbed Export ────────────────────────────────────────────────────────────
 
-@app.get("/api/testbed")
+@app.get("/api/testbed", dependencies=[Depends(require_token)])
 async def get_testbed():
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM devices ORDER BY hostname").fetchall()
@@ -2578,12 +2608,12 @@ def _extract_learn_data(output: str) -> dict | None:
     return None
 
 
-@app.get("/api/learn/features")
+@app.get("/api/learn/features", dependencies=[Depends(require_token)])
 async def list_learn_features():
     return {"features": GENIE_LEARN_FEATURES}
 
 
-@app.post("/api/learn")
+@app.post("/api/learn", dependencies=[Depends(require_token)])
 async def run_learn(body: LearnRequest, _skip_task: bool = False):
     """Run Genie learn for selected features on selected devices."""
     with get_db() as conn:
@@ -2652,7 +2682,7 @@ async def run_learn(body: LearnRequest, _skip_task: bool = False):
     return {"results": results}
 
 
-@app.get("/api/learn/snapshots")
+@app.get("/api/learn/snapshots", dependencies=[Depends(require_token)])
 async def list_snapshots(device_id: Optional[str] = None, feature: Optional[str] = None):
     """List snapshots, optionally filtered by device and/or feature."""
     query = "SELECT id, device_id, device_name, feature, created_at FROM snapshots"
@@ -2672,7 +2702,7 @@ async def list_snapshots(device_id: Optional[str] = None, feature: Optional[str]
     return {"snapshots": [dict(r) for r in rows]}
 
 
-@app.get("/api/learn/snapshots/{snapshot_id}")
+@app.get("/api/learn/snapshots/{snapshot_id}", dependencies=[Depends(require_token)])
 async def get_snapshot(snapshot_id: str):
     """Get full snapshot data."""
     with get_db() as conn:
@@ -2684,14 +2714,14 @@ async def get_snapshot(snapshot_id: str):
     return result
 
 
-@app.delete("/api/learn/snapshots/{snapshot_id}")
+@app.delete("/api/learn/snapshots/{snapshot_id}", dependencies=[Depends(require_token)])
 async def delete_snapshot(snapshot_id: str):
     with get_db() as conn:
         conn.execute("DELETE FROM snapshots WHERE id=?", (snapshot_id,))
     return {"deleted": snapshot_id}
 
 
-@app.post("/api/learn/diff")
+@app.post("/api/learn/diff", dependencies=[Depends(require_token)])
 async def diff_snapshots(body: DiffRequest):
     """Diff two snapshots and return the differences."""
     with get_db() as conn:
@@ -2745,7 +2775,7 @@ def _dict_diff(a, b, prefix="") -> list[str]:
     return lines
 
 
-@app.post("/api/learn/analyze")
+@app.post("/api/learn/analyze", dependencies=[Depends(require_token)])
 async def analyze_diff(body: AnalyzeRequest):
     """Send a diff to Ollama for natural language analysis."""
     model = body.model or OLLAMA_MODEL
@@ -2811,7 +2841,7 @@ async def analyze_diff(body: AnalyzeRequest):
 
 # ── SCHEDULE CRUD ──────────────────────────────────────────────────────────────
 
-@app.get("/api/learn/schedules")
+@app.get("/api/learn/schedules", dependencies=[Depends(require_token)])
 async def list_schedules():
     with get_db() as conn:
         rows = conn.execute("SELECT * FROM schedules ORDER BY created_at DESC").fetchall()
@@ -2823,7 +2853,7 @@ async def list_schedules():
     return {"schedules": schedules}
 
 
-@app.post("/api/learn/schedules")
+@app.post("/api/learn/schedules", dependencies=[Depends(require_token)])
 async def create_schedule(body: ScheduleCreate):
     sid = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -2838,7 +2868,7 @@ async def create_schedule(body: ScheduleCreate):
     return {"id": sid, "created_at": now}
 
 
-@app.patch("/api/learn/schedules/{schedule_id}")
+@app.patch("/api/learn/schedules/{schedule_id}", dependencies=[Depends(require_token)])
 async def update_schedule(schedule_id: str, body: ScheduleUpdate):
     with get_db() as conn:
         row = conn.execute("SELECT * FROM schedules WHERE id=?", (schedule_id,)).fetchone()
@@ -2867,7 +2897,7 @@ async def update_schedule(schedule_id: str, body: ScheduleUpdate):
     return {"ok": True}
 
 
-@app.delete("/api/learn/schedules/{schedule_id}")
+@app.delete("/api/learn/schedules/{schedule_id}", dependencies=[Depends(require_token)])
 async def delete_schedule(schedule_id: str):
     with get_db() as conn:
         conn.execute("DELETE FROM schedule_history WHERE schedule_id=?", (schedule_id,))
@@ -2875,7 +2905,7 @@ async def delete_schedule(schedule_id: str):
     return {"ok": True}
 
 
-@app.get("/api/learn/schedules/reasoning-log")
+@app.get("/api/learn/schedules/reasoning-log", dependencies=[Depends(require_token)])
 async def schedule_reasoning_log(limit: int = 30):
     """Return all schedule history entries that have a stored AI analysis."""
     with get_db() as conn:
@@ -2889,7 +2919,7 @@ async def schedule_reasoning_log(limit: int = 30):
     return {"entries": [dict(r) for r in rows]}
 
 
-@app.get("/api/learn/schedules/{schedule_id}/history")
+@app.get("/api/learn/schedules/{schedule_id}/history", dependencies=[Depends(require_token)])
 async def schedule_history(schedule_id: str, limit: int = 20):
     with get_db() as conn:
         rows = conn.execute(
@@ -2899,7 +2929,7 @@ async def schedule_history(schedule_id: str, limit: int = 20):
     return {"history": [dict(r) for r in rows]}
 
 
-@app.get("/api/learn/schedules/history/{history_id}/analysis")
+@app.get("/api/learn/schedules/history/{history_id}/analysis", dependencies=[Depends(require_token)])
 async def schedule_history_analysis(history_id: str):
     """Return the Ollama analysis text for a single history entry."""
     with get_db() as conn:
@@ -2909,7 +2939,7 @@ async def schedule_history_analysis(history_id: str):
     return {"id": row["id"], "analysis": row["analysis"] or "", "summary": row["summary"] or "", "ran_at": row["ran_at"]}
 
 
-@app.post("/api/learn/schedules/{schedule_id}/run")
+@app.post("/api/learn/schedules/{schedule_id}/run", dependencies=[Depends(require_token)])
 async def run_schedule_now(schedule_id: str):
     """Manually trigger a scheduled job."""
     with get_db() as conn:
