@@ -6315,7 +6315,7 @@
                 if (chips) { chips.style.opacity='0'; chips.style.transition='opacity 0.6s'; setTimeout(()=>chips.remove(), 700); }
               }, 4000);
             } else if (event.type === 'error') {
-              document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
+              document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${escHtml(event.content)}</span>`;
               const orbitEl = document.getElementById(orbitId);
               if (orbitEl) orbitEl.classList.remove('active');
             }
@@ -6431,7 +6431,7 @@
               chatMessages.scrollTop = chatMessages.scrollHeight;
             } else if (event.type === 'error') {
               if (!msgAdded) { chatMessages.appendChild(msgEl); msgAdded = true; }
-              document.getElementById(bubble.id).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
+              document.getElementById(bubble.id).innerHTML = `<span style="color:var(--danger)">${escHtml(event.content)}</span>`;
               const orbitErrEl = document.getElementById(orbitId);
               if (orbitErrEl) orbitErrEl.classList.remove('active');
               if (singleChipSpawned) removeTopbarChip(singleChipId);
@@ -6565,8 +6565,8 @@
     if (hdr) hdr.innerHTML = `
       <div style="font-size:22px;font-weight:700;color:${gaugeCol}">${score}%</div>
       <div>
-        <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${audit.device || audit.ip}</div>
-        <div style="font-size:10px;color:var(--text-dim)">${audit.ip} · ${audit.ios || ''}</div>
+        <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${escHtml(audit.device || audit.ip || '')}</div>
+        <div style="font-size:10px;color:var(--text-dim)">${escHtml(audit.ip || '')} · ${escHtml(audit.ios || '')}</div>
       </div>
       <div style="margin-left:auto;text-align:right;font-size:10px;color:var(--text-dim)">
         NIST <span style="color:var(--accent)">${nist}%</span> &nbsp; CIS <span style="color:var(--accent)">${cis}%</span>
@@ -6593,7 +6593,7 @@
       let passRows = _livePasses.map(f => `
         <tr style="border-bottom:1px solid var(--border)">
           <td style="padding:4px 8px;white-space:nowrap"><span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${_BADGE_CSS.PASS}">PASS</span></td>
-          <td style="padding:4px 8px;font-size:11px;color:var(--text-dim)">${f.title || ''}</td>
+          <td style="padding:4px 8px;font-size:11px;color:var(--text-dim)">${escHtml(f.title || '')}</td>
         </tr>`).join('');
       const passRow = document.createElement('tr');
       passRow.innerHTML = `<td colspan="2" style="padding:0">
@@ -6900,21 +6900,22 @@
       });
       const result = await createResp.json();
       if (result.ok) {
-        btn.innerHTML = '✓ ' + result.key;
+        btn.innerHTML = '✓ ' + escHtml(result.key || '');
         btn.style.cssText = 'margin-top:8px;background:rgba(0,255,100,0.1);border-color:rgba(0,255,100,0.3);color:#0f6;cursor:pointer';
         btn.disabled = false;
         btn.title = 'Click to open in Jira';
         btn.onclick = () => window.open(result.url, '_blank');
         const link = document.createElement('div');
         link.style.cssText = 'margin-top:4px;font-family:var(--font-mono);font-size:10px';
-        link.innerHTML = '<a href="' + result.url + '" target="_blank" style="color:#4a9eff;text-decoration:none">' + result.url + '</a>';
+        const safeUrl = /^https?:\/\//i.test(String(result.url || '')) ? String(result.url) : '#';
+        link.innerHTML = '<a href="' + escHtml(safeUrl) + '" target="_blank" style="color:#4a9eff;text-decoration:none">' + escHtml(result.url || '') + '</a>';
         btn.parentElement.appendChild(link);
         notify('chat', 'JIRA', 'Ticket ' + result.key + ' created');
       } else {
         throw new Error(result.detail || 'Creation failed');
       }
     } catch(e) {
-      btn.innerHTML = '✗ ' + e.message;
+      btn.innerHTML = '✗ ' + escHtml(e.message || '');
       btn.style.cssText = 'margin-top:8px;background:rgba(255,0,0,0.1);border-color:rgba(255,0,0,0.2);color:#f44;cursor:pointer';
       btn.disabled = false;
       btn.onclick = () => _createJiraFromAudit(audit, btn);
@@ -7725,8 +7726,8 @@ ${cves.length ? `<!-- CVE TAB -->
       item.innerHTML = `
         <div class="report-icon ${iconCol}">${iconSvg}</div>
         <div class="report-info">
-          <div class="report-name">${audit.device || '—'} — ${audit.ip || ''}</div>
-          <div class="report-meta">${metaParts.join(' · ')}</div>
+          <div class="report-name">${escHtml(audit.device || '—')} — ${escHtml(audit.ip || '')}</div>
+          <div class="report-meta">${escHtml(metaParts.join(' · '))}</div>
         </div>
         <div>
           <div class="report-score" style="color:${scoreCol}">${score}%</div>
@@ -8887,7 +8888,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const sel = document.getElementById('ping-group-filter');
       if (!sel) return;
       sel.innerHTML = '<option value="">All Groups</option>' + groups.map(g =>
-        `<option value="${g.id}">${g.name}</option>`
+        `<option value="${escHtml(g.id)}">${escHtml(g.name)}</option>`
       ).join('');
     } catch(e) {}
   }
@@ -9445,7 +9446,7 @@ ${cves.length ? `<!-- CVE TAB -->
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
       <td style="padding:5px 8px;white-space:nowrap"><span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${css}">${sev}</span></td>
-      <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${finding.title || finding.cve_id || ''}</td>`;
+      <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${escHtml(finding.title || finding.cve_id || '')}</td>`;
     _liveTbody.appendChild(tr);
     chatMessages.scrollTop = chatMessages.scrollHeight;
   }
@@ -9671,18 +9672,19 @@ ${cves.length ? `<!-- CVE TAB -->
     const lastPoll = d.last_poll
       ? new Date(d.last_poll).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})
       : '—';
-    const desc = (d.sysDescr || '—').replace(/\s+/g, ' ').substring(0, 60) + ((d.sysDescr || '').length > 60 ? '…' : '');
+    const desc = escHtml((d.sysDescr || '—').replace(/\s+/g, ' ').substring(0, 60) + ((d.sysDescr || '').length > 60 ? '…' : ''));
     const rtt  = d.response_ms != null ? `${d.response_ms}ms` : '—';
+    const statusTitleSafe = escHtml(statusTitle);
     const html = `
       <td style="padding:10px 14px">
-        <div title="${statusTitle}" style="width:10px;height:10px;border-radius:50%;background:${statusColor};box-shadow:0 0 6px ${statusColor};margin:0 auto"></div>
+        <div title="${statusTitleSafe}" style="width:10px;height:10px;border-radius:50%;background:${statusColor};box-shadow:0 0 6px ${statusColor};margin:0 auto"></div>
       </td>
-      <td style="padding:10px 14px;color:var(--text-primary);font-weight:600">${d.sysName || d.name || '—'}${d.muted ? ' <span style="font-size:8px;font-weight:400;color:var(--danger);border:1px solid var(--danger);border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">MUTED</span>' : ''}</td>
-      <td style="padding:10px 14px;color:var(--text-dim);font-size:11px">${d.group || '—'}</td>
-      <td style="padding:10px 14px;color:var(--accent)">${d.host}</td>
-      <td style="padding:10px 14px;color:var(--text-secondary);font-size:11px">${d.serialNum || '—'}</td>
-      <td style="padding:10px 14px;color:var(--text-dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.sysDescr || ''}">${desc}</td>
-      <td style="padding:10px 14px;color:var(--text-secondary)">${d.sysUpTime || '—'}</td>
+      <td style="padding:10px 14px;color:var(--text-primary);font-weight:600">${escHtml(d.sysName || d.name || '—')}${d.muted ? ' <span style="font-size:8px;font-weight:400;color:var(--danger);border:1px solid var(--danger);border-radius:3px;padding:0 4px;margin-left:4px;vertical-align:middle">MUTED</span>' : ''}</td>
+      <td style="padding:10px 14px;color:var(--text-dim);font-size:11px">${escHtml(d.group || '—')}</td>
+      <td style="padding:10px 14px;color:var(--accent)">${escHtml(d.host || '')}</td>
+      <td style="padding:10px 14px;color:var(--text-secondary);font-size:11px">${escHtml(d.serialNum || '—')}</td>
+      <td style="padding:10px 14px;color:var(--text-dim);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(d.sysDescr || '')}">${desc}</td>
+      <td style="padding:10px 14px;color:var(--text-secondary)">${escHtml(d.sysUpTime || '—')}</td>
       <td style="padding:10px 14px;color:var(--text-secondary);text-align:center">${d.ifNumber || '—'}</td>
       <td style="padding:10px 14px;color:${d.response_ms > 500 ? 'var(--warn,#f59e0b)' : 'var(--text-secondary)'}">${rtt}</td>
       <td style="padding:10px 14px;color:var(--text-dim)">${lastPoll}</td>
@@ -9829,7 +9831,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (!sel) return;
     const current = sel.value;
     const groups = [...new Set(devs.map(d => d.group || '').filter(Boolean))].sort();
-    sel.innerHTML = '<option value="">ALL GROUPS</option>' + groups.map(g => `<option value="${g}"${g===current?' selected':''}>${g}</option>`).join('');
+    sel.innerHTML = '<option value="">ALL GROUPS</option>' + groups.map(g => `<option value="${escHtml(g)}"${g===current?' selected':''}>${escHtml(g)}</option>`).join('');
   }
   function snmpFilterGroup() { snmpRefresh(); }
 
@@ -9959,12 +9961,12 @@ ${cves.length ? `<!-- CVE TAB -->
         <div class="snmp-stat-grid">
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">HOST</div>
-            <div class="snmp-stat-val" style="font-size:13px">${dev.host}</div>
+            <div class="snmp-stat-val" style="font-size:13px">${escHtml(dev.host || '')}</div>
           </div>
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">GROUP</div>
             <div class="snmp-stat-val" style="font-size:13px;display:flex;align-items:center;gap:6px">
-              <span id="snmp-dp-group-val">${dev.group || '—'}</span>
+              <span id="snmp-dp-group-val">${escHtml(dev.group || '—')}</span>
               <button onclick="snmpEditGroup('${dev.id}')" title="Edit group" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;padding:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--text-dim)'">✎</button>
             </div>
           </div>
@@ -9980,7 +9982,7 @@ ${cves.length ? `<!-- CVE TAB -->
           </div>
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">UPTIME</div>
-            <div class="snmp-stat-val" style="font-size:12px">${dev.sysUpTime || '—'}</div>
+            <div class="snmp-stat-val" style="font-size:12px">${escHtml(dev.sysUpTime || '—')}</div>
           </div>
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">RESPONSE</div>
@@ -9988,12 +9990,12 @@ ${cves.length ? `<!-- CVE TAB -->
           </div>
           <div class="snmp-stat-box">
             <div class="snmp-stat-label">SERIAL</div>
-            <div class="snmp-stat-val" style="font-size:12px">${dev.serialNum || '—'}</div>
+            <div class="snmp-stat-val" style="font-size:12px">${escHtml(dev.serialNum || '—')}</div>
           </div>
-          ${dev.sysDescr ? `<div class="snmp-stat-box" style="grid-column:1/-1"><div class="snmp-stat-label">DESCRIPTION</div><div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);word-break:break-word;line-height:1.5">${dev.sysDescr}</div></div>` : ''}
-          ${dev.sysContact ? `<div class="snmp-stat-box"><div class="snmp-stat-label">CONTACT</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${dev.sysContact}</div></div>` : ''}
-          ${dev.sysLocation ? `<div class="snmp-stat-box"><div class="snmp-stat-label">LOCATION</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${dev.sysLocation}</div></div>` : ''}
-          ${dev.sysName ? `<div class="snmp-stat-box"><div class="snmp-stat-label">SYSNAME</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${dev.sysName}</div></div>` : ''}
+          ${dev.sysDescr ? `<div class="snmp-stat-box" style="grid-column:1/-1"><div class="snmp-stat-label">DESCRIPTION</div><div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);word-break:break-word;line-height:1.5">${escHtml(dev.sysDescr)}</div></div>` : ''}
+          ${dev.sysContact ? `<div class="snmp-stat-box"><div class="snmp-stat-label">CONTACT</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${escHtml(dev.sysContact)}</div></div>` : ''}
+          ${dev.sysLocation ? `<div class="snmp-stat-box"><div class="snmp-stat-label">LOCATION</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${escHtml(dev.sysLocation)}</div></div>` : ''}
+          ${dev.sysName ? `<div class="snmp-stat-box"><div class="snmp-stat-label">SYSNAME</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">${escHtml(dev.sysName)}</div></div>` : ''}
         </div>
       </div>
       <div id="snmp-dp-proto-events"></div>
@@ -10032,9 +10034,10 @@ ${cves.length ? `<!-- CVE TAB -->
       const label = _EVT_LABELS[d.type] || d.type.toUpperCase();
       const sinceStr = _fmtAlertTime(d.since);
       const elapsedStr = _fmtElapsed(now - d.since.getTime());
-      const detail = (d.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const detail = escHtml(d.detail || '');
       const safeKey = d.k.replace(/'/g, "\\'");
-      const jiraTag = d.jira_key ? `<a href="${d.jira_url || '#'}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap">${d.jira_key}</a>` : '';
+      const dJiraUrlSafe = /^https?:\/\//i.test(String(d.jira_url || '')) ? String(d.jira_url) : '#';
+      const jiraTag = d.jira_key ? `<a href="${escHtml(dJiraUrlSafe)}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap">${escHtml(d.jira_key)}</a>` : '';
       cards.push(`<div class="evt-card evt-critical" style="margin-bottom:6px">
         <div class="evt-header">
           <span class="evt-icon">${icon}</span>
@@ -10051,8 +10054,9 @@ ${cves.length ? `<!-- CVE TAB -->
       const icon = _EVT_ICONS[r.type] || '🟢';
       const cls = r.phase === 'green' ? 'evt-info' : 'evt-warning';
       const phase = r.phase === 'green' ? 'CLEARING' : 'RECOVERED';
-      const detail = (r.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const jiraTag = r.jira_key ? `<a href="${r.jira_url || '#'}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap">${r.jira_key}</a>` : '';
+      const detail = escHtml(r.detail || '');
+      const rJiraUrlSafe = /^https?:\/\//i.test(String(r.jira_url || '')) ? String(r.jira_url) : '#';
+      const jiraTag = r.jira_key ? `<a href="${escHtml(rJiraUrlSafe)}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap">${escHtml(r.jira_key)}</a>` : '';
       cards.push(`<div class="evt-card ${cls}" style="margin-bottom:6px;opacity:0.75">
         <div class="evt-header">
           <span class="evt-icon">${icon}</span>
@@ -10168,6 +10172,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const rows = idxs.map(idx => {
       const f = ifaces[idx];
       const ifName = f.ifDescr || 'If'+idx;
+      const ifNameSafe = escHtml(ifName);
       const hasAlert = _alertIfaces.has(ifName);
       const isOn = mon.has(idx);
       const action = _snmpDpEdit
@@ -10175,7 +10180,7 @@ ${cves.length ? `<!-- CVE TAB -->
         : isOn ? `<span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:1px">● MON</span>` : '';
       const utils = _snmpCalcUtil(devId, idx, parseInt(f.ifSpeed) || 0);
       return `<tr${hasAlert ? ' class="if-proto-alert"' : ''}>
-        <td style="color:var(--text-primary);font-weight:500">${ifName}</td>
+        <td style="color:var(--text-primary);font-weight:500">${ifNameSafe}</td>
         <td style="color:${operC(f.ifOperStatus)};font-weight:600">${oper(f.ifOperStatus)}</td>
         <td style="color:var(--text-dim)">${adm(f.ifAdminStatus)}</td>
         <td style="color:var(--text-secondary)">${spd(f.ifSpeed)}</td>
@@ -10352,34 +10357,37 @@ ${cves.length ? `<!-- CVE TAB -->
         const isKilled    = t.status === 'killed';
         const isDone      = isCompleted || isKilled;
         const elapsed = Math.round(((isDone ? new Date(t.completed).getTime() : now) - new Date(t.started).getTime()) / 1000);
-        const desc = (t.description || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const desc = escHtml(t.description || '');
         const shortDesc = desc.length > 120 ? desc.slice(0, 120) + '…' : desc;
+        const agentSafe = escHtml(t.agent || 'Agent');
+        const avatarIcon = isKilled ? '✕' : isCompleted ? '✓' : escHtml((t.agent || 'A')[0] || 'A');
+        const idSafe = escHtml(t.id || '');
+        const idJsSafe = String(t.id || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
         const borderColor = isKilled ? 'var(--danger, #f44)' : isCompleted ? 'var(--success, #0f6)' : 'var(--border)';
         const avatarBg    = isKilled ? 'rgba(255,68,68,0.1)' : isCompleted ? 'rgba(0,255,100,0.1)' : 'var(--accent-dim)';
         const avatarBorder= isKilled ? 'var(--danger, #f44)' : isCompleted ? 'var(--success, #0f6)' : 'var(--accent)';
         const avatarColor = isKilled ? 'var(--danger, #f44)' : isCompleted ? 'var(--success, #0f6)' : 'var(--accent)';
-        const avatarIcon  = isKilled ? '✕' : isCompleted ? '✓' : (t.agent?.[0] || 'A');
         const statusBadge = isKilled
           ? '<span style="background:rgba(255,68,68,0.1);color:var(--danger, #f44);border:1px solid rgba(255,68,68,0.2);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600;letter-spacing:0.05em">KILLED</span>'
           : isCompleted
           ? '<span style="background:rgba(0,255,100,0.1);color:var(--success, #0f6);border:1px solid rgba(0,255,100,0.2);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600;letter-spacing:0.05em">COMPLETED</span>'
           : '<span style="background:rgba(255,170,0,0.1);color:#fa0;border:1px solid rgba(255,170,0,0.2);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600;letter-spacing:0.05em">RUNNING</span>';
         const killBtn = !isDone
-          ? `<button onclick="killTask('${t.id}')" style="margin-left:4px;background:rgba(255,68,68,0.1);color:var(--danger, #f44);border:1px solid rgba(255,68,68,0.3);border-radius:3px;padding:1px 6px;font-size:9px;font-weight:600;letter-spacing:0.05em;cursor:pointer;font-family:var(--font-mono);transition:all 0.2s" onmouseover="this.style.background='rgba(255,68,68,0.3)'" onmouseout="this.style.background='rgba(255,68,68,0.1)'">KILL</button>`
+          ? `<button onclick="killTask('${idJsSafe}')" style="margin-left:4px;background:rgba(255,68,68,0.1);color:var(--danger, #f44);border:1px solid rgba(255,68,68,0.3);border-radius:3px;padding:1px 6px;font-size:9px;font-weight:600;letter-spacing:0.05em;cursor:pointer;font-family:var(--font-mono);transition:all 0.2s" onmouseover="this.style.background='rgba(255,68,68,0.3)'" onmouseout="this.style.background='rgba(255,68,68,0.1)'">KILL</button>`
           : '';
         const timeLabel = isDone ? `took ${_fmtDur(elapsed)}` : _fmtDur(elapsed);
         const timeColor = isKilled ? 'var(--danger, #f44)' : isCompleted ? 'var(--success, #0f6)' : 'var(--accent)';
         return `<div style="background:var(--bg-deep);border:1px solid ${borderColor};border-radius:6px;padding:10px 14px;margin-bottom:6px;${isDone ? 'opacity:0.75' : ''}">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             <div style="width:20px;height:20px;border-radius:4px;background:${avatarBg};border:1px solid ${avatarBorder};display:flex;align-items:center;justify-content:center;font-family:var(--font-ui);font-size:10px;font-weight:700;color:${avatarColor}">${avatarIcon}</div>
-            <span style="font-family:var(--font-ui);font-size:12px;font-weight:600;color:var(--text-primary);letter-spacing:0.5px">${(t.agent || 'Agent').replace(/</g,'&lt;')}</span>
+            <span style="font-family:var(--font-ui);font-size:12px;font-weight:600;color:var(--text-primary);letter-spacing:0.5px">${agentSafe}</span>
             ${statusBadge}
             ${_srcBadge(t.source)}
             ${killBtn}
             <span style="margin-left:auto;font-family:var(--font-mono);font-size:10px;color:${timeColor}">${timeLabel}</span>
           </div>
           <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);line-height:1.5;word-break:break-word">${shortDesc}</div>
-          <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-dim);margin-top:4px">model: ${(t.model || '—').replace(/</g,'&lt;')} · id: ${t.id}</div>
+          <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-dim);margin-top:4px">model: ${escHtml(t.model || '—')} · id: ${idSafe}</div>
         </div>`;
       };
       body.innerHTML = [...running, ...done].map(_renderTask).join('');
@@ -10565,7 +10573,7 @@ ${cves.length ? `<!-- CVE TAB -->
       return `<div class="finding-item" style="cursor:pointer" onclick="openDetail(${i})">
         <div class="severity-badge ${cls}">${label}</div>
         <div class="finding-text">
-          <strong>${f.title || ''}</strong>
+          <strong>${escHtml(f.title || '')}</strong>
         </div>
       </div>`;
     }).join('');
@@ -10633,25 +10641,27 @@ ${cves.length ? `<!-- CVE TAB -->
                   : d.status === 'warn'  ? 'Stale'
                   : d.status === 'error' ? (d.error || 'Unreachable')
                   :                        'Not polled';
-        const label    = d.sysName || d.name;
+        const label    = escHtml(d.sysName || d.name || '');
         const sub      = d.sysName && d.sysName !== d.name ? d.name : '';
         const fullDesc = (d.sysDescr || '').replace(/\s+/g, ' ');
-        const desc     = fullDesc.length > 60 ? fullDesc.substring(0, 60) + '…' : fullDesc || '—';
+        const desc     = escHtml(fullDesc.length > 60 ? fullDesc.substring(0, 60) + '…' : fullDesc || '—');
         const rttMs    = d.response_ms != null ? d.response_ms : null;
         const rttStr   = rttMs != null ? `${rttMs}ms` : '—';
         const rttColor = rttMs != null && rttMs > 500 ? 'var(--warn,#f59e0b)' : 'var(--text-secondary)';
         const lastPoll = d.last_poll
           ? new Date(d.last_poll).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'})
           : '—';
-        return `<tr onclick="showPage('snmp')" title="${tip}">
+        const tipSafe     = escHtml(tip);
+        const fullDescSafe = escHtml(fullDesc);
+        return `<tr onclick="showPage('snmp')" title="${tipSafe}">
           <td style="text-align:center">
-            <div style="width:8px;height:8px;border-radius:50%;background:${col};box-shadow:0 0 5px ${col};display:inline-block" title="${tip}"></div>
+            <div style="width:8px;height:8px;border-radius:50%;background:${col};box-shadow:0 0 5px ${col};display:inline-block" title="${tipSafe}"></div>
           </td>
           <td style="color:var(--text-primary);font-weight:600">${label}</td>
-          <td style="color:var(--text-dim);font-size:10px">${d.group || '—'}</td>
-          <td style="color:var(--accent)">${d.host}</td>
-          <td style="color:var(--text-dim)" title="${fullDesc}">${desc}</td>
-          <td style="color:var(--text-secondary)">${d.sysUpTime || '—'}</td>
+          <td style="color:var(--text-dim);font-size:10px">${escHtml(d.group || '—')}</td>
+          <td style="color:var(--accent)">${escHtml(d.host || '')}</td>
+          <td style="color:var(--text-dim)" title="${fullDescSafe}">${desc}</td>
+          <td style="color:var(--text-secondary)">${escHtml(d.sysUpTime || '—')}</td>
           <td style="color:${rttColor}">${rttStr}</td>
           <td style="color:var(--text-dim)">${lastPoll}</td>
         </tr>`;
@@ -10844,7 +10854,7 @@ ${cves.length ? `<!-- CVE TAB -->
         const hostname    = d.sysName || d.name || d.host;
         const ip          = d.host;
         const showIP      = ip && ip !== hostname;
-        const errMsg      = (d.error || 'No SNMP response').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const errMsg      = escHtml(d.error || 'No SNMP response');
         const downSince   = _alertDownSince[d.id];
         const sinceStr    = downSince ? _fmtAlertTime(downSince) : '—';
         const elapsedStr  = downSince ? _fmtElapsed(now - downSince.getTime()) : '—';
@@ -10854,8 +10864,8 @@ ${cves.length ? `<!-- CVE TAB -->
           <div class="alert-card-header">
             <div class="alert-card-dot"></div>
             <div style="flex:1;min-width:0">
-              <div class="alert-card-name">${hostname}</div>
-              ${showIP ? `<div class="alert-card-host">${ip}</div>` : ''}
+              <div class="alert-card-name">${escHtml(hostname || '')}</div>
+              ${showIP ? `<div class="alert-card-host">${escHtml(ip)}</div>` : ''}
             </div>
             ${mutedBadge}
           </div>
@@ -10875,8 +10885,8 @@ ${cves.length ? `<!-- CVE TAB -->
           <div class="alert-card-header">
             <div class="alert-card-dot"></div>
             <div style="flex:1;min-width:0">
-              <div class="alert-card-name">${rc.hostname}</div>
-              ${showIP ? `<div class="alert-card-host">${rc.ip}</div>` : ''}
+              <div class="alert-card-name">${escHtml(rc.hostname || '')}</div>
+              ${showIP ? `<div class="alert-card-host">${escHtml(rc.ip)}</div>` : ''}
             </div>
             <span style="font-family:var(--font-mono);font-size:9px;opacity:0.75;text-transform:uppercase">${phaseLabel}</span>
           </div>
@@ -11142,20 +11152,21 @@ ${cves.length ? `<!-- CVE TAB -->
         const label   = _EVT_LABELS[d.type] || d.type.toUpperCase();
         const sinceStr   = _fmtAlertTime(d.since);
         const elapsedStr = _fmtElapsed(now - d.since.getTime());
-        const detail     = (d.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const detail     = escHtml(d.detail || '');
         const safeKey    = k.replace(/'/g, "\\'");
-        const jiraTag    = d.jira_key ? `<a href="${d.jira_url || '#'}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap" title="View in Jira">${d.jira_key}</a>` : '';
+        const jiraUrlSafe = /^https?:\/\//i.test(String(d.jira_url || '')) ? String(d.jira_url) : '#';
+        const jiraTag    = d.jira_key ? `<a href="${escHtml(jiraUrlSafe)}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap" title="View in Jira">${escHtml(d.jira_key)}</a>` : '';
         return `<div class="evt-card evt-critical">
           <div class="evt-header">
             <span class="evt-icon">${icon}</span>
-            <span class="evt-device">${d.device || d.host}</span>
+            <span class="evt-device">${escHtml(d.device || d.host || '')}</span>
             <span class="evt-badge eb-critical">${label}</span>
             ${jiraTag}
           </div>
           <div class="evt-detail">${detail}</div>
           <div class="evt-time">↓ down since ${sinceStr}</div>
           <div class="evt-time">⏱ down for <span data-proto-key="${k}">${elapsedStr}</span></div>
-          ${d.group ? `<div class="evt-time">⚑ ${d.group}</div>` : ''}
+          ${d.group ? `<div class="evt-time">⚑ ${escHtml(d.group)}</div>` : ''}
           <div style="margin-top:auto;padding-top:6px;display:flex;gap:4px;flex-wrap:wrap"><button class="alert-tshoot-btn" onclick="tshootProtoEvent('${safeKey}')">TSHOOT ▶</button><button class="alert-tshoot-btn" style="background:rgba(255,170,0,0.1);border-color:rgba(255,170,0,0.3);color:#fa0" onclick="sendToItsm('${safeKey}')">ITSM ▶</button></div>
         </div>`;
       }).join('');
@@ -11167,20 +11178,20 @@ ${cves.length ? `<!-- CVE TAB -->
         const icon  = _EVT_ICONS[rc.type] || '🟢';
         const cls   = rc.phase === 'green' ? 'evt-info' : 'evt-warning';
         const phase = rc.phase === 'green' ? 'CLEARING' : 'RECOVERED';
-        const detail = (rc.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const detail = escHtml(rc.detail || '');
         const jiraKey = dInfo?.jira_key || '';
-        const jiraUrl = dInfo?.jira_url || '#';
-        const jiraTag = jiraKey ? `<a href="${jiraUrl}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap" title="View in Jira">${jiraKey}</a>` : '';
+        const jiraUrl = /^https?:\/\//i.test(String(dInfo?.jira_url || '')) ? String(dInfo.jira_url) : '#';
+        const jiraTag = jiraKey ? `<a href="${escHtml(jiraUrl)}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap" title="View in Jira">${escHtml(jiraKey)}</a>` : '';
         return `<div class="evt-card ${cls}">
           <div class="evt-header">
             <span class="evt-icon">${icon}</span>
-            <span class="evt-device">${rc.device || rc.host}</span>
+            <span class="evt-device">${escHtml(rc.device || rc.host || '')}</span>
             <span style="font-family:var(--font-mono);font-size:9px;opacity:0.75;text-transform:uppercase">${phase}</span>
             ${jiraTag}
           </div>
           <div class="evt-detail">${detail}</div>
           <div class="evt-time">↑ up since ${_fmtAlertTime(rc.recoveredAt)}</div>
-          ${rc.group ? `<div class="evt-time">⚑ ${rc.group}</div>` : ''}
+          ${rc.group ? `<div class="evt-time">⚑ ${escHtml(rc.group)}</div>` : ''}
         </div>`;
       }).join('');
 
@@ -11196,17 +11207,18 @@ ${cves.length ? `<!-- CVE TAB -->
         const sev   = e.severity || 'info';
         const ts    = new Date(e.timestamp);
         const tStr  = ts.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit' });
-        const detail = (e.detail || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const jiraTag = e.jira_key ? `<a href="${e.jira_url || '#'}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap">${e.jira_key}</a>` : '';
+        const detail = escHtml(e.detail || '');
+        const eJiraUrlSafe = /^https?:\/\//i.test(String(e.jira_url || '')) ? String(e.jira_url) : '#';
+        const jiraTag = e.jira_key ? `<a href="${escHtml(eJiraUrlSafe)}" target="_blank" rel="noopener" style="font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:3px;background:rgba(74,158,255,0.15);border:1px solid rgba(74,158,255,0.4);color:#4a9eff;text-decoration:none;margin-left:auto;white-space:nowrap">${escHtml(e.jira_key)}</a>` : '';
         return `<div class="evt-card evt-${sev}" style="opacity:0.7">
           <div class="evt-header">
             <span class="evt-icon">${icon}</span>
-            <span class="evt-device">${e.device || e.host}</span>
+            <span class="evt-device">${escHtml(e.device || e.host || '')}</span>
             <span class="evt-badge eb-${sev}">${label}</span>
             ${jiraTag}
           </div>
           <div class="evt-detail">${detail}</div>
-          <div class="evt-time">${tStr}${e.group ? ' · ' + e.group : ''}</div>
+          <div class="evt-time">${tStr}${e.group ? ' · ' + escHtml(e.group) : ''}</div>
         </div>`;
       }).join('') : '';
 
@@ -11318,9 +11330,10 @@ ${cves.length ? `<!-- CVE TAB -->
     const recent = [...log].reverse().slice(0, 20);
     body.innerHTML = recent.map(entry => {
       const t = new Date(entry.time).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
-      const text = entry.hi
-        ? entry.text.replace(entry.hi, `<span class="hi">${entry.hi}</span>`)
-        : entry.text;
+      const rawText = entry.text || '';
+      const text = entry.hi && rawText.includes(entry.hi)
+        ? escHtml(rawText).split(escHtml(entry.hi)).join(`<span class="hi">${escHtml(entry.hi)}</span>`)
+        : escHtml(rawText);
       return `<div class="activity-item"><div class="activity-time">${t}</div><div class="activity-text">${text}</div></div>`;
     }).join('');
   }
@@ -11351,21 +11364,23 @@ ${cves.length ? `<!-- CVE TAB -->
     const body = document.getElementById('detail-body-inner');
     if (body) {
       const sec = (lbl, content) =>
-        `<div><div class="detail-section-label">${lbl}</div>${content}</div>`;
+        `<div><div class="detail-section-label">${escHtml(lbl)}</div>${content}</div>`;
       const prose = txt =>
-        `<div class="detail-description">${txt}</div>`;
+        `<div class="detail-description">${escHtml(txt)}</div>`;
       const code = txt =>
-        `<pre style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 14px;font-family:var(--font-mono);font-size:12px;color:var(--accent);white-space:pre-wrap;word-break:break-all;margin:0">${txt}</pre>`;
-      const link = (url, display) =>
-        `<div class="detail-ref"><a href="${url}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${display || url} ↗</a></div>`;
+        `<pre style="background:var(--bg-card);border:1px solid var(--border);border-radius:4px;padding:10px 14px;font-family:var(--font-mono);font-size:12px;color:var(--accent);white-space:pre-wrap;word-break:break-all;margin:0">${escHtml(txt)}</pre>`;
+      const link = (url, display) => {
+        const safeUrl = /^https?:\/\//i.test(String(url || '')) ? String(url) : '#';
+        return `<div class="detail-ref"><a href="${escHtml(safeUrl)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${escHtml(display || url)} ↗</a></div>`;
+      };
 
       let html = '';
 
       if (f.category)
-        html += `<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase">${f.category}</div>`;
+        html += `<div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase">${escHtml(f.category)}</div>`;
 
       if (isCve && f.cve_id)
-        html += sec('CVE ID', link(`https://nvd.nist.gov/vuln/detail/${f.cve_id}`, f.cve_id));
+        html += sec('CVE ID', link(`https://nvd.nist.gov/vuln/detail/${encodeURIComponent(f.cve_id)}`, f.cve_id));
 
       const impactText = f.impact || f.description || f.detail || '';
       if (impactText)
@@ -11387,7 +11402,7 @@ ${cves.length ? `<!-- CVE TAB -->
       if (refUrl)
         html += sec('Reference', link(refUrl));
 
-      body.innerHTML = html || prose('<span style="color:var(--text-dim)">No details recorded for this finding.</span>');
+      body.innerHTML = html || '<div class="detail-description"><span style="color:var(--text-dim)">No details recorded for this finding.</span></div>';
     }
 
     window._currentFinding = f;
@@ -11569,8 +11584,8 @@ ${cves.length ? `<!-- CVE TAB -->
       return `<div onclick="selectDashAudit(${i})" style="display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;${isCurrent?'background:var(--accent-dim);color:var(--accent)':'color:var(--text-secondary)'}">
         <span style="color:var(--accent);min-width:16px">${i===0?'★':i+1}</span>
         <div style="flex:1;min-width:0">
-          <div style="font-weight:600;color:${isCurrent?'var(--accent)':'var(--text-primary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.device || a.ip || '—'}</div>
-          <div style="font-size:9px;color:var(--text-dim);margin-top:1px">${ts} · ${a.ip || ''}</div>
+          <div style="font-weight:600;color:${isCurrent?'var(--accent)':'var(--text-primary)'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(a.device || a.ip || '—')}</div>
+          <div style="font-size:9px;color:var(--text-dim);margin-top:1px">${ts} · ${escHtml(a.ip || '')}</div>
         </div>
         ${scoreHtml}
       </div>`;
@@ -11908,21 +11923,25 @@ ${cves.length ? `<!-- CVE TAB -->
 
     let html = '';
     if (_cveSubtitle) {
-      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${_cveSubtitle}</td></tr>`;
+      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${escHtml(_cveSubtitle)}</td></tr>`;
     }
+    const jsStr = s => String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     sorted.forEach(c => {
-      html += `<tr style="cursor:pointer" onclick="window.open('${c.url}','_blank')">
+      const idSafe = escHtml(c.id || '');
+      const urlSafe = /^https?:\/\//i.test(String(c.url || '')) ? String(c.url) : '';
+      const openCall = urlSafe ? `window.open('${jsStr(urlSafe)}','_blank')` : '';
+      html += `<tr style="cursor:pointer" onclick="${escHtml(openCall)}">
         <td class="cve-id" style="white-space:nowrap">
           <div style="display:flex;align-items:center;gap:5px">
-            ${c.id}
-            <button onclick="event.stopPropagation();agentCVE('${c.id}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
+            ${idSafe}
+            <button onclick="event.stopPropagation();agentCVE('${jsStr(c.id)}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
           </div>
         </td>
-        <td class="${sevClass(c.severity)}">${c.score}</td>
-        <td><span class="severity-badge ${badgeCls(c.severity)}">${c.severity}</span></td>
-        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${c.published}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:nowrap">${c.vendor}</td>
-        <td style="font-size:13px;color:var(--text-secondary)">${c.description}</td>
+        <td class="${sevClass(c.severity)}">${escHtml(String(c.score ?? ''))}</td>
+        <td><span class="severity-badge ${badgeCls(c.severity)}">${escHtml(c.severity || '')}</span></td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${escHtml(c.published || '')}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);white-space:nowrap">${escHtml(c.vendor || '')}</td>
+        <td style="font-size:13px;color:var(--text-secondary)">${escHtml(c.description || '')}</td>
       </tr>`;
     });
     tbody.innerHTML = html;
@@ -12018,22 +12037,26 @@ ${cves.length ? `<!-- CVE TAB -->
     const badgeCls = s => s === 'CRITICAL' || s === 'HIGH' ? 'high' : s === 'MEDIUM' ? 'medium' : 'low';
     let html = '';
     if (_psirtSubtitle) {
-      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${_psirtSubtitle}</td></tr>`;
+      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${escHtml(_psirtSubtitle)}</td></tr>`;
     }
+    const jsStr2 = s => String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     sorted.forEach(a => {
       const cveList = (a.cves || []).slice(0, 3).join(', ') + (a.cve_count > 3 ? ` +${a.cve_count - 3}` : '');
-      html += `<tr style="cursor:pointer" onclick="window.open('${a.url}','_blank')" title="${(a.summary||'').replace(/"/g,'&quot;')}">
+      const aIdSafe = escHtml(a.id || '');
+      const aUrlSafe = /^https?:\/\//i.test(String(a.url || '')) ? String(a.url) : '';
+      const aOpenCall = aUrlSafe ? `window.open('${jsStr2(aUrlSafe)}','_blank')` : '';
+      html += `<tr style="cursor:pointer" onclick="${escHtml(aOpenCall)}" title="${escHtml(a.summary||'')}">
         <td class="cve-id" style="white-space:nowrap">
           <div style="display:flex;align-items:center;gap:5px">
-            ${a.id}
-            <button onclick="event.stopPropagation();agentPSIRT('${a.id}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
+            ${aIdSafe}
+            <button onclick="event.stopPropagation();agentPSIRT('${jsStr2(a.id)}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
           </div>
         </td>
-        <td class="${sevClass(a.severity)}">${a.cvss}</td>
-        <td><span class="severity-badge ${badgeCls(a.severity)}">${a.severity}</span></td>
-        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${a.published}</td>
-        <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)">${cveList || '—'}</td>
-        <td style="font-size:13px;color:var(--text-secondary)">${a.title}</td>
+        <td class="${sevClass(a.severity)}">${escHtml(String(a.cvss ?? ''))}</td>
+        <td><span class="severity-badge ${badgeCls(a.severity)}">${escHtml(a.severity || '')}</span></td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-dim);white-space:nowrap">${escHtml(a.published || '')}</td>
+        <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim)">${escHtml(cveList || '—')}</td>
+        <td style="font-size:13px;color:var(--text-secondary)">${escHtml(a.title || '')}</td>
       </tr>`;
     });
     tbody.innerHTML = html;
@@ -12090,36 +12113,39 @@ ${cves.length ? `<!-- CVE TAB -->
     }
     let html = '';
     if (subtitle) {
-      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${subtitle}</td></tr>`;
+      html += `<tr><td colspan="6" style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);padding:8px 16px;border-bottom:1px solid var(--border);background:var(--bg-panel)">${escHtml(subtitle)}</td></tr>`;
     }
+    const jsStr3 = s => String(s == null ? '' : s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     records.forEach(r => {
+      const pidSafe = escHtml(r.pid || '');
       if (r.error && !r.not_eol) {
         html += `<tr>
-          <td class="cve-id">${r.pid}</td>
-          <td colspan="5" style="color:var(--danger);font-family:var(--font-mono);font-size:12px">Error: ${r.error} — ${r.error_desc || ''}</td>
+          <td class="cve-id">${pidSafe}</td>
+          <td colspan="5" style="color:var(--danger);font-family:var(--font-mono);font-size:12px">Error: ${escHtml(r.error)} — ${escHtml(r.error_desc || '')}</td>
         </tr>`;
         return;
       }
       if (r.not_eol) {
         html += `<tr>
-          <td class="cve-id">${r.pid}</td>
+          <td class="cve-id">${pidSafe}</td>
           <td colspan="5" style="color:var(--text-dim);font-family:var(--font-mono);font-size:12px">Not yet EoL — no EoX record (SSA_ERR_026)</td>
         </tr>`;
         return;
       }
-      const rowClick = r.bulletin ? `style="cursor:pointer" onclick="window.open('${r.bulletin}','_blank')" title="View EoL bulletin"` : '';
+      const bulletinSafe = /^https?:\/\//i.test(String(r.bulletin || '')) ? String(r.bulletin) : '';
+      const rowClick = bulletinSafe ? `style="cursor:pointer" onclick="${escHtml(`window.open('${jsStr3(bulletinSafe)}','_blank')`)}" title="View EoL bulletin"` : '';
       html += `<tr ${rowClick}>
         <td class="cve-id" style="white-space:nowrap">
           <div style="display:flex;align-items:center;gap:5px">
-            ${r.pid}
-            <button onclick="event.stopPropagation();agentEOX('${r.pid}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
+            ${pidSafe}
+            <button onclick="event.stopPropagation();agentEOX('${jsStr3(r.pid)}')" style="font-size:9px;padding:3px 7px;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:3px;cursor:pointer;font-family:var(--font-mono);font-weight:700;letter-spacing:0.04em;line-height:1.4;flex-shrink:0;transition:box-shadow 0.15s,transform 0.1s,background 0.15s" onmouseover="this.style.boxShadow='0 0 12px var(--accent)';this.style.background='color-mix(in srgb,var(--accent) 15%,transparent)';this.style.transform='scale(1.07)'" onmouseout="this.style.boxShadow='none';this.style.background='transparent';this.style.transform='scale(1)'">ASK THE AGENT ▶</button>
           </div>
         </td>
-        <td style="font-size:12px;color:var(--text-secondary)">${r.description || '—'}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.eos)}">${r.eos || '—'}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.sw_maint)}">${r.sw_maint || '—'}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.ldos)}">${r.ldos || '—'}</td>
-        <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${r.migration || '—'}</td>
+        <td style="font-size:12px;color:var(--text-secondary)">${escHtml(r.description || '—')}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.eos)}">${escHtml(r.eos || '—')}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.sw_maint)}">${escHtml(r.sw_maint || '—')}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;white-space:nowrap;${dateStyle(r.ldos)}">${escHtml(r.ldos || '—')}</td>
+        <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${escHtml(r.migration || '—')}</td>
       </tr>`;
     });
     tbody.innerHTML = html;
@@ -12186,7 +12212,7 @@ ${cves.length ? `<!-- CVE TAB -->
       chip.id = `fc-${i}`;
       chip.innerHTML =
         `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>` +
-        `<span>${f.name}</span>`;
+        `<span>${escHtml(f.name)}</span>`;
       list.appendChild(chip);
     });
     const n = _selectedFiles.length;
@@ -12245,7 +12271,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const now  = new Date().toTimeString().slice(0, 8);
     const line = document.createElement('div');
     line.className = 'ingest-log-line ' + level;
-    line.innerHTML = `<span class="ingest-log-time">${now}</span><span class="ingest-log-msg">${msg}</span>`;
+    line.innerHTML = `<span class="ingest-log-time">${now}</span><span class="ingest-log-msg">${escHtml(msg)}</span>`;
     log.appendChild(line);
     log.scrollTop = log.scrollHeight;
   }
@@ -12431,7 +12457,7 @@ ${cves.length ? `<!-- CVE TAB -->
     panel.innerHTML = docs.map(d => `
       <div style="display:flex;align-items:center;gap:8px;padding:3px 0;">
         <span style="color:var(--accent);font-size:10px;">▸</span>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${d}</span>
+        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escHtml(d)}</span>
       </div>`).join('');
   }
 
@@ -13196,7 +13222,7 @@ ${cves.length ? `<!-- CVE TAB -->
               setTopbarChipDone(tshootChipId);
             } else if (event.type === 'error') {
               if (!msgAdded) { msgs.appendChild(msgEl); msgAdded = true; }
-              document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${event.content}</span>`;
+              document.getElementById(msgId).innerHTML = `<span style="color:var(--danger)">${escHtml(event.content)}</span>`;
               const orbitEl = document.getElementById(orbitId);
               if (orbitEl) orbitEl.classList.remove('active');
               removeTopbarChip(tshootChipId);
@@ -15149,12 +15175,12 @@ ${cves.length ? `<!-- CVE TAB -->
     const elapsedStr = started && completed ? _dur(Math.round((completed.getTime() - started.getTime()) / 1000)) : '—';
     const sevColor = d.severity === 'critical' ? 'var(--danger)' : d.severity === 'warning' ? '#ffaa00' : 'var(--accent)';
     const jiraBadge = d.jira_key
-      ? `<span style="background:rgba(0,120,255,0.1);color:#39f;border:1px solid rgba(0,120,255,0.2);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600">${d.jira_key}</span>`
+      ? `<span style="background:rgba(0,120,255,0.1);color:#39f;border:1px solid rgba(0,120,255,0.2);border-radius:3px;padding:1px 5px;font-size:9px;font-weight:600">${escHtml(d.jira_key)}</span>`
       : '';
     const toolsBadge = d.tools_used && d.tools_used.length
       ? `<span style="font-size:9px;color:var(--text-dim)">${d.tools_used.length} tools</span>`
       : '';
-    const findingsPreview = (d.findings || '').substring(0, 200).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const findingsPreview = escHtml((d.findings || '').substring(0, 200));
     const hasFindings = d.findings && d.findings.trim().length > 0;
 
     return `<div style="background:var(--bg-deep);border:1px solid var(--border);border-left:3px solid ${sevColor};border-radius:6px;padding:10px 12px;margin-bottom:8px">
@@ -15165,7 +15191,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <span style="margin-left:auto;font-family:var(--font-mono);font-size:9px;color:var(--text-dim)">${elapsedStr}</span>
       </div>
       <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-primary);margin-bottom:4px">
-        <strong>${(d.device || '').replace(/</g,'&lt;')}</strong> — ${(d.detail || '').replace(/</g,'&lt;')}
+        <strong>${escHtml(d.device || '')}</strong> — ${escHtml(d.detail || '')}
       </div>
       <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-dim);margin-bottom:6px">${ts}</div>
       ${hasFindings ? `<div style="position:relative">
@@ -15499,14 +15525,15 @@ ${cves.length ? `<!-- CVE TAB -->
       const prioColor = p => p === 'Highest' || p === 'High' ? 'var(--danger)' : p === 'Medium' ? 'var(--warn,#f59e0b)' : 'var(--text-dim)';
       drop.innerHTML = _jiraOpenTickets.map(t => {
         const created = t.created ? new Date(t.created).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
-        return `<a href="${t.url}" target="_blank" rel="noopener" style="display:flex;align-items:flex-start;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-decoration:none" onmouseover="this.style.background='var(--bg-card)'" onmouseout="this.style.background=''">
-          <span style="color:#4a9eff;font-weight:600;white-space:nowrap;min-width:50px">${t.key}</span>
+        const safeUrl = /^https?:\/\//i.test(String(t.url || '')) ? String(t.url) : '#';
+        return `<a href="${escHtml(safeUrl)}" target="_blank" rel="noopener" style="display:flex;align-items:flex-start;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-decoration:none" onmouseover="this.style.background='var(--bg-card)'" onmouseout="this.style.background=''">
+          <span style="color:#4a9eff;font-weight:600;white-space:nowrap;min-width:50px">${escHtml(t.key || '')}</span>
           <div style="flex:1;min-width:0">
-            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)">${t.summary}</div>
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)">${escHtml(t.summary || '')}</div>
             <div style="font-size:9px;color:var(--text-dim);margin-top:2px;display:flex;gap:8px">
-              <span style="color:${prioColor(t.priority)}">${t.priority}</span>
-              <span>${t.status}</span>
-              <span>${t.assignee}</span>
+              <span style="color:${prioColor(t.priority)}">${escHtml(t.priority || '')}</span>
+              <span>${escHtml(t.status || '')}</span>
+              <span>${escHtml(t.assignee || '')}</span>
               <span>${created}</span>
             </div>
           </div>
@@ -16060,21 +16087,22 @@ ${cves.length ? `<!-- CVE TAB -->
       });
       const result = await createResp.json();
       if (result.ok) {
-        btn.innerHTML = '\u2713 ' + result.key;
+        btn.innerHTML = '\u2713 ' + escHtml(result.key || '');
         btn.style.cssText = 'margin-top:8px;background:rgba(0,255,100,0.1);border-color:rgba(0,255,100,0.3);color:#0f6;cursor:pointer';
         btn.disabled = false;
         btn.title = 'Click to open in Jira';
         btn.onclick = () => window.open(result.url, '_blank');
         const link = document.createElement('div');
         link.style.cssText = 'margin-top:4px;font-family:var(--font-mono);font-size:10px';
-        link.innerHTML = '<a href="' + result.url + '" target="_blank" style="color:#4a9eff;text-decoration:none">' + result.url + '</a>';
+        const safeUrl = /^https?:\/\//i.test(String(result.url || '')) ? String(result.url) : '#';
+        link.innerHTML = '<a href="' + escHtml(safeUrl) + '" target="_blank" style="color:#4a9eff;text-decoration:none">' + escHtml(result.url || '') + '</a>';
         btn.parentElement.appendChild(link);
         notify('itsm', 'JIRA', 'Ticket ' + result.key + ' created');
       } else {
         throw new Error(result.detail || 'Creation failed');
       }
     } catch(e) {
-      btn.innerHTML = '\u2717 ' + e.message;
+      btn.innerHTML = '\u2717 ' + escHtml(e.message || '');
       btn.style.cssText = 'margin-top:8px;background:rgba(255,0,0,0.1);border-color:rgba(255,0,0,0.2);color:#f44;cursor:pointer';
       btn.disabled = false;
       btn.onclick = () => _createJiraFromItsm(ticketText, btn);
