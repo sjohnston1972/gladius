@@ -25,13 +25,14 @@ import requests as http_requests
 import anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, Response
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, Response, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import io
 import hashlib
+import hmac
 import httpx
 
 load_dotenv()
@@ -599,8 +600,31 @@ async def lifespan(app: FastAPI):
     await mcp_manager.disconnect()
     await pentest_mcp_manager.disconnect()
 
+GLADIUS_API_TOKEN = os.getenv("GLADIUS_API_TOKEN")
+
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "https://gladius.clydeford.net").split(",")
+    if origin.strip()
+]
+
+
+async def require_token(authorization: str = Header(default="")) -> None:
+    """FastAPI dependency: requires 'Authorization: Bearer <GLADIUS_API_TOKEN>'."""
+    if not GLADIUS_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Server auth not configured")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token, GLADIUS_API_TOKEN):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 app = FastAPI(title="Gladius API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -619,7 +643,7 @@ class EmailRequest(BaseModel):
     filename: str = None
     recipient: str = None
 
-@app.post("/api/email")
+@app.post("/api/email", dependencies=[Depends(require_token)])
 async def email_report(request: EmailRequest):
     """Send a pre-built HTML audit report as an attachment — no Claude involved."""
     try:
@@ -658,7 +682,7 @@ class InlineEmailRequest(BaseModel):
     html_body: str
     recipient: str = None
 
-@app.post("/api/email/inline")
+@app.post("/api/email/inline", dependencies=[Depends(require_token)])
 async def email_inline(request: InlineEmailRequest):
     """Send an HTML email rendered inline in the email body (no attachment)."""
     try:
@@ -681,7 +705,7 @@ async def email_inline(request: InlineEmailRequest):
         return {"ok": False, "error": str(e)}
 
 
-@app.get("/api/tasks/running")
+@app.get("/api/tasks/running", dependencies=[Depends(require_token)])
 async def get_running_tasks():
     """Return all active and recently completed agent tasks."""
     _prune_completed_tasks()
@@ -689,7 +713,7 @@ async def get_running_tasks():
     return {"tasks": tasks, "count": len(tasks)}
 
 
-@app.post("/api/tasks/register")
+@app.post("/api/tasks/register", dependencies=[Depends(require_token)])
 async def register_task(request: Request):
     """Register an external task (from gladius-pyats, etc.)."""
     body = await request.json()
@@ -702,14 +726,14 @@ async def register_task(request: Request):
     return {"id": tid}
 
 
-@app.post("/api/tasks/{task_id}/complete")
+@app.post("/api/tasks/{task_id}/complete", dependencies=[Depends(require_token)])
 async def complete_task(task_id: str):
     """Mark an externally registered task as completed."""
     _task_end(task_id)
     return {"ok": True}
 
 
-@app.post("/api/tasks/{task_id}/kill")
+@app.post("/api/tasks/{task_id}/kill", dependencies=[Depends(require_token)])
 async def kill_task(task_id: str):
     """Kill a running task. For local tasks, sets cancel event. For automation tasks, forwards to pyats."""
     task = _running_tasks.get(task_id)
@@ -909,7 +933,7 @@ def health_full():
     # ── Jira Cloud ──────────────────────────────────────────────────────────
     try:
         t0 = time.monotonic()
-        r  = http_requests.get(f"{AUTOMATION_URL}/api/jira/status", timeout=5)
+        r  = http_requests.get(f"{AUTOMATION_URL}/api/jira/status", headers=_internal_headers(), timeout=5)
         ms = int((time.monotonic() - t0) * 1000)
         if r.status_code == 200:
             d = r.json()
@@ -918,7 +942,7 @@ def health_full():
                 import base64 as _b64
                 jira_url   = d.get("url", "")
                 # Hit the myself endpoint through the pyats proxy
-                r2 = http_requests.get(f"{AUTOMATION_URL}/api/jira/issues?status=Done", timeout=10)
+                r2 = http_requests.get(f"{AUTOMATION_URL}/api/jira/issues?status=Done", headers=_internal_headers(), timeout=10)
                 ms2 = int((time.monotonic() - t0) * 1000)
                 if r2.status_code == 200:
                     count = r2.json().get("count", 0)
@@ -941,7 +965,7 @@ def health_full():
 
 
 
-@app.get("/api/kb/stats")
+@app.get("/api/kb/stats", dependencies=[Depends(require_token)])
 def kb_stats():  # sync on purpose — blocking http call, runs in threadpool (see health_full note)
     """Return live vector count from Chroma."""
     try:
@@ -1029,7 +1053,7 @@ def _nvd_parse(item: dict) -> dict:
         "url":         f"https://nvd.nist.gov/vuln/detail/{cve_id}",
     }
 
-@app.get("/api/cve/latest")
+@app.get("/api/cve/latest", dependencies=[Depends(require_token)])
 def cve_latest():  # sync on purpose — blocking NVD call, runs in threadpool (see health_full note)
     """Latest HIGH + CRITICAL CVEs from NVD (last 30 days, any vendor)."""
     cached = _cache_get("cve_latest")
@@ -1057,7 +1081,7 @@ def cve_latest():  # sync on purpose — blocking NVD call, runs in threadpool (
         log.error(f"CVE latest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/cve/search")
+@app.get("/api/cve/search", dependencies=[Depends(require_token)])
 def cve_search(q: str = "", severity: str = "", days_back: int = 30):  # sync — blocking NVD call, threadpool
     """Search NVD CVEs directly — used by the CVE tab search bar."""
     end_dt   = datetime.datetime.now(datetime.timezone.utc)
@@ -1125,7 +1149,7 @@ def _psirt_parse(adv: dict) -> dict:
         "products":  adv.get("productNames", [])[:5],
     }
 
-@app.get("/api/psirt/latest")
+@app.get("/api/psirt/latest", dependencies=[Depends(require_token)])
 def psirt_latest():  # sync — blocking PSIRT call, threadpool
     """Latest CRITICAL + HIGH Cisco PSIRT advisories."""
     if not PSIRT_CLIENT_KEY:
@@ -1153,7 +1177,7 @@ def psirt_latest():  # sync — blocking PSIRT call, threadpool
         log.error(f"PSIRT latest failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/psirt/search")
+@app.get("/api/psirt/search", dependencies=[Depends(require_token)])
 def psirt_search(q: str = "", severity: str = ""):  # sync — blocking PSIRT call, threadpool
     """Search Cisco PSIRT advisories by product name or severity."""
     if not PSIRT_CLIENT_KEY:
@@ -1225,7 +1249,7 @@ def _eox_parse(rec: dict) -> dict:
         "not_eol":     False,
     }
 
-@app.get("/api/eox/search")
+@app.get("/api/eox/search", dependencies=[Depends(require_token)])
 def eox_search(pids: str = "", start_date: str = "", end_date: str = ""):  # sync — blocking EOX call, threadpool
     """Query Cisco EOX API by product IDs or date range."""
     if not EOX_CLIENT_KEY:
@@ -1264,7 +1288,7 @@ class AuditResult(BaseModel):
     findings: list
     score: dict
 
-@app.post("/api/audit/save")
+@app.post("/api/audit/save", dependencies=[Depends(require_token)])
 async def save_audit(result: AuditResult):
     """
     Receives structured audit results from the MCP save_audit_results tool.
@@ -1300,7 +1324,7 @@ async def _tracked_stream(gen, task_id: str):
         _task_end(task_id)
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(require_token)])
 async def chat(request: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
@@ -1316,7 +1340,7 @@ async def chat(request: ChatRequest):
     )
 
 
-@app.post("/api/tshoot")
+@app.post("/api/tshoot", dependencies=[Depends(require_token)])
 async def tshoot(request: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
@@ -1341,7 +1365,7 @@ class AutoTshootRequest(BaseModel):
     group: str = ""
 
 
-@app.post("/api/tshoot/auto")
+@app.post("/api/tshoot/auto", dependencies=[Depends(require_token)])
 async def tshoot_auto(req: AutoTshootRequest):
     """Auto-tshoot: triggered by SNMP alerts. Runs diagnostics and updates Jira ticket."""
     if not ANTHROPIC_API_KEY:
@@ -1428,7 +1452,7 @@ async def _run_auto_tshoot(messages: list, task_id: str, req: AutoTshootRequest)
     log.info(f"[Auto-tshoot] completed for {req.device} ({req.event_type}), {len(tools_used)} tool calls, {len(diag['findings'])} chars")
 
 
-@app.get("/api/tshoot/diagnostics")
+@app.get("/api/tshoot/diagnostics", dependencies=[Depends(require_token)])
 async def get_tshoot_diagnostics():
     """Return auto-tshoot diagnostic history."""
     return {"diagnostics": _tshoot_diagnostics}
@@ -1515,7 +1539,7 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                             None, lambda: http_requests.post(
                                 f"{AUTOMATION_URL}/api/jira/comment",
                                 json={"issue_key": tool_input.get("issue_key", ""), "comment": tool_input.get("comment", "")},
-                                timeout=15,
+                                headers=_internal_headers(), timeout=15,
                             )
                         )
                         data = r.json()
@@ -1534,7 +1558,7 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                         r = await asyncio.get_event_loop().run_in_executor(
                             None, lambda: http_requests.get(
                                 f"{AUTOMATION_URL}/api/jira/issues",
-                                params=params, timeout=15,
+                                params=params, headers=_internal_headers(), timeout=15,
                             )
                         )
                         data = r.json()
@@ -1557,7 +1581,7 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                             None, lambda: http_requests.post(
                                 f"{AUTOMATION_URL}/api/jira/close",
                                 json={"issue_key": tool_input.get("issue_key", ""), "comment": tool_input.get("comment", "")},
-                                timeout=15,
+                                headers=_internal_headers(), timeout=15,
                             )
                         )
                         data = r.json()
@@ -1740,7 +1764,7 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                                 r = await asyncio.get_event_loop().run_in_executor(
                                     None, lambda: http_requests.post(
                                         f"{AUTOMATION_URL}/api/jira/create",
-                                        json=payload, timeout=20,
+                                        json=payload, headers=_internal_headers(), timeout=20,
                                     )
                                 )
                                 data = r.json() if r.content else {}
@@ -2217,7 +2241,7 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
         yield f"data: {json.dumps({'type':'error','content':str(e)})}\n\n"
 
 
-@app.post("/api/pentest/chat")
+@app.post("/api/pentest/chat", dependencies=[Depends(require_token)])
 async def pentest_chat(request: ChatRequest):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
@@ -2272,7 +2296,7 @@ def _load_pentest_history() -> list[dict]:
     return [r[1] for r in rows[:PENTEST_HISTORY_MAX]]
 
 
-@app.post("/api/pentest/save")
+@app.post("/api/pentest/save", dependencies=[Depends(require_token)])
 async def pentest_save(payload: dict):
     """Receives the engagement object from save_pentest_results MCP tool."""
     global _pending_pentest, _last_pentest
@@ -2291,13 +2315,13 @@ async def pentest_save(payload: dict):
     return {"ok": True, "engagement_id": eid}
 
 
-@app.get("/api/pentest/history")
+@app.get("/api/pentest/history", dependencies=[Depends(require_token)])
 async def pentest_history():
     """Return all persisted pentest engagements, newest-first, capped at 20."""
     return {"engagements": _load_pentest_history()}
 
 
-@app.get("/api/pentest/active")
+@app.get("/api/pentest/active", dependencies=[Depends(require_token)])
 async def pentest_active_get():
     return {"active": _pentest_active}
 
@@ -2306,7 +2330,7 @@ class PentestActiveRequest(BaseModel):
     active: bool
 
 
-@app.post("/api/pentest/active")
+@app.post("/api/pentest/active", dependencies=[Depends(require_token)])
 async def pentest_active_set(req: PentestActiveRequest):
     global _pentest_active
     _pentest_active = bool(req.active)
@@ -2665,7 +2689,7 @@ def _build_fsec_messages(req: "FoundationSecRequest", eng: dict) -> tuple[list[d
     raise HTTPException(400, f"Unknown mode '{req.mode}' (expected 'analyze' or 'chat')")
 
 
-@app.post("/api/foundation_sec/analyze")
+@app.post("/api/foundation_sec/analyze", dependencies=[Depends(require_token)])
 async def foundation_sec_analyze_endpoint(req: FoundationSecRequest):
     """SSE-streamed Foundation-Sec analysis. Events: text, done, error."""
     eng = _find_engagement(req.engagement_id)
@@ -2701,7 +2725,7 @@ class OllamaScapyRequest(BaseModel):
     model: str = "qwen2.5-coder:7b"
 
 
-@app.post("/api/nmap/ollama")
+@app.post("/api/nmap/ollama", dependencies=[Depends(require_token)])
 async def nmap_ollama(req: OllamaNmapRequest):
     return StreamingResponse(
         _ollama_tool_stream("run_nmap_scan", {
@@ -2714,7 +2738,7 @@ async def nmap_ollama(req: OllamaNmapRequest):
     )
 
 
-@app.post("/api/scapy/ollama")
+@app.post("/api/scapy/ollama", dependencies=[Depends(require_token)])
 async def scapy_ollama(req: OllamaScapyRequest):
     tool_args = {"mode": req.mode, "target": req.target}
     if req.port is not None:      tool_args["port"] = req.port
@@ -2852,7 +2876,7 @@ def _extract_text(file_bytes: bytes, filename: str, doc_type: str) -> str:
         return file_bytes.decode("utf-8", errors="replace")
 
 
-@app.post("/api/ingest")
+@app.post("/api/ingest", dependencies=[Depends(require_token)])
 async def ingest_document(
     file: UploadFile = File(...),
     collection: str  = Form("network_security_guidelines"),
@@ -2984,7 +3008,7 @@ async def ingest_document(
     )
 
 
-@app.get("/api/ingest/collections/{collection_id}/docs")
+@app.get("/api/ingest/collections/{collection_id}/docs", dependencies=[Depends(require_token)])
 def ingest_collection_docs(collection_id: str):  # sync — blocking Chroma call, threadpool
     """Return unique source filenames ingested into a collection."""
     if collection_id not in COLLECTIONS:
@@ -3018,7 +3042,7 @@ def ingest_collection_docs(collection_id: str):  # sync — blocking Chroma call
         raise HTTPException(status_code=502, detail=f"Chroma unavailable: {e}")
 
 
-@app.get("/api/ingest/collections")
+@app.get("/api/ingest/collections", dependencies=[Depends(require_token)])
 def ingest_collections():  # sync — blocking Chroma calls, threadpool (see health_full note)
     """Return document counts for all known collections."""
     base = f"http://{CHROMA_HOST}:{CHROMA_PORT}/api/v2/tenants/default_tenant/databases/default_database"
@@ -3042,6 +3066,16 @@ def ingest_collections():  # sync — blocking Chroma calls, threadpool (see hea
 SNMP_URL           = os.getenv("SNMP_SERVICE_URL",        "http://gladius-snmp:8000")
 PING_URL           = os.getenv("PING_SERVICE_URL",        "http://gladius-ping:8000")
 AUTOMATION_URL     = os.getenv("AUTOMATION_SERVICE_URL", "http://gladius-pyats:8090")
+
+
+def _internal_headers(extra: dict | None = None) -> dict:
+    """Headers for gladius-api's own calls into gladius-pyats / gladius-snmp,
+    which require the same GLADIUS_API_TOKEN bearer token."""
+    headers = {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
+    if extra:
+        headers.update(extra)
+    return headers
+
 SLACK_BOT_TOKEN  = os.getenv("SLACK_BOT_TOKEN", "")
 SLACK_ALERT_CHANNEL = os.getenv("SLACK_ALERT_CHANNEL", "")  # channel ID or user ID to post alerts to
 
@@ -3210,7 +3244,7 @@ async def investigate_snmp_alert(alert: dict) -> None:
     log.info("Alert investigation complete for %s", name)
 
 
-@app.post("/api/snmp/alert", status_code=202)
+@app.post("/api/snmp/alert", status_code=202, dependencies=[Depends(require_token)])
 async def snmp_alert(alert: SnmpAlertRequest):
     """Receive a status-change alert from gladius-snmp and kick off a background investigation."""
     log.info("SNMP alert received: %s (%s) %s→%s", alert.name, alert.host, alert.old_status, alert.new_status)
@@ -3220,49 +3254,49 @@ async def snmp_alert(alert: SnmpAlertRequest):
 
 # ── SNMP PROXY ────────────────────────────────────────────────────────────────
 
-@app.get("/api/snmp/devices")
+@app.get("/api/snmp/devices", dependencies=[Depends(require_token)])
 async def snmp_get_devices():
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.get(f"{SNMP_URL}/devices", timeout=10))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.get(f"{SNMP_URL}/devices", headers=_internal_headers(), timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
-@app.post("/api/snmp/devices")
+@app.post("/api/snmp/devices", dependencies=[Depends(require_token)])
 async def snmp_add_device(request: Request):
     body = await request.body()
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices", data=body, headers={"Content-Type": "application/json"}, timeout=10))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices", data=body, headers=_internal_headers({"Content-Type": "application/json"}), timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
-@app.post("/api/snmp/devices/mute-all")
+@app.post("/api/snmp/devices/mute-all", dependencies=[Depends(require_token)])
 async def snmp_mute_all(request: Request):
     body = await request.body()
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/mute-all", data=body, headers={"Content-Type": "application/json"}, timeout=10))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/mute-all", data=body, headers=_internal_headers({"Content-Type": "application/json"}), timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
-@app.delete("/api/snmp/devices/{dev_id}")
+@app.delete("/api/snmp/devices/{dev_id}", dependencies=[Depends(require_token)])
 async def snmp_delete_device(dev_id: str):
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.delete(f"{SNMP_URL}/devices/{dev_id}", timeout=10))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.delete(f"{SNMP_URL}/devices/{dev_id}", headers=_internal_headers(), timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
-@app.patch("/api/snmp/devices/{dev_id}")
+@app.patch("/api/snmp/devices/{dev_id}", dependencies=[Depends(require_token)])
 async def snmp_patch_device(dev_id: str, request: Request):
     body = await request.body()
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.patch(f"{SNMP_URL}/devices/{dev_id}", data=body, headers={"Content-Type": "application/json"}, timeout=10))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.patch(f"{SNMP_URL}/devices/{dev_id}", data=body, headers=_internal_headers({"Content-Type": "application/json"}), timeout=10))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
-@app.post("/api/snmp/devices/{dev_id}/poll")
+@app.post("/api/snmp/devices/{dev_id}/poll", dependencies=[Depends(require_token)])
 async def snmp_poll_device(dev_id: str):
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/{dev_id}/poll", timeout=30))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/devices/{dev_id}/poll", headers=_internal_headers(), timeout=30))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
-@app.post("/api/snmp/poll")
+@app.post("/api/snmp/poll", dependencies=[Depends(require_token)])
 async def snmp_poll(request: Request):
     body = await request.body()
-    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/poll", data=body, headers={"Content-Type": "application/json"}, timeout=30))
+    r = await asyncio.get_event_loop().run_in_executor(None, lambda: http_requests.post(f"{SNMP_URL}/poll", data=body, headers=_internal_headers({"Content-Type": "application/json"}), timeout=30))
     return Response(content=r.content, status_code=r.status_code, media_type="application/json")
 
 
 # ── AUTOMATION FACTORY PROXY ──────────────────────────────────────────────────
 
-@app.api_route("/api/automation/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@app.api_route("/api/automation/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], dependencies=[Depends(require_token)])
 async def automation_proxy(path: str, request: Request):
     """Proxy all /api/automation/* requests to the gladius-pyats container.
     Chat endpoint streams SSE; all other endpoints return JSON."""
@@ -3274,7 +3308,7 @@ async def automation_proxy(path: str, request: Request):
         import httpx as _hx
         async def _stream():
             async with _hx.AsyncClient(timeout=180.0) as c:
-                async with c.stream("POST", url, content=body, headers={"Content-Type": ct}) as r:
+                async with c.stream("POST", url, content=body, headers=_internal_headers({"Content-Type": ct})) as r:
                     async for chunk in r.aiter_bytes():
                         yield chunk
         return StreamingResponse(
@@ -3286,7 +3320,7 @@ async def automation_proxy(path: str, request: Request):
     r = await asyncio.get_event_loop().run_in_executor(
         None, lambda: http_requests.request(
             request.method, url, data=body,
-            headers={"Content-Type": ct}, timeout=300
+            headers=_internal_headers({"Content-Type": ct}), timeout=300
         )
     )
     return Response(
@@ -3298,7 +3332,7 @@ async def automation_proxy(path: str, request: Request):
 
 # ── PING MONITOR PROXY ──────────────────────────────────────────────────────
 
-@app.api_route("/api/ping/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@app.api_route("/api/ping/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], dependencies=[Depends(require_token)])
 async def ping_proxy(path: str, request: Request):
     """Proxy all /api/ping/* requests to the gladius-ping container.
     SSE endpoint streams; all other endpoints return JSON."""
@@ -3689,7 +3723,7 @@ async def run_parallel_audit(
     snmp_name_map: dict[str, str] = {}
     try:
         snmp_resp = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: http_requests.get(f"{SNMP_URL}/devices", timeout=5)
+            None, lambda: http_requests.get(f"{SNMP_URL}/devices", headers=_internal_headers(), timeout=5)
         )
         if snmp_resp.ok:
             for dev in snmp_resp.json().get("devices", []):
@@ -3766,7 +3800,7 @@ class ParallelAuditRequest(BaseModel):
     conversation_id: str | None = None
 
 
-@app.post("/api/audit/parallel")
+@app.post("/api/audit/parallel", dependencies=[Depends(require_token)])
 async def parallel_audit(request: ParallelAuditRequest):
     """Parallel audit endpoint — one subagent per device, all concurrent."""
     if not ANTHROPIC_API_KEY:
@@ -3906,7 +3940,7 @@ Always ground your answers in retrieved context from these collections and refer
 
 If asked something outside network design scope, acknowledge it and redirect to the Audit Agent."""
 
-@app.post("/api/chat/design")
+@app.post("/api/chat/design", dependencies=[Depends(require_token)])
 async def design_chat(request: ChatRequest):
     """Design Agent — RAG-backed design advisor scoped to design-guidelines collection."""
     if not ANTHROPIC_API_KEY:
@@ -4131,7 +4165,7 @@ class DesignCritiqueRequest(BaseModel):
     critique_intensity: int = 5
 
 
-@app.post("/api/chat/design/critique")
+@app.post("/api/chat/design/critique", dependencies=[Depends(require_token)])
 async def design_critique_chat(request: DesignCritiqueRequest):
     """Design critique loop — iterates between Design Agent and Critic Agent."""
     if not ANTHROPIC_API_KEY:
