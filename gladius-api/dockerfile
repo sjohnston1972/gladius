@@ -2,9 +2,24 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# HOME is explicit (rather than relying on the base image's default) because
+# it must be a real environment variable at runtime: the MCP client library
+# spawns `docker exec ...` with a filtered environment that only forwards a
+# small safe allow-list (HOME, PATH, ...) — DOCKER_HOST is NOT in that list,
+# so it can't be used to point the docker CLI at the socket proxy. Pinning
+# HOME instead means both the build-time `docker context` below and the
+# runtime subprocess resolve the same ~/.docker/config.json.
+ENV HOME=/root
+
 RUN apt-get update && apt-get install -y \
     docker.io \
     && rm -rf /var/lib/apt/lists/*
+
+# Point the docker CLI at the restricted docker-socket-proxy-api service
+# (see docker-socket-proxy/) instead of the raw host socket. This writes
+# local CLI metadata only — no daemon needs to be reachable at build time.
+RUN docker context create gladius-api-proxy --docker "host=tcp://docker-socket-proxy-api:2375" \
+    && docker context use gladius-api-proxy
 
 RUN pip install --no-cache-dir \
     fastapi \

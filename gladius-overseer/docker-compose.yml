@@ -9,7 +9,6 @@ services:
       - net_core
     volumes:
       - ./app.py:/app/app.py
-      - /var/run/docker.sock:/var/run/docker.sock
       - C:\docker\net-core\GLADIUS_CLAUDE_PROJECT:/projects/repo
       - C:\docker\net-core\gladius-api:/projects/gladius-api
       - C:\docker\net-core\network-audit-mcp:/projects/network-audit-mcp
@@ -19,6 +18,11 @@ services:
       - ./data:/data                        # persistent history survives restarts
     environment:
       HISTORY_FILE: /data/history.json
+      # docker CLI (used for `docker restart <container>`) talks to the
+      # restricted docker-socket-proxy-overseer service instead of the raw
+      # host socket — it only allows CONTAINERS/restart, not exec. See
+      # docker-socket-proxy/.
+      DOCKER_HOST: tcp://docker-socket-proxy-overseer:2375
     env_file:
       - .env
 

@@ -1,0 +1,59 @@
+# Restricted Docker API proxies (tecnativa/docker-socket-proxy).
+#
+# These are the ONLY containers in the stack that mount the real host
+# /var/run/docker.sock. LLM-driven containers (gladius-api, gladius-overseer)
+# no longer get raw socket access — instead they point DOCKER_HOST at one of
+# these, each scoped to the minimum the docker CLI calls it actually issues:
+#
+#   docker-socket-proxy-api      -> gladius-api needs `docker exec -i` into
+#                                    network-audit-mcp / gladius-pentest-mcp
+#                                    to reach the MCP servers.
+#                                    (CONTAINERS + EXEC + POST)
+#   docker-socket-proxy-overseer -> gladius-overseer only ever needs
+#                                    `docker restart <container>` on a fixed
+#                                    set of named containers — it gets no
+#                                    exec access at all.
+#                                    (CONTAINERS + POST + ALLOW_RESTARTS)
+#
+# Everything not explicitly enabled below defaults to denied (see the
+# tecnativa/docker-socket-proxy README for the full variable list). Neither
+# proxy publishes a host port — both are reachable only from other
+# containers on net_core.
+#
+# Start this stack before gladius-api / gladius-overseer.
+services:
+  docker-socket-proxy-api:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy-api
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: 1
+      EXEC: 1
+      POST: 1
+    read_only: true
+    tmpfs:
+      - /run
+
+  docker-socket-proxy-overseer:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: docker-socket-proxy-overseer
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: 1
+      POST: 1
+      ALLOW_RESTARTS: 1
+    read_only: true
+    tmpfs:
+      - /run
+
+networks:
+  net_core:
+    external: true

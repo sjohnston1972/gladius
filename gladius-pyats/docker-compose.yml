@@ -14,8 +14,8 @@ services:
       - .env
       - ../network-audit-mcp/.env
       - ../gladius-api/.env
-    ports:
-      - "8097:8090"
+    # No host port publish — reached only via nginx on net_core, which is
+    # the single front door gated by Cloudflare Access.
 
 networks:
   net_core:
