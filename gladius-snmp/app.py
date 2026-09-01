@@ -598,8 +598,18 @@ class DevicePatch(BaseModel):
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+# Fields that must never leave this process in an API response — they are the
+# SNMP secrets used to authenticate to the device.
+_SECRET_DEVICE_FIELDS = ("community", "auth_key", "priv_key")
+
+
+def _redact_device(dev: dict) -> dict:
+    """Strip SNMP secrets from a device dict before it goes out over the API."""
+    return {k: v for k, v in dev.items() if k not in _SECRET_DEVICE_FIELDS}
+
+
 def _device_with_status(dev_id: str) -> dict:
-    dev = _devices[dev_id]
+    dev = _redact_device(_devices[dev_id])
     st  = _status.get(dev_id, {"status": "unknown", "last_poll": None, "response_ms": None, "error": None})
     return {**dev, **st}
 
@@ -840,6 +850,32 @@ async def adhoc_poll(req: AdHocPollRequest):
         req.host, req.port, req.version, req.community,
         req.username, req.auth_key, req.priv_key,
         req.auth_protocol, req.priv_protocol,
+        req.profile, req.max_rows,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=502, detail=result["error"])
+    return result
+
+
+class DeviceProfilePollRequest(BaseModel):
+    profile:  str = "system"
+    max_rows: int = 200
+
+
+@app.post("/devices/{dev_id}/poll_profile")
+async def poll_device_profile(dev_id: str, req: DeviceProfilePollRequest):
+    """Ad-hoc profile poll (cisco_cpu, interfaces, ...) using a registered
+    device's own stored credentials — the caller never sees the secret.
+    Use this instead of round-tripping community/auth_key/priv_key through
+    the browser via GET /devices + POST /poll."""
+    if dev_id not in _devices:
+        raise HTTPException(status_code=404, detail="Device not found")
+    dev = _devices[dev_id]
+    result = await asyncio.to_thread(
+        _adhoc_poll_sync,
+        dev["host"], dev.get("port", 161), dev.get("version", "2c"), dev.get("community", "public"),
+        dev.get("username", ""), dev.get("auth_key", ""), dev.get("priv_key", ""),
+        dev.get("auth_protocol", "SHA"), dev.get("priv_protocol", "AES"),
         req.profile, req.max_rows,
     )
     if "error" in result:
