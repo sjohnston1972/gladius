@@ -3,6 +3,14 @@
 *.env
 .env.*
 
+# Captures / dumps (may contain live credentials, cookies, PII)
+*.har
+*.pcap
+*.pcapng
+*.dump
+*.sqlite
+*.sqlite3
+
 # Python
 __pycache__/
 *.py[cod]
