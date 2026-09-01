@@ -18,9 +18,27 @@ BOT_TOKEN         = os.getenv("SLACK_BOT_TOKEN")
 APP_TOKEN         = os.getenv("SLACK_APP_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 
+# ── Slack user-ID authorization allowlist ──────────────────────────────────────
+SLACK_ALLOWED_USERS = {
+    u.strip() for u in os.getenv("SLACK_ALLOWED_USERS", "").split(",") if u.strip()
+}
+SLACK_ALLOWED_TEAM = os.getenv("SLACK_ALLOWED_TEAM", "").strip()
+
 client_ai  = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 slack_web  = SlackWebClient(token=BOT_TOKEN)
 app        = App(token=BOT_TOKEN)
+
+
+def _is_authorized(body: dict, event: dict) -> bool:
+    """Only allow messages from an explicit Slack user/team allowlist read from env.
+    The overseer runs a Claude agent with a bash tool and file/docker access, so this
+    check is the primary gate on who can trigger arbitrary command execution."""
+    user_id = event.get("user")
+    team_id = body.get("team_id") or event.get("team")
+    if SLACK_ALLOWED_TEAM and team_id != SLACK_ALLOWED_TEAM:
+        return False
+    return bool(user_id) and user_id in SLACK_ALLOWED_USERS
+
 
 # ── Sandbox: file-access root + command allowlist ──────────────────────────────
 # All file reads/writes/listings from LLM-driven tools are confined under this
@@ -596,6 +614,11 @@ def handle_message(body: dict, client) -> None:
     text    = event.get("text", "")
     channel = event.get("channel")
 
+    if not _is_authorized(body, event):
+        log.warning("Unauthorized message from user %s (team %s) — ignoring, no agent run",
+                    event.get("user"), body.get("team_id") or event.get("team"))
+        return
+
     bot_id = get_bot_id(client)
     text   = text.replace(f"<@{bot_id}>", "").strip()
     if not text:
@@ -674,6 +697,8 @@ if __name__ == "__main__":
         raise RuntimeError("SLACK_APP_TOKEN is not set")
     if not ANTHROPIC_API_KEY:
         raise RuntimeError("ANTHROPIC_API_KEY is not set")
+    if not SLACK_ALLOWED_USERS:
+        raise RuntimeError("SLACK_ALLOWED_USERS is not set — refusing to start unauthorized")
 
     log.info("Starting Gladius Overseer (Socket Mode)...")
     SocketModeHandler(app, APP_TOKEN).start()

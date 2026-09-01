@@ -12,11 +12,27 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("gladius-slack")
 
-GLADIUS_API = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
-BOT_TOKEN   = os.getenv("SLACK_BOT_TOKEN")
-APP_TOKEN   = os.getenv("SLACK_APP_TOKEN")
+GLADIUS_API       = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
+GLADIUS_API_TOKEN = os.getenv("GLADIUS_API_TOKEN")
+BOT_TOKEN         = os.getenv("SLACK_BOT_TOKEN")
+APP_TOKEN         = os.getenv("SLACK_APP_TOKEN")
+
+# ── Slack user-ID authorization allowlist ──────────────────────────────────────
+SLACK_ALLOWED_USERS = {
+    u.strip() for u in os.getenv("SLACK_ALLOWED_USERS", "").split(",") if u.strip()
+}
+SLACK_ALLOWED_TEAM = os.getenv("SLACK_ALLOWED_TEAM", "").strip()
 
 app = App(token=BOT_TOKEN)
+
+
+def _is_authorized(body: dict, event: dict) -> bool:
+    """Only allow messages from an explicit Slack user/team allowlist read from env."""
+    user_id = event.get("user")
+    team_id = body.get("team_id") or event.get("team")
+    if SLACK_ALLOWED_TEAM and team_id != SLACK_ALLOWED_TEAM:
+        return False
+    return bool(user_id) and user_id in SLACK_ALLOWED_USERS
 
 # ── Persistent conversation history ───────────────────────────────────────────
 MAX_HISTORY   = 60
@@ -298,9 +314,11 @@ def call_gladius_streaming(
     audit: dict | None     = None
     tool_calls: list[dict] = []   # tracks active/completed tool calls for progress display
 
+    headers = {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
+
     try:
         with httpx.Client(timeout=300) as http:
-            with http.stream("POST", f"{GLADIUS_API}/api/chat", json=payload) as resp:
+            with http.stream("POST", f"{GLADIUS_API}/api/chat", json=payload, headers=headers) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     if not line.startswith("data: "):
@@ -395,6 +413,11 @@ def handle_message(body: dict, client) -> None:
     event   = body.get("event", {})
     text    = event.get("text", "")
     channel = event.get("channel")
+
+    if not _is_authorized(body, event):
+        log.warning("Unauthorized message from user %s (team %s) — ignoring",
+                    event.get("user"), body.get("team_id") or event.get("team"))
+        return
 
     bot_id = get_bot_id(client)
     text   = text.replace(f"<@{bot_id}>", "").strip()
@@ -491,6 +514,8 @@ if __name__ == "__main__":
         raise RuntimeError("SLACK_BOT_TOKEN is not set")
     if not APP_TOKEN:
         raise RuntimeError("SLACK_APP_TOKEN is not set")
+    if not SLACK_ALLOWED_USERS:
+        raise RuntimeError("SLACK_ALLOWED_USERS is not set — refusing to start unauthorized")
 
     threading.Thread(
         target=lambda: HTTPServer(("0.0.0.0", 9090), _HealthHandler).serve_forever(),
