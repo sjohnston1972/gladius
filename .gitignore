@@ -2,6 +2,7 @@
 .env
 *.env
 .env.*
+web-projects/gladius-auth.conf
 
 # Captures / dumps (may contain live credentials, cookies, PII)
 *.har

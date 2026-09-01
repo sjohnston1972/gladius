@@ -9715,7 +9715,7 @@ ${cves.length ? `<!-- CVE TAB -->
   let _snmpDpDev      = null;
   let _snmpDpIfData   = null;
   let _snmpDpEdit     = false;
-  let _snmpDpCreds    = null;
+  let _snmpDpReady    = false;  // true once the initial detail load has resolved a device id
   let _snmpDpTimer    = null;
   let _snmpDpSpeeds   = {};   // ifIdx → ifSpeed (bps), populated from initial interface fetch
 
@@ -9724,7 +9724,7 @@ ${cves.length ? `<!-- CVE TAB -->
     _snmpDpDev   = null;
     _snmpDpIfData = null;
     _snmpDpEdit  = false;
-    _snmpDpCreds = null;
+    _snmpDpReady = false;
     _snmpDpSpeeds = {};
     _snmpStopIfTimer();
     const editBtn = document.getElementById('snmp-dp-edit-btn');
@@ -9738,7 +9738,7 @@ ${cves.length ? `<!-- CVE TAB -->
     _snmpStopIfTimer();
     document.getElementById('snmp-detail-overlay').classList.remove('active');
     document.getElementById('snmp-detail-panel').classList.remove('active');
-    _snmpDpDevId = null; _snmpDpDev = null; _snmpDpIfData = null; _snmpDpEdit = false; _snmpDpCreds = null; _snmpDpSpeeds = {};
+    _snmpDpDevId = null; _snmpDpDev = null; _snmpDpIfData = null; _snmpDpEdit = false; _snmpDpReady = false; _snmpDpSpeeds = {};
   }
 
   function _snmpStopIfTimer() {
@@ -9748,12 +9748,14 @@ ${cves.length ? `<!-- CVE TAB -->
   function _snmpStartIfTimer() {
     _snmpStopIfTimer();
     _snmpDpTimer = setInterval(async () => {
-      if (!_snmpDpDevId || !_snmpDpCreds) return;
+      if (!_snmpDpDevId || !_snmpDpReady) return;
       try {
-        // Only walk the 2 counter OIDs — fast even on large devices, no max_rows issue
-        const r = await fetch('/api/snmp/poll', {
+        // Only walk the 2 counter OIDs — fast even on large devices, no max_rows issue.
+        // poll_profile runs against the device's own stored credentials
+        // server-side — the browser never sees/sends community/auth_key/priv_key.
+        const r = await fetch(`/api/snmp/devices/${_snmpDpDevId}/poll_profile`, {
           method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({..._snmpDpCreds, profile: 'if_counters'}),
+          body: JSON.stringify({profile: 'if_counters'}),
         });
         if (!r.ok) return;
         const ctrData = await r.json();
@@ -9909,17 +9911,14 @@ ${cves.length ? `<!-- CVE TAB -->
       // Render basic info + placeholders immediately
       _snmpRenderDpBasic(body, dev);
 
-      // Fetch advanced OID profiles in parallel
-      const creds = {
-        host: dev.host, port: dev.port || 161, version: dev.version || '2c',
-        community: dev.community || 'public', username: dev.username || '',
-        auth_key: dev.auth_key || '', priv_key: dev.priv_key || '',
-        auth_protocol: dev.auth_protocol || 'SHA', priv_protocol: dev.priv_protocol || 'AES',
-      };
-      _snmpDpCreds = creds;
-      const post = (profile) => fetch('/api/snmp/poll', {
+      // Fetch advanced OID profiles in parallel. GET /devices redacts
+      // community/auth_key/priv_key, so this uses poll_profile — it polls
+      // with the device's own stored credentials server-side and never
+      // needs them round-tripped through the browser.
+      _snmpDpReady = true;
+      const post = (profile) => fetch(`/api/snmp/devices/${id}/poll_profile`, {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({...creds, profile}),
+        body: JSON.stringify({profile}),
       }).then(r => r.ok ? r.json() : null).catch(() => null);
 
       const [cpuRes, memRes, ifRes, ctr0] = await Promise.all([post('cisco_cpu'), post('cisco_memory'), post('interfaces'), post('if_counters')]);

@@ -10,6 +10,14 @@ services:
     volumes:
       - ./app.py:/app/app.py
       - ./data:/data
+    # gladius-snmp validates GLADIUS_API_TOKEN (require_token) but has no
+    # .env of its own — it shares gladius-api's token, same pattern as
+    # gladius-pyats/docker-compose.yml. Without this, every request
+    # (including gladius-api's own internal /devices and /poll calls, and
+    # nginx's proxied browser requests) gets 401 "Server auth not
+    # configured" because GLADIUS_API_TOKEN is unset in this container.
+    env_file:
+      - ../gladius-api/.env
 
 networks:
   net_core:

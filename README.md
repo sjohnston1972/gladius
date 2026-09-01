@@ -384,7 +384,17 @@ docker compose up -d
 ANTHROPIC_API_KEY=        # Required — Claude API key
 CHROMA_HOST=chroma-db
 CHROMA_PORT=8000
+GLADIUS_API_TOKEN=        # Required — bearer token gladius-api/gladius-snmp/
+                           # gladius-pyats all validate requests against
+                           # (require_token). Pick any long random string.
+ALLOWED_ORIGINS=https://gladius.clydeford.net   # optional, this is the default
 ```
+
+`GLADIUS_API_TOKEN` must be the *same* value across all three services.
+`gladius-pyats/docker-compose.yml` and `gladius-snmp/docker-compose.yml`
+both load `../gladius-api/.env` via `env_file` so they pick it up from this
+one place — you only set it once. See "nginx bearer-token injection" below
+for how the browser-facing side of this works.
 
 **`network-audit-mcp/.env`**
 
@@ -428,6 +438,43 @@ ANTHROPIC_API_KEY=sk-ant-...
 Both Slack apps require scopes: `chat:write`, `im:history`, `channels:history`, `app_mentions:read`
 Socket Mode app token scope: `connections:write`
 Events to subscribe: `message.im`, `app_mention`
+
+---
+
+## nginx bearer-token injection
+
+`gladius-api`, `gladius-snmp` and `gladius-pyats` all require
+`Authorization: Bearer $GLADIUS_API_TOKEN` on every route except `/health`
+(see `require_token` in each service's server/app file). `index.html` is a
+static file served to the browser, so it must **never** embed that token in
+JavaScript — anyone who views source would be able to read it and call the
+APIs directly. Instead, the `web-projects` nginx container injects the
+header itself, server-side, on the two locations in `nginx.conf` that proxy
+browser requests straight to those services (`/api/` → gladius-api,
+`/api/snmp/` → gladius-snmp; `gladius-pyats` is only ever reached
+indirectly, via gladius-api's own internal proxy, which already attaches
+the token via `_internal_headers()`).
+
+Setup:
+
+1. `cp web-projects/gladius-auth.conf.example web-projects/gladius-auth.conf`
+   and put the real `GLADIUS_API_TOKEN` value (same one that's in
+   `gladius-api/.env`) into the `set $gladius_api_token "...";` line.
+   `gladius-auth.conf` is gitignored — it is never committed.
+2. Make sure that file is mounted into the nginx container at
+   `/etc/nginx/gladius-auth.conf` (that's the path `nginx.conf`'s
+   `include /etc/nginx/gladius-auth.conf;` points at), alongside however
+   `nginx.conf` itself is already mounted, e.g.:
+   ```
+   -v C:\docker\net-core\web-projects\gladius-auth.conf:/etc/nginx/gladius-auth.conf:ro
+   ```
+3. Reload/restart the `web-projects` nginx container.
+4. `gladius-snmp/docker-compose.yml` now loads `../gladius-api/.env` too
+   (it validates the same `GLADIUS_API_TOKEN`, and previously had no
+   `env_file` at all — every request to it, including gladius-api's own
+   internal calls, was returning 401 "Server auth not configured" until
+   this is set). Restart `gladius-snmp` after setting `GLADIUS_API_TOKEN`
+   so it picks it up.
 
 ---
 
@@ -489,6 +536,8 @@ gladius/
 │   ├── docker-compose.yml
 │   └── .env
 ├── web-projects/
+│   ├── nginx.conf                   # nginx vhosts, incl. gladius.clydeford.net + /api proxying
+│   ├── gladius-auth.conf.example    # template — copy to gladius-auth.conf (gitignored, real token)
 │   └── gladius/
 │       └── index.html     # Entire frontend — single file, vanilla JS (single source of truth)
 ├── docs/

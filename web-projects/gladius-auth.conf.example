@@ -1,0 +1,20 @@
+# Copy this file to gladius-auth.conf (same directory) and fill in the real
+# value. gladius-auth.conf is gitignored — it is NEVER committed — and is
+# `include`d by the gladius.clydeford.net server block in nginx.conf so the
+# Authorization header can be injected server-side, without the token ever
+# appearing in the HTML/JS the browser downloads.
+#
+# The value must exactly match GLADIUS_API_TOKEN in gladius-api/.env
+# (gladius-api, gladius-snmp and gladius-pyats all validate against that
+# same token — see require_token in each service's server/app file).
+#
+# Deployment: this file must be readable inside the nginx container at
+# /etc/nginx/gladius-auth.conf (that's the path nginx.conf's `include`
+# points at). Mount it alongside nginx.conf, e.g. add to whatever starts
+# the web-projects nginx container:
+#
+#   -v C:\docker\net-core\web-projects\gladius-auth.conf:/etc/nginx/gladius-auth.conf:ro
+#
+# then reload/restart nginx.
+
+set $gladius_api_token "REPLACE_WITH_REAL_GLADIUS_API_TOKEN";
