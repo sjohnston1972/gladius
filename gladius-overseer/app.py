@@ -1,5 +1,6 @@
 import os
 import json
+import shlex
 import subprocess
 import logging
 import threading
@@ -20,6 +21,130 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 client_ai  = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 slack_web  = SlackWebClient(token=BOT_TOKEN)
 app        = App(token=BOT_TOKEN)
+
+# ── Sandbox: file-access root + command allowlist ──────────────────────────────
+# All file reads/writes/listings from LLM-driven tools are confined under this
+# root. Anything that resolves (after following symlinks) outside of it is
+# rejected, regardless of how it was spelled (absolute path, "..", symlink, etc).
+OVERSEER_ROOT = Path(os.getenv("OVERSEER_ROOT", "/projects")).resolve()
+
+# Real container names, taken from each service's docker-compose.yml. This is
+# the only set of values docker_restart will accept.
+ALLOWED_CONTAINERS = {
+    "gladius-api",
+    "gladius-overseer",
+    "gladius-pentest-mcp",
+    "gladius-pyats",
+    "gladius-slack",
+    "gladius-snmp",
+    "network-audit-mcp",
+}
+
+BASH_TIMEOUT = 120
+
+# The `bash` tool is intentionally NOT a general command runner: it accepts
+# only a fixed set of read-only/inspection binaries, each with its own
+# allowlist of flags. `docker` is deliberately absent — restarts go through
+# the dedicated `docker_restart` tool below, which validates the container
+# name against ALLOWED_CONTAINERS instead of parsing a free-form string.
+# Because subprocess is always invoked with an argv list (shell=False),
+# shell metacharacters (`;`, `|`, `&`, backticks, `$()`, `>`, newlines, ...)
+# are never interpreted — they are inert literal argument text.
+BASH_COMMAND_SPECS = {
+    "ls":   {"allowed_flags": {"-l", "-a", "-la", "-al", "-h", "-lh", "-alh", "-1", "-R"}, "paths": True},
+    "cat":  {"allowed_flags": set(), "paths": True},
+    "grep": {"allowed_flags": {"-r", "-n", "-i", "-l", "-c", "-v", "-E", "-w", "-e"}, "paths": True},
+    "find": {
+        "allowed_flags": {"-name", "-iname", "-type", "-maxdepth", "-mindepth"},
+        # Flags that can execute code or mutate the filesystem must never be
+        # reachable, no matter how the allowlist above is edited later.
+        "denied_flags": {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint", "-fprint0"},
+        "paths": True,
+    },
+    "git": {
+        # Subcommands only — no "-c" is ever accepted (git -c core.fsmonitor=<cmd>
+        # is a known way to get arbitrary command execution from a "read-only"
+        # looking git invocation), and "config"/"submodule"/"filter-branch"/
+        # "hook"-adjacent subcommands are excluded for the same reason.
+        "allowed_subcommands": {
+            "status", "log", "diff", "show", "add", "commit", "push", "pull",
+            "fetch", "checkout", "branch", "stash", "remote",
+        },
+        "paths": False,
+    },
+}
+
+
+class BashRejected(Exception):
+    """Raised when a bash command fails allowlist validation."""
+
+
+def _resolve_under_root(path_str: str) -> Path:
+    """Resolve `path_str` (following symlinks) and ensure it stays under
+    OVERSEER_ROOT. Raises ValueError otherwise. Confines both relative and
+    absolute paths, and cannot be escaped with "..", a symlink, or by
+    pointing at an absolute path outside the root."""
+    p = Path(path_str)
+    if not p.is_absolute():
+        p = OVERSEER_ROOT / p
+    resolved = p.resolve()
+    if resolved != OVERSEER_ROOT and OVERSEER_ROOT not in resolved.parents:
+        raise ValueError(f"Path '{path_str}' resolves outside the allowed root ({OVERSEER_ROOT})")
+    return resolved
+
+
+def _validate_bash_argv(argv: list[str]) -> None:
+    """Validate a parsed bash command against BASH_COMMAND_SPECS. Raises
+    BashRejected on anything not explicitly allowed."""
+    if not argv:
+        raise BashRejected("Empty command.")
+
+    binary = argv[0]
+    spec = BASH_COMMAND_SPECS.get(binary)
+    if spec is None:
+        allowed = ", ".join(sorted(BASH_COMMAND_SPECS))
+        raise BashRejected(f"Command '{binary}' is not allowlisted. Allowed: {allowed}")
+
+    rest = argv[1:]
+
+    if binary == "git":
+        if not rest:
+            raise BashRejected("git requires a subcommand.")
+        subcmd = rest[0]
+        if subcmd == "-c" or subcmd.startswith("-c"):
+            raise BashRejected("git -c (config override) is not permitted.")
+        if subcmd not in spec["allowed_subcommands"]:
+            allowed = ", ".join(sorted(spec["allowed_subcommands"]))
+            raise BashRejected(f"git subcommand '{subcmd}' is not allowlisted. Allowed: {allowed}")
+        for arg in rest[1:]:
+            if arg == "-c" or arg.startswith("-c="):
+                raise BashRejected("git -c (config override) is not permitted.")
+        return
+
+    denied_flags = spec.get("denied_flags", set())
+    allowed_flags = spec["allowed_flags"]
+    seen_positional = False
+    for arg in rest:
+        if arg.startswith("-"):
+            if arg in denied_flags:
+                raise BashRejected(f"Flag '{arg}' is not permitted for '{binary}'.")
+            if arg not in allowed_flags:
+                raise BashRejected(f"Flag '{arg}' is not allowlisted for '{binary}'.")
+            continue
+        if not spec.get("paths"):
+            continue
+        # For grep, the first positional argument is the search pattern (not
+        # a path to open) unless -e was used to supply it as a flag; every
+        # positional argument after that is a file path and must be confined.
+        if binary == "grep" and not seen_positional:
+            seen_positional = True
+            continue
+        seen_positional = True
+        try:
+            _resolve_under_root(arg)
+        except ValueError as e:
+            raise BashRejected(str(e))
+
 
 # ── Persistent conversation history ───────────────────────────────────────────
 MAX_HISTORY  = 60
@@ -186,13 +311,14 @@ You have access to both. You must keep them in sync when making or reverting cha
 4. Commit and push
 
 ## Deployment after editing live files
-- After editing gladius-api/server.py:        bash("docker restart gladius-api")
-- After editing network-audit-mcp/server.py:  bash("docker restart network-audit-mcp && docker restart gladius-api")
+Use the docker_restart tool (NOT bash) to restart a container — pass the container name:
+- After editing gladius-api/server.py:        docker_restart("gladius-api")
+- After editing network-audit-mcp/server.py:  docker_restart("network-audit-mcp") then docker_restart("gladius-api")
 - After editing index.html:                   no restart needed
-- After editing gladius-slack/app.py:         bash("docker restart gladius-slack")
-- After editing gladius-overseer/app.py:      bash("docker restart gladius-overseer")
-  IMPORTANT: NEVER run docker stop, docker rm, or docker run for gladius-overseer.
-  Only ever use "docker restart gladius-overseer".
+- After editing gladius-slack/app.py:         docker_restart("gladius-slack")
+- After editing gladius-overseer/app.py:      docker_restart("gladius-overseer")
+  IMPORTANT: docker_restart only ever restarts a container — it cannot stop, remove, or run one.
+  There is no way to stop/rm/run a container through your tools.
 
 ## Guidelines
 - Always keep the repo in sync with the live files after any change
@@ -247,15 +373,31 @@ TOOLS = [
     {
         "name": "bash",
         "description": (
-            "Run a bash command and return stdout + stderr. "
-            "Use for docker, git, grep, ls, cat, find, etc."
+            "Run a read-only inspection command and return stdout + stderr. "
+            "Only ls, cat, grep, find, and a safe subset of git subcommands are "
+            "permitted (no docker — use docker_restart for that). File paths must "
+            "be under the project root."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "Shell command to execute"}
+                "command": {"type": "string", "description": "Command to execute, e.g. 'git status' or 'cat gladius-api/server.py'"}
             },
             "required": ["command"],
+        },
+    },
+    {
+        "name": "docker_restart",
+        "description": "Restart one of the Gladius containers by name. This is the only way to restart a container.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "container": {
+                    "type": "string",
+                    "description": f"Container name. One of: {', '.join(sorted(ALLOWED_CONTAINERS))}",
+                }
+            },
+            "required": ["container"],
         },
     },
     {
@@ -287,47 +429,91 @@ TOOLS = [
 ]
 
 
+def _run_docker_restart(container: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["docker", "restart", container],
+        shell=False,
+        capture_output=True,
+        text=True,
+        timeout=BASH_TIMEOUT,
+    )
+
+
 def exec_tool(name: str, inp: dict) -> str:
     try:
         if name == "read_file":
-            with open(inp["path"], "r", encoding="utf-8", errors="replace") as f:
+            try:
+                path = _resolve_under_root(inp["path"])
+            except ValueError as e:
+                return f"Error: {e}"
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read()
             if len(content) > 50_000:
                 content = content[:50_000] + "\n…(truncated at 50k chars)"
             return content
 
         elif name == "write_file":
-            path = inp["path"]
-            parent = os.path.dirname(path)
-            if parent:
-                os.makedirs(parent, exist_ok=True)
+            try:
+                path = _resolve_under_root(inp["path"])
+            except ValueError as e:
+                return f"Error: {e}"
+            parent = path.parent
+            parent.mkdir(parents=True, exist_ok=True)
+            # Re-check after mkdir in case a symlink was introduced by the
+            # directory creation itself (defence in depth).
+            try:
+                _resolve_under_root(str(path))
+            except ValueError as e:
+                return f"Error: {e}"
             with open(path, "w", encoding="utf-8") as f:
                 f.write(inp["content"])
             return f"Written: {path}"
 
         elif name == "bash":
             cmd = inp["command"]
-            # If the command restarts this container, defer it so the reply
-            # is posted first — otherwise we kill ourselves before responding.
-            if "docker restart gladius-overseer" in cmd:
-                def _deferred():
-                    import time
-                    time.sleep(8)
-                    subprocess.run(cmd, shell=True)
-                threading.Thread(target=_deferred, daemon=True).start()
-                return "Restart scheduled — will execute in ~8 seconds after this reply is sent."
+            try:
+                argv = shlex.split(cmd)
+                _validate_bash_argv(argv)
+            except (BashRejected, ValueError) as e:
+                return f"Rejected: {e}"
             result = subprocess.run(
-                cmd,
-                shell=True,
+                argv,
+                shell=False,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=BASH_TIMEOUT,
             )
             out = (result.stdout + result.stderr).strip()
             return out[:8000] if out else "(no output)"
 
+        elif name == "docker_restart":
+            container = inp.get("container", "")
+            if container not in ALLOWED_CONTAINERS:
+                allowed = ", ".join(sorted(ALLOWED_CONTAINERS))
+                return f"Rejected: '{container}' is not an allowed container. Allowed: {allowed}"
+            if container == "gladius-overseer":
+                # Defer so the reply is posted first — otherwise we kill
+                # ourselves before responding. Same timeout as the normal
+                # (synchronous) path is applied inside the deferred call.
+                def _deferred():
+                    import time
+                    time.sleep(8)
+                    try:
+                        _run_docker_restart(container)
+                    except Exception as e:
+                        log.error("Deferred restart of %s failed: %s", container, e)
+                threading.Thread(target=_deferred, daemon=True).start()
+                return "Restart scheduled — will execute in ~8 seconds after this reply is sent."
+            result = _run_docker_restart(container)
+            out = (result.stdout + result.stderr).strip()
+            return out[:8000] if out else f"Restarted {container}."
+
         elif name == "list_directory":
-            entries = sorted(os.listdir(inp["path"]))
+            try:
+                path = _resolve_under_root(inp["path"])
+            except ValueError as e:
+                return f"Error: {e}"
+            entries = sorted(os.listdir(path))
             return "\n".join(entries) if entries else "(empty)"
 
         elif name == "notify_slack":
@@ -350,6 +536,8 @@ def tool_label(name: str, inp: dict) -> str:
     if name == "bash":
         cmd = inp.get("command", "")
         return f"bash → {cmd[:70]}{'…' if len(cmd) > 70 else ''}"
+    if name == "docker_restart":
+        return f"docker_restart → {inp.get('container', '')}"
     if name == "list_directory":
         return f"ls → {strip(inp.get('path', ''))}"
     if name == "notify_slack":
