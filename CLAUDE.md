@@ -41,7 +41,7 @@ There is no direct HTTP between them except for `save_audit_results` which POSTs
 ```
 gladius-api          → /app/server.py
 network-audit-mcp    → /app/server.py
-web-projects         → /usr/share/nginx/html/index.html   (or check nginx config)
+web-projects         → /usr/share/nginx/gladius/index.html   (nginx root for the gladius.clydeford.net server block)
 ```
 ## File Locations (in windows)
 
@@ -146,9 +146,12 @@ This was missing from the MCP server and is why report history wasn't working. I
 
 ---
 
-## web-projects/index.html
+## web-projects/gladius/index.html
 
 Single-file frontend, ~10000 lines of vanilla JS + CSS. No framework, no build step.
+This is the single source of truth for the frontend — it is the file bind-mounted
+into the `web-projects` nginx container and served at `gladius.clydeford.net`.
+(A stale duplicate previously existed at `web-projects/index.html`; it has been removed.)
 
 ### Key JS Functions
 

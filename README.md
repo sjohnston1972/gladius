@@ -489,7 +489,8 @@ gladius/
 │   ├── docker-compose.yml
 │   └── .env
 ├── web-projects/
-│   └── index.html         # Entire frontend — single file, vanilla JS
+│   └── gladius/
+│       └── index.html     # Entire frontend — single file, vanilla JS (single source of truth)
 ├── docs/
 │   └── screenshots/       # Add screenshots here
 ├── CLAUDE.md              # Project brief for Claude Code
