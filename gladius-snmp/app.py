@@ -862,7 +862,7 @@ class DeviceProfilePollRequest(BaseModel):
     max_rows: int = 200
 
 
-@app.post("/devices/{dev_id}/poll_profile")
+@app.post("/devices/{dev_id}/poll_profile", dependencies=[Depends(require_token)])
 async def poll_device_profile(dev_id: str, req: DeviceProfilePollRequest):
     """Ad-hoc profile poll (cisco_cpu, interfaces, ...) using a registered
     device's own stored credentials — the caller never sees the secret.
