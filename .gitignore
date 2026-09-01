@@ -18,6 +18,9 @@ build/
 # Reports output
 network-audit-mcp/reports/
 
+# Persisted SSH known_hosts store (host key fingerprints, machine-specific)
+network-audit-mcp/known_hosts/
+
 # Runtime data (conversation history, etc.)
 **/data/
 

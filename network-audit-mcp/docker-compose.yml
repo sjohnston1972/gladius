@@ -10,6 +10,7 @@ services:
     volumes:
       - ./server.py:/app/server.py
       - ./reports:/app/reports
+      - ./known_hosts:/app/known_hosts
     env_file:
       - .env
     stdin_open: true

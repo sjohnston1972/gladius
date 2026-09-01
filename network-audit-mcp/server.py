@@ -48,8 +48,38 @@ EOX_CLIENT_KEY       = os.getenv("EOX_CLIENT_KEY")
 EOX_CLIENT_SECRET    = os.getenv("EOX_CLIENT_SECRET")
 EOX_API_BASE         = "https://apix.cisco.com/supporttools/eox/rest/5"
 
+# Persisted known_hosts store for SSH host-key verification (mount a volume
+# over its parent directory so enrolled keys survive container rebuilds).
+SSH_KNOWN_HOSTS_PATH = os.getenv("SSH_KNOWN_HOSTS_PATH", "/app/known_hosts/known_hosts")
+# Trust-on-first-use: when enabled, a host seen for the first time is recorded
+# to SSH_KNOWN_HOSTS_PATH instead of being rejected. Off by default — enable
+# only for the deliberate enrolment step, then disable it again.
+SSH_TOFU_ENROLL      = os.getenv("SSH_TOFU_ENROLL", "false").strip().lower() in ("1", "true", "yes")
+
 # sessions keyed by host: { host: {"client": SSHClient, "channel": channel} }
 _sessions: dict = {}
+
+
+def _build_ssh_client() -> paramiko.SSHClient:
+    """Return an SSHClient configured for verified host-key checking.
+
+    Host keys are loaded from SSH_KNOWN_HOSTS_PATH. A host that is already in
+    the store but whose presented key differs is always rejected by paramiko
+    (BadHostKeyException), regardless of policy. A host that is entirely
+    absent from the store is rejected too, unless SSH_TOFU_ENROLL is set, in
+    which case it is trusted-on-first-use and the caller should persist it
+    with client.save_host_keys(SSH_KNOWN_HOSTS_PATH) after a successful connect.
+    """
+    os.makedirs(os.path.dirname(SSH_KNOWN_HOSTS_PATH), exist_ok=True)
+    if not os.path.exists(SSH_KNOWN_HOSTS_PATH):
+        open(SSH_KNOWN_HOSTS_PATH, "a").close()
+    client = paramiko.SSHClient()
+    client.load_host_keys(SSH_KNOWN_HOSTS_PATH)
+    if SSH_TOFU_ENROLL:
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    else:
+        client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    return client
 
 log.info("Loading embedding model...")
 embed_model = SentenceTransformer(EMBED_MODEL)
@@ -663,10 +693,11 @@ async def _connect_to_device(host: str, username: str = None, password: str = No
         del _sessions[host]
     log.info(f"Connecting to {host} as {username}...")
     try:
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client = _build_ssh_client()
         client.connect(hostname=host, username=username, password=password,
                        look_for_keys=False, allow_agent=False, timeout=15, auth_timeout=15)
+        if SSH_TOFU_ENROLL:
+            client.save_host_keys(SSH_KNOWN_HOSTS_PATH)
         channel = client.invoke_shell()
         time.sleep(1)
         _clear_buffer(channel)
@@ -676,6 +707,15 @@ async def _connect_to_device(host: str, username: str = None, password: str = No
         _sessions[host] = {"client": client, "channel": channel}
         log.info(f"Connected to {host} ({len(_sessions)} session(s) open)")
         return [types.TextContent(type="text", text=f"Successfully connected to {host} as {username}")]
+    except paramiko.BadHostKeyException as e:
+        log.error(f"Host key mismatch for {host}: {e}")
+        return [types.TextContent(type="text", text=f"ERROR: Host key verification failed for {host} — the presented key does not match the stored known_hosts entry. Refusing to connect (possible MITM). If the device key was legitimately rotated, remove its old entry from the known_hosts store and re-enrol.")]
+    except paramiko.SSHException as e:
+        if "not found in known_hosts" in str(e) or "known_hosts" in str(e).lower():
+            log.error(f"Unknown host key for {host}: {e}")
+            return [types.TextContent(type="text", text=f"ERROR: {host} is not in the known_hosts store and SSH_TOFU_ENROLL is not enabled. Refusing to connect. Enrol the device first (enable SSH_TOFU_ENROLL for a one-time trusted connect, or pre-populate known_hosts out of band).")]
+        log.error(f"Connection failed: {e}")
+        return [types.TextContent(type="text", text=f"ERROR: Connection failed: {e}")]
     except paramiko.AuthenticationException:
         return [types.TextContent(type="text", text=f"ERROR: Authentication failed for {host}.")]
     except Exception as e:
@@ -885,15 +925,20 @@ async def _device_copy_file(
 
 
 def _open_sftp(host: str, username: str = None, password: str = None):
-    """Open a short-lived paramiko SFTP client (separate from interactive shell sessions)."""
+    """Open a short-lived, host-key-verified SFTP client (separate from interactive
+    shell sessions). Reuses the same verified-connect path as _connect_to_device
+    instead of a bare paramiko.Transport, so SFTP gets the same known_hosts check."""
     username = username or LAB_USERNAME
     password = password or LAB_PASSWORD
     if not username or not password:
         raise RuntimeError("No credentials provided and no lab defaults configured.")
-    transport = paramiko.Transport((host, 22))
-    transport.connect(username=username, password=password)
-    sftp = paramiko.SFTPClient.from_transport(transport)
-    return sftp, transport
+    client = _build_ssh_client()
+    client.connect(hostname=host, username=username, password=password,
+                   look_for_keys=False, allow_agent=False, timeout=15, auth_timeout=15)
+    if SSH_TOFU_ENROLL:
+        client.save_host_keys(SSH_KNOWN_HOSTS_PATH)
+    sftp = client.open_sftp()
+    return sftp, client
 
 
 async def _sftp_put_file(
