@@ -1,6 +1,7 @@
 import os
 import json
 import shlex
+import fnmatch
 import subprocess
 import logging
 import threading
@@ -46,6 +47,22 @@ def _is_authorized(body: dict, event: dict) -> bool:
 # rejected, regardless of how it was spelled (absolute path, "..", symlink, etc).
 OVERSEER_ROOT = Path(os.getenv("OVERSEER_ROOT", "/projects")).resolve()
 
+# The git repo inside the root. git commands always run here (relative git
+# paths are relative to it); every other bash command runs from OVERSEER_ROOT.
+GIT_REPO_DIR = Path(os.getenv("OVERSEER_GIT_DIR", str(OVERSEER_ROOT / "repo"))).resolve()
+
+# Paths no LLM-driven tool may touch, even under the root. Secrets files
+# (service .env files, keys) are never readable; git metadata is never
+# readable or writable, because repository config and hooks are read by every
+# git invocation. Names are compared case-insensitively since the project
+# directories are bind-mounted from a case-insensitive Windows filesystem.
+SECRET_NAME_PATTERNS = (
+    ".env", ".env.*", "*.env", "*.pem", "*.key", "*.p12", "*.pfx",
+    "id_rsa*", "id_ecdsa*", "id_ed25519*",
+)
+GIT_METADATA_DIR = ".git"
+GIT_WRITE_PROTECTED = {".gitattributes", ".gitmodules"}
+
 # Real container names, taken from each service's docker-compose.yml. This is
 # the only set of values docker_restart will accept.
 ALLOWED_CONTAINERS = {
@@ -71,19 +88,25 @@ BASH_TIMEOUT = 120
 BASH_COMMAND_SPECS = {
     "ls":   {"allowed_flags": {"-l", "-a", "-la", "-al", "-h", "-lh", "-alh", "-1", "-R"}, "paths": True},
     "cat":  {"allowed_flags": set(), "paths": True},
-    "grep": {"allowed_flags": {"-r", "-n", "-i", "-l", "-c", "-v", "-E", "-w", "-e"}, "paths": True},
+    "grep": {
+        "allowed_flags": {"-r", "-n", "-i", "-l", "-c", "-v", "-E", "-w", "-e"},
+        # Flags whose next argument is a value (a pattern), not a path.
+        "value_flags": {"-e"},
+        "paths": True,
+    },
     "find": {
         "allowed_flags": {"-name", "-iname", "-type", "-maxdepth", "-mindepth"},
+        "value_flags": {"-name", "-iname", "-type", "-maxdepth", "-mindepth"},
         # Flags that can execute code or mutate the filesystem must never be
         # reachable, no matter how the allowlist above is edited later.
         "denied_flags": {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprintf", "-fprint", "-fprint0"},
         "paths": True,
     },
     "git": {
-        # Subcommands only — no "-c" is ever accepted (git -c core.fsmonitor=<cmd>
-        # is a known way to get arbitrary command execution from a "read-only"
-        # looking git invocation), and "config"/"submodule"/"filter-branch"/
-        # "hook"-adjacent subcommands are excluded for the same reason.
+        # Subcommands only — "config"/"submodule"/"filter-branch"/"hook"-
+        # adjacent subcommands are excluded. Arguments are checked by
+        # _validate_git_args and git itself runs with a hardened config
+        # (see _build_bash_exec).
         "allowed_subcommands": {
             "status", "log", "diff", "show", "add", "commit", "push", "pull",
             "fetch", "checkout", "branch", "stash", "remote",
@@ -92,28 +115,191 @@ BASH_COMMAND_SPECS = {
     },
 }
 
+# Long git options that are never accepted from the model: options that write
+# output to an arbitrary file, compare paths outside a repository, choose the
+# program run on the remote side, run external diff/textconv programs, point
+# git at a different repository/worktree/config, or read input from a file.
+# Matching is by prefix in both directions, so abbreviations (git accepts any
+# unambiguous prefix of a long option) are rejected too.
+GIT_DENIED_LONG_OPTIONS = (
+    "--output", "--no-index", "--exec", "--upload-pack", "--receive-pack",
+    "--ext-diff", "--textconv", "--git-dir", "--work-tree", "--namespace",
+    "--config", "--template", "--file", "--pathspec-from-file", "--repo",
+    "--super-prefix", "--paginate", "--open-files-in-pager", "--multiple",
+)
+# Options whose next argument is free text rather than a path (commit messages).
+GIT_MESSAGE_OPTIONS = {"-m", "-am", "--message"}
+# Subcommands that talk to a remote; the remote is pinned to "origin".
+GIT_REMOTE_SUBCOMMANDS = {"push", "pull", "fetch"}
+GIT_ALLOWED_REMOTE = "origin"
+
+# Prepended to every git invocation by the wrapper (the model itself may never
+# pass -c): disables hooks, fsmonitor and pagers/editors, and blocks the
+# ext:: transport. Combined with GIT_CONFIG_NOSYSTEM/GIT_CONFIG_GLOBAL in the
+# environment and the .git write ban, no git config the model can influence
+# is able to launch a program.
+GIT_HARDENING_ARGS = [
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "core.fsmonitor=false",
+    "-c", "core.pager=cat",
+    "-c", "core.editor=true",
+    "-c", "sequence.editor=true",
+    "-c", "protocol.ext.allow=never",
+    "-c", "commit.gpgSign=false",
+]
+# Added straight after diff/log/show so external diff and textconv drivers
+# are never run.
+GIT_DIFF_SUBCOMMANDS = {"diff", "log", "show"}
+GIT_NO_EXTERNAL_DIFF_ARGS = ["--no-ext-diff", "--no-textconv"]
+GIT_ENV = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_TERMINAL_PROMPT": "0",
+    "GIT_PAGER": "cat",
+    "GIT_EDITOR": "true",
+    # Makes git refuse abbreviated long options outright (backs up the
+    # prefix matching against GIT_DENIED_LONG_OPTIONS).
+    "GIT_TEST_DISALLOW_ABBREVIATED_OPTIONS": "true",
+}
+# grep -r must never print the contents of secrets files or git metadata.
+GREP_SECRET_EXCLUDES = [f"--exclude={p}" for p in SECRET_NAME_PATTERNS] + [f"--exclude-dir={GIT_METADATA_DIR}"]
+# Child processes get a minimal environment — never the bot's API tokens.
+SUBPROCESS_ENV_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "TZ", "DOCKER_HOST")
+
 
 class BashRejected(Exception):
     """Raised when a bash command fails allowlist validation."""
 
 
-def _resolve_under_root(path_str: str) -> Path:
+def _resolve_under_root(path_str: str, base: Path | None = None) -> Path:
     """Resolve `path_str` (following symlinks) and ensure it stays under
     OVERSEER_ROOT. Raises ValueError otherwise. Confines both relative and
     absolute paths, and cannot be escaped with "..", a symlink, or by
-    pointing at an absolute path outside the root."""
+    pointing at an absolute path outside the root. Relative paths are taken
+    relative to `base` (default: OVERSEER_ROOT)."""
     p = Path(path_str)
     if not p.is_absolute():
-        p = OVERSEER_ROOT / p
+        p = (base or OVERSEER_ROOT) / p
     resolved = p.resolve()
     if resolved != OVERSEER_ROOT and OVERSEER_ROOT not in resolved.parents:
         raise ValueError(f"Path '{path_str}' resolves outside the allowed root ({OVERSEER_ROOT})")
     return resolved
 
 
-def _validate_bash_argv(argv: list[str]) -> None:
+def _norm_name(name: str) -> str:
+    # Case-insensitive, and ignore trailing dots/spaces (which Windows drops).
+    return name.lower().rstrip(". ") or name
+
+
+def _is_secret_name(name: str) -> bool:
+    n = _norm_name(name)
+    return any(fnmatch.fnmatchcase(n, pat) for pat in SECRET_NAME_PATTERNS)
+
+
+def _protected_reason(given: Path, resolved: Path, write: bool) -> str | None:
+    """Return why a path is off-limits, or None if it may be used."""
+    try:
+        rel_parts = resolved.relative_to(OVERSEER_ROOT).parts
+    except ValueError:
+        rel_parts = resolved.parts
+    names = [_norm_name(p) for p in (*rel_parts, *given.parts)]
+    if GIT_METADATA_DIR in names:
+        return "inside git metadata (.git)"
+    if _is_secret_name(given.name) or _is_secret_name(resolved.name):
+        return "a secrets file"
+    if write and (_norm_name(given.name) in GIT_WRITE_PROTECTED or _norm_name(resolved.name) in GIT_WRITE_PROTECTED):
+        return "git metadata"
+    return None
+
+
+def _resolve_sandboxed(path_str: str, *, write: bool = False, base: Path | None = None) -> Path:
+    """_resolve_under_root plus the protected-path rules (secrets, .git)."""
+    resolved = _resolve_under_root(path_str, base)
+    reason = _protected_reason(Path(path_str), resolved, write)
+    if reason:
+        raise ValueError(f"Path '{path_str}' is {reason} and is off-limits")
+    return resolved
+
+
+def _git_cwd() -> Path:
+    return GIT_REPO_DIR if GIT_REPO_DIR.is_dir() else OVERSEER_ROOT
+
+
+def _git_denied_long_option(arg: str) -> bool:
+    name = arg.split("=", 1)[0]
+    return any(d.startswith(name) or name.startswith(d) for d in GIT_DENIED_LONG_OPTIONS)
+
+
+def _validate_git_args(rest: list[str]) -> None:
+    """Validate `git <rest...>`. Raises BashRejected."""
+    if not rest:
+        raise BashRejected("git requires a subcommand.")
+    subcmd = rest[0]
+    if subcmd.startswith("-"):
+        raise BashRejected("git global options (including -c) are not permitted; start with the subcommand.")
+    if subcmd not in BASH_COMMAND_SPECS["git"]["allowed_subcommands"]:
+        allowed = ", ".join(sorted(BASH_COMMAND_SPECS["git"]["allowed_subcommands"]))
+        raise BashRejected(f"git subcommand '{subcmd}' is not allowlisted. Allowed: {allowed}")
+
+    args = rest[1:]
+    if subcmd == "remote":
+        # Read-only listing only — no add/set-url/rename/remove.
+        if any(a not in ("-v", "--verbose") for a in args):
+            raise BashRejected("Only 'git remote' and 'git remote -v' are permitted.")
+        return
+
+    base = _git_cwd()
+    positionals: list[str] = []
+    message_next = False
+    end_of_options = False
+    for arg in args:
+        if message_next:
+            message_next = False
+            continue
+        if not end_of_options and arg == "--":
+            end_of_options = True
+            continue
+        if not end_of_options and arg.startswith("--"):
+            if _git_denied_long_option(arg):
+                raise BashRejected(f"git option '{arg.split('=', 1)[0]}' is not permitted.")
+            name, has_value, value = arg.partition("=")
+            if name in GIT_MESSAGE_OPTIONS:
+                message_next = not has_value
+                continue
+            if has_value:
+                try:
+                    _resolve_sandboxed(value, write=True, base=base)
+                except ValueError as e:
+                    raise BashRejected(str(e))
+            continue
+        if not end_of_options and arg.startswith("-") and arg != "-":
+            if arg in GIT_MESSAGE_OPTIONS:
+                message_next = True
+                continue
+            if arg.startswith("-m"):
+                continue  # -m<message>, value attached
+            if arg.startswith("-c"):
+                raise BashRejected("git -c (config override) is not permitted.")
+            # A short option with an attached value (-X<value>) must not
+            # smuggle a path past the path checks below.
+            if any(s in arg for s in ("/", "\\", "~", "..")):
+                raise BashRejected(f"git option '{arg}' looks like it carries a path; pass paths as separate arguments.")
+            continue
+        positionals.append(arg)
+        try:
+            _resolve_sandboxed(arg, write=True, base=base)
+        except ValueError as e:
+            raise BashRejected(str(e))
+
+    if subcmd in GIT_REMOTE_SUBCOMMANDS and positionals and positionals[0] != GIT_ALLOWED_REMOTE:
+        raise BashRejected(f"git {subcmd} may only use the '{GIT_ALLOWED_REMOTE}' remote.")
+
+
+def _validate_bash_argv(argv: list[str]) -> list[str]:
     """Validate a parsed bash command against BASH_COMMAND_SPECS. Raises
-    BashRejected on anything not explicitly allowed."""
+    BashRejected on anything not explicitly allowed. Returns the argv to run,
+    with every path argument replaced by its validated absolute path so the
+    file that is opened is exactly the file that was checked."""
     if not argv:
         raise BashRejected("Empty command.")
 
@@ -126,42 +312,65 @@ def _validate_bash_argv(argv: list[str]) -> None:
     rest = argv[1:]
 
     if binary == "git":
-        if not rest:
-            raise BashRejected("git requires a subcommand.")
-        subcmd = rest[0]
-        if subcmd == "-c" or subcmd.startswith("-c"):
-            raise BashRejected("git -c (config override) is not permitted.")
-        if subcmd not in spec["allowed_subcommands"]:
-            allowed = ", ".join(sorted(spec["allowed_subcommands"]))
-            raise BashRejected(f"git subcommand '{subcmd}' is not allowlisted. Allowed: {allowed}")
-        for arg in rest[1:]:
-            if arg == "-c" or arg.startswith("-c="):
-                raise BashRejected("git -c (config override) is not permitted.")
-        return
+        _validate_git_args(rest)
+        return list(argv)
 
     denied_flags = spec.get("denied_flags", set())
     allowed_flags = spec["allowed_flags"]
-    seen_positional = False
+    value_flags = spec.get("value_flags", set())
+    out = [binary]
+    pending_value_flag = None
+    pattern_given = False
     for arg in rest:
+        if pending_value_flag:
+            pending_value_flag = None
+            out.append(arg)
+            continue
         if arg.startswith("-"):
             if arg in denied_flags:
                 raise BashRejected(f"Flag '{arg}' is not permitted for '{binary}'.")
             if arg not in allowed_flags:
                 raise BashRejected(f"Flag '{arg}' is not allowlisted for '{binary}'.")
+            if arg in value_flags:
+                pending_value_flag = arg
+            if binary == "grep" and arg == "-e":
+                pattern_given = True
+            out.append(arg)
             continue
         if not spec.get("paths"):
+            out.append(arg)
             continue
         # For grep, the first positional argument is the search pattern (not
         # a path to open) unless -e was used to supply it as a flag; every
         # positional argument after that is a file path and must be confined.
-        if binary == "grep" and not seen_positional:
-            seen_positional = True
+        if binary == "grep" and not pattern_given:
+            pattern_given = True
+            out.append(arg)
             continue
-        seen_positional = True
         try:
-            _resolve_under_root(arg)
+            out.append(str(_resolve_sandboxed(arg)))
         except ValueError as e:
             raise BashRejected(str(e))
+    if pending_value_flag:
+        raise BashRejected(f"Flag '{pending_value_flag}' needs a value.")
+    return out
+
+
+def _subprocess_env(extra: dict | None = None) -> dict:
+    env = {k: os.environ[k] for k in SUBPROCESS_ENV_KEYS if k in os.environ}
+    env.update(extra or {})
+    return env
+
+
+def _build_bash_exec(argv: list[str]) -> tuple[list[str], Path, dict]:
+    """Turn a validated argv into (argv, cwd, env) to execute."""
+    if argv[0] == "git":
+        subcmd, args = argv[1], argv[2:]
+        extra = GIT_NO_EXTERNAL_DIFF_ARGS if subcmd in GIT_DIFF_SUBCOMMANDS else []
+        return ["git", *GIT_HARDENING_ARGS, subcmd, *extra, *args], _git_cwd(), _subprocess_env(GIT_ENV)
+    if argv[0] == "grep":
+        return ["grep", *GREP_SECRET_EXCLUDES, *argv[1:]], OVERSEER_ROOT, _subprocess_env()
+    return list(argv), OVERSEER_ROOT, _subprocess_env()
 
 
 # ── Persistent conversation history ───────────────────────────────────────────
@@ -170,6 +379,9 @@ HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "/data/history.json"))
 _history_lock = threading.Lock()
 
 # ── Proactive messaging ────────────────────────────────────────────────────────
+# notify_slack only ever posts to a fixed owner channel: OVERSEER_NOTIFY_CHANNEL
+# if set, otherwise the stored DM channel. The model cannot pick the channel.
+OVERSEER_NOTIFY_CHANNEL = os.getenv("OVERSEER_NOTIFY_CHANNEL", "").strip()
 _dm_channel: str | None = None
 DM_CHANNEL_FILE = Path("/data/dm_channel.txt")
 
@@ -189,9 +401,18 @@ def _save_dm_channel(channel: str) -> None:
 _dm_channel = _load_dm_channel()
 
 
-def notify_slack(message: str, channel: str | None = None) -> bool:
-    """Send a proactive message to Slack. Uses the stored DM channel by default."""
-    target = channel or _dm_channel
+def _should_store_dm_channel(channel: str) -> bool:
+    """Whether a DM in `channel` should become the proactive target. Never when
+    OVERSEER_NOTIFY_CHANNEL pins it; with several allowlisted users the first
+    stored DM is kept rather than whoever messaged last."""
+    if OVERSEER_NOTIFY_CHANNEL or _dm_channel == channel:
+        return False
+    return _dm_channel is None or len(SLACK_ALLOWED_USERS) == 1
+
+
+def notify_slack(message: str) -> bool:
+    """Send a proactive message to the owner's fixed Slack channel."""
+    target = OVERSEER_NOTIFY_CHANNEL or _dm_channel
     if not target:
         log.warning("notify_slack: no channel available yet")
         return False
@@ -439,7 +660,6 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "message": {"type": "string", "description": "Message to send"},
-                "channel": {"type": "string", "description": "Override channel ID (optional — defaults to user's DM)"},
             },
             "required": ["message"],
         },
@@ -451,6 +671,8 @@ def _run_docker_restart(container: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "restart", container],
         shell=False,
+        env=_subprocess_env(),
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         timeout=BASH_TIMEOUT,
@@ -461,7 +683,7 @@ def exec_tool(name: str, inp: dict) -> str:
     try:
         if name == "read_file":
             try:
-                path = _resolve_under_root(inp["path"])
+                path = _resolve_sandboxed(inp["path"])
             except ValueError as e:
                 return f"Error: {e}"
             with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -472,7 +694,7 @@ def exec_tool(name: str, inp: dict) -> str:
 
         elif name == "write_file":
             try:
-                path = _resolve_under_root(inp["path"])
+                path = _resolve_sandboxed(inp["path"], write=True)
             except ValueError as e:
                 return f"Error: {e}"
             parent = path.parent
@@ -480,7 +702,7 @@ def exec_tool(name: str, inp: dict) -> str:
             # Re-check after mkdir in case a symlink was introduced by the
             # directory creation itself (defence in depth).
             try:
-                _resolve_under_root(str(path))
+                _resolve_sandboxed(str(path), write=True)
             except ValueError as e:
                 return f"Error: {e}"
             with open(path, "w", encoding="utf-8") as f:
@@ -490,13 +712,16 @@ def exec_tool(name: str, inp: dict) -> str:
         elif name == "bash":
             cmd = inp["command"]
             try:
-                argv = shlex.split(cmd)
-                _validate_bash_argv(argv)
+                argv = _validate_bash_argv(shlex.split(cmd))
             except (BashRejected, ValueError) as e:
                 return f"Rejected: {e}"
+            run_argv, cwd, env = _build_bash_exec(argv)
             result = subprocess.run(
-                argv,
+                run_argv,
                 shell=False,
+                cwd=str(cwd),
+                env=env,
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 timeout=BASH_TIMEOUT,
@@ -528,15 +753,15 @@ def exec_tool(name: str, inp: dict) -> str:
 
         elif name == "list_directory":
             try:
-                path = _resolve_under_root(inp["path"])
+                path = _resolve_sandboxed(inp["path"])
             except ValueError as e:
                 return f"Error: {e}"
             entries = sorted(os.listdir(path))
             return "\n".join(entries) if entries else "(empty)"
 
         elif name == "notify_slack":
-            ok = notify_slack(inp["message"], inp.get("channel"))
-            return "Message sent." if ok else "Failed — no DM channel stored yet."
+            ok = notify_slack(inp["message"])
+            return "Message sent." if ok else "Failed — no notification channel configured yet."
 
         else:
             return f"Unknown tool: {name}"
@@ -625,7 +850,7 @@ def handle_message(body: dict, client) -> None:
         return
 
     # Store DM channel for proactive messaging
-    if event.get("channel_type") == "im" and _dm_channel != channel:
+    if event.get("channel_type") == "im" and _should_store_dm_channel(channel):
         _dm_channel = channel
         _save_dm_channel(channel)
         log.info("Stored DM channel: %s", channel)
