@@ -23,7 +23,7 @@ def test_loop_survives_iteration_exception(data_dir, monkeypatch):
     dev = _add_device()
     calls = {"n": 0}
 
-    def flaky_iteration(device, last_latency):
+    def flaky_iteration(device, last_latency, stop_event=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("boom")
@@ -46,7 +46,7 @@ def test_loop_survives_corrupt_devices_file(data_dir, monkeypatch):
     good = storage.DEVICES_FILE.read_text()
     storage.DEVICES_FILE.write_text(good[: len(good) // 2])  # simulate a torn write
     seen = []
-    monkeypatch.setattr(collector, "_probe_iteration", lambda d, last: seen.append(d["id"]) or 1.0)
+    monkeypatch.setattr(collector, "_probe_iteration", lambda d, last, ev=None: seen.append(d["id"]) or 1.0)
     monkeypatch.setattr(collector, "_ERROR_BACKOFF_SEC", 0.01)
     stop = threading.Event()
     t = threading.Thread(target=collector._device_loop, args=(dev["id"], stop), daemon=True)
@@ -62,7 +62,7 @@ def test_loop_survives_corrupt_devices_file(data_dir, monkeypatch):
 
 def test_loop_exits_when_device_removed(data_dir, monkeypatch):
     dev = _add_device()
-    monkeypatch.setattr(collector, "_probe_iteration", lambda d, last: 1.0)
+    monkeypatch.setattr(collector, "_probe_iteration", lambda d, last, ev=None: 1.0)
     storage.remove_device(dev["id"])
     stop = threading.Event()
     t = threading.Thread(target=collector._device_loop, args=(dev["id"], stop), daemon=True)

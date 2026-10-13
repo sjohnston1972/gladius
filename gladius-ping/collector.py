@@ -15,6 +15,8 @@ from alerts import check_and_alert
 
 _threads: dict[int, threading.Thread] = {}
 _stop_flags: dict[int, threading.Event] = {}
+_generation: dict[int, int] = {}  # device_id -> generation of the current probe thread
+_ctl_lock = threading.Lock()      # guards _threads / _stop_flags / _generation
 _status: dict[int, dict] = {}  # live status cache
 _status_lock = threading.Lock()
 _last_route: dict[int, list] = {}  # device_id -> list of hop IPs from last traceroute run
@@ -158,10 +160,13 @@ def _ping_once(host: str, packet_size: int | None = None, df_bit: bool = False) 
         return False, None
 
 
-def _probe_iteration(device: dict, last_latency: float | None) -> float | None:
+def _probe_iteration(device: dict, last_latency: float | None,
+                     stop_event: threading.Event | None = None) -> float | None:
     """Run one probe for `device`, record it, and evaluate alerts.
 
     Returns the latency to use as `last_latency` for the next jitter calculation.
+    If `stop_event` is set while the probe runs (device restarted or stopped),
+    the result is discarded so a retired thread never records or alerts.
     """
     device_id = device["id"]
     host = device["host"]
@@ -187,6 +192,9 @@ def _probe_iteration(device: dict, last_latency: float | None) -> float | None:
         _last_route[device_id] = current_ips
     else:
         success, latency = _ping_once(host, packet_size, df_bit)
+
+    if stop_event is not None and stop_event.is_set():
+        return last_latency
 
     # Calculate jitter (difference from last reading)
     jitter = None
@@ -241,7 +249,7 @@ def _device_loop(device_id: int, stop_event: threading.Event):
             if device is None:
                 break
             interval = device.get("interval_sec", 5)
-            last_latency = _probe_iteration(device, last_latency)
+            last_latency = _probe_iteration(device, last_latency, stop_event)
             wait = interval
         except Exception as e:
             # Never let one bad iteration (half-written config, alerting or
@@ -253,25 +261,43 @@ def _device_loop(device_id: int, stop_event: threading.Event):
         stop_event.wait(wait)
 
 
-def start_device(device_id: int):
-    if device_id in _threads and _threads[device_id].is_alive():
-        return  # Already running
-    stop_event = threading.Event()
-    _stop_flags[device_id] = stop_event
-    t = threading.Thread(target=_device_loop, args=(device_id, stop_event), daemon=True)
-    _threads[device_id] = t
-    t.start()
+def start_device(device_id: int, force: bool = False):
+    """Start probing a device.
+
+    Each thread owns its own stop event (one per generation). A running,
+    un-stopped thread is left alone unless `force`; otherwise the previous
+    generation is told to stop and a new one starts immediately, even if the
+    old thread is still finishing a probe.
+    """
+    with _ctl_lock:
+        t = _threads.get(device_id)
+        ev = _stop_flags.get(device_id)
+        if not force and t is not None and t.is_alive() and ev is not None and not ev.is_set():
+            return  # Already running
+        if ev is not None:
+            ev.set()  # retire the previous generation
+        _generation[device_id] = _generation.get(device_id, 0) + 1
+        stop_event = threading.Event()
+        _stop_flags[device_id] = stop_event
+        t = threading.Thread(target=_device_loop, args=(device_id, stop_event), daemon=True,
+                             name=f"probe-{device_id}-g{_generation[device_id]}")
+        _threads[device_id] = t
+        t.start()
 
 
 def stop_device(device_id: int):
-    if device_id in _stop_flags:
-        _stop_flags[device_id].set()
+    with _ctl_lock:
+        if device_id in _stop_flags:
+            _stop_flags[device_id].set()
 
 
 def restart_device(device_id: int):
-    stop_device(device_id)
-    time.sleep(0.5)
-    start_device(device_id)
+    """Restart probing (after an edit, or to probe now) if the device is enabled."""
+    device = next((d for d in load_devices() if d["id"] == device_id), None)
+    if device is None or not device.get("enabled", True):
+        stop_device(device_id)
+        return
+    start_device(device_id, force=True)
 
 
 def start_all():
