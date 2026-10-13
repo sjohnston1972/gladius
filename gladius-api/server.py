@@ -3714,6 +3714,20 @@ async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asy
 
     await _push("device_start", device=display)
 
+    # Heartbeat: synthesis is serialised across devices by a global semaphore, and
+    # subagent calls can run for a while, so a device can go >180s without pushing
+    # anything. Emit a keepalive periodically so the /api/audit/parallel stream's
+    # per-event timeout doesn't abort a run that's still healthy.
+    async def _heartbeat():
+        try:
+            while True:
+                await asyncio.sleep(20)
+                await sse_queue.put({"type": "keepalive", "device": display})
+        except asyncio.CancelledError:
+            pass
+
+    hb_task = asyncio.create_task(_heartbeat())
+
     device_directive = (
         f"Connect to {device_ip} and collect all device data needed for a security audit. "
         f"Batch ALL tool calls (connect_to_device, run_show_command for running-config/version/"
@@ -3741,6 +3755,7 @@ async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asy
         log.info(f"[DeviceAudit-{display}] fresh MCP session ready")
     except Exception as e:
         log.error(f"[DeviceAudit-{display}] failed to create fresh MCP session: {e}")
+        hb_task.cancel()
         await _push("error", content=f"Device {display}: MCP session failed — {e}")
         await _push("device_done", device=display, elapsed=0)
         return ""
@@ -3856,6 +3871,7 @@ async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asy
             log.warning(f"[DeviceAudit-{display}] no audit data captured from synthesis agent")
 
     finally:
+        hb_task.cancel()
         # Always clean up the isolated MCP subprocess
         if fresh_mgr:
             await fresh_mgr.disconnect()
