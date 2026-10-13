@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pysnmp.hlapi import (
     getCmd, SnmpEngine, CommunityData, UsmUserData,
@@ -849,11 +850,67 @@ async def _poll_one(dev_id: str):
             log.debug("Protocol poll error for %s: %s", dev["host"], e)
 
 
-async def _poll_all():
-    while True:
-        for dev_id in list(_devices.keys()):
+POLL_CONCURRENCY = max(1, int(os.getenv("SNMP_POLL_CONCURRENCY", "10")))   # devices polled in parallel
+_RESTART_DELAY = 5                     # seconds before a crashed background loop is restarted
+_started_at = time.monotonic()
+_last_cycle_completed: float | None = None   # monotonic time the last full poll cycle finished
+
+
+async def _poll_one_guarded(dev_id: str, sem: asyncio.Semaphore):
+    async with sem:
+        try:
             await _poll_one(dev_id)
-        await asyncio.sleep(POLL_INTERVAL)
+        except Exception:
+            log.exception("Poll of device %s failed", dev_id)
+
+
+async def _poll_cycle():
+    """Poll every registered device, POLL_CONCURRENCY at a time. One device
+    failing (or timing out) never holds up or aborts the others."""
+    sem = asyncio.Semaphore(POLL_CONCURRENCY)
+    await asyncio.gather(*(_poll_one_guarded(dev_id, sem) for dev_id in list(_devices.keys())))
+
+
+async def _poll_all():
+    """Run poll cycles on a fixed cadence (start-to-start POLL_INTERVAL)."""
+    global _last_cycle_completed
+    loop = asyncio.get_running_loop()
+    next_run = loop.time()
+    while True:
+        try:
+            await _poll_cycle()
+            _last_cycle_completed = time.monotonic()
+        except Exception:
+            log.exception("Poll cycle failed")
+        next_run += POLL_INTERVAL
+        delay = next_run - loop.time()
+        if delay < 0:
+            log.warning("Poll cycle overran POLL_INTERVAL (%ds) by %.0fs", POLL_INTERVAL, -delay)
+            next_run, delay = loop.time(), 0
+        await asyncio.sleep(delay)
+
+
+async def _supervise(name: str, factory):
+    """Keep a long-running background coroutine alive: log and restart it if it
+    ever raises or returns, instead of letting monitoring silently stop."""
+    while True:
+        try:
+            await factory()
+            log.error("%s exited unexpectedly — restarting", name)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("%s crashed — restarting in %ds", name, _RESTART_DELAY)
+        await asyncio.sleep(_RESTART_DELAY)
+
+
+def _poller_health() -> tuple[bool, float | None]:
+    """→ (healthy, seconds since last completed cycle). Unhealthy once no cycle
+    has completed for 3× POLL_INTERVAL (counting from startup)."""
+    now = time.monotonic()
+    age = None if _last_cycle_completed is None else now - _last_cycle_completed
+    ref = age if age is not None else now - _started_at
+    return ref <= POLL_INTERVAL * 3, age
 
 
 _bg_tasks: set[asyncio.Task] = set()   # strong refs so background tasks aren't garbage-collected
@@ -868,13 +925,14 @@ def _spawn(coro) -> asyncio.Task:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _side_effects
+    global _side_effects, _started_at
+    _started_at = time.monotonic()
     _load_devices()
     _load_alert_state()
     _side_effects = asyncio.Queue(maxsize=_SIDE_EFFECT_QUEUE_MAX)
-    _spawn(_side_effect_worker())
+    _spawn(_supervise("Side-effect worker", _side_effect_worker))
     # Kick off an immediate poll before the regular loop
-    _spawn(_poll_all())
+    _spawn(_supervise("Poll loop", _poll_all))
     yield
 
 
@@ -969,7 +1027,19 @@ def _staleness(st: dict) -> str:
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "gladius-snmp", "devices": len(_devices)}
+    healthy, age = _poller_health()
+    body = {
+        "status":          "ok" if healthy and not _registry_error else "error",
+        "service":         "gladius-snmp",
+        "devices":         len(_devices),
+        "poll_interval":   POLL_INTERVAL,
+        "last_cycle_age_s": None if age is None else round(age, 1),
+    }
+    if not healthy:
+        body["detail"] = f"no poll cycle completed in over {POLL_INTERVAL * 3}s"
+    if _registry_error:
+        body["detail"] = "device registry could not be loaded (devices.json unreadable)"
+    return JSONResponse(body, status_code=200 if body["status"] == "ok" else 503)
 
 
 @app.get("/devices", dependencies=[Depends(require_token)])
