@@ -8,7 +8,7 @@ import urllib.request
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional
 import collector
 import storage
@@ -185,18 +185,58 @@ def health():
 
 # ── Settings endpoints ─────────────────────────────────────────────────────────
 
-@app.get("/api/settings")
-def get_settings():
-    s = storage.load_settings()
+class SettingsUpdate(BaseModel):
+    """Accepted settings keys. Unknown keys are ignored; secrets echoed back
+    masked (as GET returns them) are treated as unchanged."""
+    model_config = ConfigDict(extra="ignore")
+
+    slack_webhook_url: Optional[str] = None
+    discord_webhook_url: Optional[str] = None
+    teams_webhook_url: Optional[str] = None
+    webhook_url: Optional[str] = None
+    cooldown_sec: Optional[int] = Field(None, ge=0, le=86400)
+    down_after_failures: Optional[int] = Field(None, ge=1, le=1000)
+    anomaly_window_samples: Optional[int] = Field(None, ge=1, le=1000)
+    anomaly_min_samples: Optional[int] = Field(None, ge=1, le=1000)
+    default_interval_sec: Optional[int] = Field(None, ge=1, le=86400)
+    retention_days: Optional[int] = Field(None, ge=1, le=3650)
+    smtp_host: Optional[str] = Field(None, max_length=253, pattern=r"^[A-Za-z0-9.\-]*$")
+    smtp_port: Optional[int] = Field(None, ge=1, le=65535)
+    smtp_user: Optional[str] = Field(None, max_length=254)
+    smtp_pass: Optional[str] = Field(None, max_length=1024)
+    smtp_from: Optional[str] = Field(None, max_length=254)
+    smtp_to: Optional[str] = Field(None, max_length=254)
+    email_alerts_enabled: Optional[bool] = None
+    speedtest_interval_minutes: Optional[int] = Field(None, ge=0, le=10080)
+    digest_interval_hours: Optional[int] = Field(None, ge=0, le=8760)
+    # Fields the Gladius ping settings panel also saves
+    email_recipient: Optional[str] = Field(None, max_length=254)
+    latency_threshold_ms: Optional[int] = Field(None, ge=0, le=600000)
+    loss_threshold_pct: Optional[int] = Field(None, ge=0, le=100)
+
+    @field_validator("slack_webhook_url", "discord_webhook_url", "teams_webhook_url", "webhook_url")
+    @classmethod
+    def _check_webhook(cls, v, info):
+        return None if v is None else storage.validate_webhook_url(info.field_name, v)
+
+
+def _settings_for_client(s: dict) -> dict:
+    s = dict(s)
     # Env var overrides stored webhook
     if os.environ.get("SLACK_WEBHOOK_URL"):
         s["slack_webhook_url"] = os.environ["SLACK_WEBHOOK_URL"]
-    return s
+    return storage.redact_settings(s)
+
+
+@app.get("/api/settings")
+def get_settings():
+    return _settings_for_client(storage.load_settings())
 
 
 @app.post("/api/settings")
-def update_settings(payload: dict):
-    return storage.save_settings(payload)
+def update_settings(payload: SettingsUpdate):
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    return _settings_for_client(storage.save_settings(storage.drop_masked(updates)))
 
 
 @app.post("/api/settings/test-slack")

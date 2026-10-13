@@ -564,6 +564,78 @@ def save_settings(updates: dict):
     return current
 
 
+# ── Settings redaction / validation ────────────────────────────────────────────
+# Webhook URLs are bearer secrets and smtp_pass is a credential: the API only
+# ever returns them masked, and a masked value sent back means "unchanged".
+
+SECRET_MASK = "••••"
+SECRET_SETTINGS = ("smtp_pass",)
+WEBHOOK_SETTINGS = ("slack_webhook_url", "discord_webhook_url", "teams_webhook_url", "webhook_url")
+# Fixed-vendor webhooks must point at the vendor; the custom webhook may be any http(s) host.
+_WEBHOOK_HOSTS = {
+    "slack_webhook_url": ("hooks.slack.com",),
+    "discord_webhook_url": ("discord.com", "discordapp.com", "ptb.discord.com", "canary.discord.com"),
+}
+_WEBHOOK_SCHEMES = {"webhook_url": ("http", "https")}
+
+
+def _mask_url(url: str) -> str:
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return SECRET_MASK
+    if parts.scheme and parts.hostname:
+        return f"{parts.scheme}://{parts.hostname}/{SECRET_MASK}"
+    return SECRET_MASK
+
+
+def redact_settings(settings: dict) -> dict:
+    """Copy of settings safe to return from the API (secrets masked, empty stays empty)."""
+    out = dict(settings)
+    for key in SECRET_SETTINGS:
+        if out.get(key):
+            out[key] = SECRET_MASK
+    for key in WEBHOOK_SETTINGS:
+        if out.get(key):
+            out[key] = _mask_url(str(out[key]))
+    return out
+
+
+def is_masked(value) -> bool:
+    return isinstance(value, str) and SECRET_MASK in value
+
+
+def drop_masked(updates: dict) -> dict:
+    """Remove secret fields the client echoed back masked (i.e. left unchanged)."""
+    return {k: v for k, v in updates.items()
+            if not (k in SECRET_SETTINGS + WEBHOOK_SETTINGS and is_masked(v))}
+
+
+def validate_webhook_url(key: str, value: str) -> str:
+    """Validate a webhook URL setting. "" clears it; a masked value means unchanged."""
+    from urllib.parse import urlsplit
+    value = (value or "").strip()
+    if not value or is_masked(value):
+        return value
+    if len(value) > 2048 or any(c.isspace() for c in value):
+        raise ValueError("invalid URL")
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        raise ValueError("invalid URL")
+    schemes = _WEBHOOK_SCHEMES.get(key, ("https",))
+    if parts.scheme.lower() not in schemes:
+        raise ValueError(f"URL scheme must be {' or '.join(schemes)}")
+    host = (parts.hostname or "").lower()
+    if not host:
+        raise ValueError("URL must include a host")
+    allowed = _WEBHOOK_HOSTS.get(key)
+    if allowed and host not in allowed:
+        raise ValueError(f"URL host must be one of: {', '.join(allowed)}")
+    return value
+
+
 def load_uptime_stats(device_id: int, hours: int = 24) -> dict:
     results = load_results(device_id, hours)
     if not results:
