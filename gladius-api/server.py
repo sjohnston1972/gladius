@@ -1460,6 +1460,7 @@ async def get_tshoot_diagnostics():
 
 async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]:
     """Tshoot agent — filtered tool set, diagnostics-focused system prompt."""
+    global _last_claude_success
     model = model or MODEL
     tools = [t for t in cached_tools if t["name"] in TSHOOT_TOOLS]
     tools.append(_JIRA_TOOL_DEF)
@@ -1510,6 +1511,17 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                     loop_messages.append({"role": "assistant", "content": assistant_content})
                     loop_messages.append({"role": "user", "content": [{"type": "text", "text": "Your response was cut off. Continue exactly where you left off."}]})
                     continue
+                # Paused turn (server-side tool) — resume so the model finishes.
+                if response.stop_reason == "pause_turn":
+                    log.info(f"[Tshoot] pause_turn (loop {loop_count}) — resuming")
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    continue
+                # Model refused — surface it explicitly rather than ending silently.
+                if response.stop_reason == "refusal":
+                    log.warning(f"[Tshoot] model refusal (loop {loop_count})")
+                    _last_claude_success = time.monotonic()
+                    yield f"data: {json.dumps({'type': 'error', 'content': 'The model declined to respond (refusal).'})}\n\n"
+                    break
                 # Claude returned text-only after disconnect. Nudge it if it looks mid-batch.
                 if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
                     # Check if the text looks like a final summary (not mid-batch)
@@ -1522,7 +1534,6 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                         loop_messages.append({"role": "assistant", "content": assistant_content})
                         loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
                         continue
-                global _last_claude_success
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
@@ -1625,6 +1636,18 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                 loop_messages.append({"role": "user", "content": [{"type": "text", "text": "Your response was cut off. Continue exactly where you left off."}]})
                 continue
 
+            # Paused turn (server-side tool) — resume the loop without ending the stream.
+            if response.stop_reason == "pause_turn":
+                log.info(f"[Tshoot] pause_turn after tool calls (loop {loop_count}) — resuming")
+                continue
+
+            # Model refused — surface it explicitly rather than ending as a silent done.
+            if response.stop_reason == "refusal":
+                log.warning(f"[Tshoot] model refusal after tool calls (loop {loop_count})")
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'error', 'content': 'The model declined to respond (refusal).'})}\n\n"
+                break
+
             if response.stop_reason != "tool_use":
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -1662,6 +1685,11 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
     _TOOL_MAX_CHARS = 20000
     _audit_saved = False  # break loop immediately after save_audit_results
 
+    # Per-request audit state — kept in this generator's closure, NOT a module
+    # global, so concurrent chat requests can't template each other's emails.
+    last_audit: dict | None = None
+
+    global _last_claude_success
     try:
         loop_messages = list(messages)
         loop_count    = 0
@@ -1711,21 +1739,36 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                     yield f"data: {json.dumps({'type': 'tool_start', 'tool': block.name, 'input': slim_input})}\n\n"
 
             if not tool_calls:
-                if response.stop_reason != "tool_use":
-                    if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
-                        resp_text = " ".join(b.get("text", "") for b in assistant_content if b.get("type") == "text").lower()
-                        looks_done = any(w in resp_text for w in ['all devices', 'all done', 'complete', 'summary', 'finished', 'fully achieved', 'what would you like', 'what next', 'that covers'])
-                        if not looks_done:
-                            _text_breaks += 1
-                            _force_tools = True
-                            log.info(f"[Chat] Text-only after disconnect_device (break #{_text_breaks}) — nudging")
-                            loop_messages.append({"role": "assistant", "content": assistant_content})
-                            loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
-                            continue
-                    global _last_claude_success
+                # Truncated text-only response — ask the model to continue (mirrors stream_tshoot).
+                if response.stop_reason == "max_tokens":
+                    log.info(f"[Chat] max_tokens hit on text-only response (loop {loop_count}) — continuing")
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    loop_messages.append({"role": "user", "content": [{"type": "text", "text": "Your response was cut off. Continue exactly where you left off."}]})
+                    continue
+                # Paused turn (server-side tool) — resume so the model finishes its turn.
+                if response.stop_reason == "pause_turn":
+                    log.info(f"[Chat] pause_turn (loop {loop_count}) — resuming")
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    continue
+                # Model refused — surface it explicitly instead of ending as a silent completion.
+                if response.stop_reason == "refusal":
+                    log.warning(f"[Chat] model refusal (loop {loop_count})")
                     _last_claude_success = time.monotonic()
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'error', 'content': 'The model declined to respond (refusal).'})}\n\n"
                     break
+                if _last_tool_in_history(loop_messages) == "disconnect_device" and _text_breaks < 2:
+                    resp_text = " ".join(b.get("text", "") for b in assistant_content if b.get("type") == "text").lower()
+                    looks_done = any(w in resp_text for w in ['all devices', 'all done', 'complete', 'summary', 'finished', 'fully achieved', 'what would you like', 'what next', 'that covers'])
+                    if not looks_done:
+                        _text_breaks += 1
+                        _force_tools = True
+                        log.info(f"[Chat] Text-only after disconnect_device (break #{_text_breaks}) — nudging")
+                        loop_messages.append({"role": "assistant", "content": assistant_content})
+                        loop_messages.append({"role": "user", "content": [{"type": "text", "text": _CONTINUATION_MSG}]})
+                        continue
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                break
 
             _text_breaks = 0  # Claude used tools — reset counter
 
@@ -1735,10 +1778,9 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                 log.info(f"Tool call: {tool_name}")
                 try:
                     if tool_name == "save_audit_results":
-                        global _last_audit
-                        _last_audit = tool_input
+                        last_audit = tool_input
 
-                    if tool_name == "send_email" and _last_audit:
+                    if tool_name == "send_email" and last_audit:
                         payload = json.dumps({
                             "type":      "send_templated_email",
                             "subject":   tool_input.get("subject", ""),
@@ -1804,7 +1846,6 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                         await asyncio.sleep(0.03)
                     yield f"data: {json.dumps({'type': 'audit_saved', 'audit': audit_data})}\n\n"
                     log.info("audit_saved event streamed to browser")
-                    _pending_audit = None
                     _audit_saved = True
 
                 # Truncate large outputs before feeding back to Claude context
@@ -1836,16 +1877,30 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
 
+            # Paused turn (server-side tool) — resume the loop without ending the stream.
+            if response.stop_reason == "pause_turn":
+                log.info(f"[Chat] pause_turn after tool calls (loop {loop_count}) — resuming")
+                continue
+
+            # Model refused — surface it explicitly rather than ending as a silent done.
+            if response.stop_reason == "refusal":
+                log.warning(f"[Chat] model refusal after tool calls (loop {loop_count})")
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type': 'error', 'content': 'The model declined to respond (refusal).'})}\n\n"
+                break
+
             if response.stop_reason != "tool_use":
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 break
 
         else:
-            # Emitted if MAX_LOOPS reached without a natural stop
+            # Runs only if MAX_LOOPS is exhausted without a natural stop. The
+            # `done` lives inside this else so normal break paths (which already
+            # emit done) don't fire a second one.
             log.warning(f"MAX_LOOPS ({MAX_LOOPS}) reached — forcing done")
-        _last_claude_success = time.monotonic()
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            _last_claude_success = time.monotonic()
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     except Exception as e:
         log.error(f"Stream error: {type(e).__name__}: {e}", exc_info=True)
@@ -2095,6 +2150,23 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
                     yield f"data: {json.dumps({'type':'tool_start','tool':block.name,'input':slim})}\n\n"
 
             if not tool_calls:
+                # Truncated text-only response — ask the model to continue.
+                if response.stop_reason == "max_tokens":
+                    log.info(f"[Pentest] max_tokens hit on text-only response (loop {loop_count}) — continuing")
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    loop_messages.append({"role": "user", "content": [{"type": "text", "text": "Your response was cut off. Continue exactly where you left off."}]})
+                    continue
+                # Paused turn (server-side tool) — resume so the model finishes.
+                if response.stop_reason == "pause_turn":
+                    log.info(f"[Pentest] pause_turn (loop {loop_count}) — resuming")
+                    loop_messages.append({"role": "assistant", "content": assistant_content})
+                    continue
+                # Model refused — surface it explicitly rather than ending silently.
+                if response.stop_reason == "refusal":
+                    log.warning(f"[Pentest] model refusal (loop {loop_count})")
+                    _last_claude_success = time.monotonic()
+                    yield f"data: {json.dumps({'type':'error','content':'The model declined to respond (refusal).'})}\n\n"
+                    break
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type':'done'})}\n\n"
                 break
@@ -2225,6 +2297,18 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
                     log.warning(f"[Pentest] wrap-up turn failed (engagement was already saved): {type(e).__name__}: {e}")
                 _last_claude_success = time.monotonic()
                 yield f"data: {json.dumps({'type':'done'})}\n\n"
+                break
+
+            # Paused turn (server-side tool) — resume the loop without ending the stream.
+            if response.stop_reason == "pause_turn":
+                log.info(f"[Pentest] pause_turn after tool calls (loop {loop_count}) — resuming")
+                continue
+
+            # Model refused — surface it explicitly rather than ending as a silent done.
+            if response.stop_reason == "refusal":
+                log.warning(f"[Pentest] model refusal after tool calls (loop {loop_count})")
+                _last_claude_success = time.monotonic()
+                yield f"data: {json.dumps({'type':'error','content':'The model declined to respond (refusal).'})}\n\n"
                 break
 
             if response.stop_reason != "tool_use":
@@ -3138,7 +3222,11 @@ async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
                 tools=tools,
             )
 
+            # Collect ALL blocks from this response first, then run every tool
+            # and answer with ONE user message — the Messages API requires every
+            # tool_use block in a turn to be answered in the next user message.
             assistant_content = []
+            tool_calls = []  # list of (tool_use_id, tool_name, tool_input)
 
             for block in response.content:
                 if block.type == "text":
@@ -3146,37 +3234,47 @@ async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
                     text_parts.append(block.text)
 
                 elif block.type == "tool_use":
-                    tool_name   = block.name
-                    tool_input  = block.input
-                    tool_use_id = block.id
                     assistant_content.append({
-                        "type": "tool_use", "id": tool_use_id,
-                        "name": tool_name, "input": tool_input,
+                        "type": "tool_use", "id": block.id,
+                        "name": block.name, "input": block.input,
                     })
-                    log.info("Alert investigation tool: %s", tool_name)
+                    tool_calls.append((block.id, block.name, block.input))
 
-                    try:
-                        result      = await mcp_manager.call_tool(tool_name, tool_input)
-                        result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
-                        is_error    = bool(result.isError)
-                        if tool_name == "save_audit_results" and not is_error:
-                            audit = dict(tool_input)
-                    except Exception as e:
-                        result_text = f"Tool error: {e}"
-                        is_error = True
-
+            if not tool_calls:
+                # Paused turn — resume so the model finishes its turn.
+                if response.stop_reason == "pause_turn":
+                    log.info("Alert investigation: pause_turn — resuming")
                     loop_messages.append({"role": "assistant", "content": assistant_content})
-                    loop_messages.append({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": [{"type": "text", "text": result_text}],
-                            "is_error": is_error,
-                        }]
-                    })
-                    assistant_content = []
+                    continue
+                if response.stop_reason == "refusal":
+                    log.warning("Alert investigation: model refusal")
+                break
 
+            tool_results = []
+            for tool_use_id, tool_name, tool_input in tool_calls:
+                log.info("Alert investigation tool: %s", tool_name)
+                try:
+                    result      = await mcp_manager.call_tool(tool_name, tool_input)
+                    result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
+                    is_error    = bool(result.isError)
+                    if tool_name == "save_audit_results" and not is_error:
+                        audit = dict(tool_input)
+                except Exception as e:
+                    result_text = f"Tool error: {e}"
+                    is_error = True
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": [{"type": "text", "text": result_text}],
+                    "is_error": is_error,
+                })
+
+            loop_messages.append({"role": "assistant", "content": assistant_content})
+            loop_messages.append({"role": "user", "content": tool_results})
+
+            if response.stop_reason == "pause_turn":
+                log.info("Alert investigation: pause_turn after tool calls — resuming")
+                continue
             if response.stop_reason != "tool_use":
                 break
 
@@ -3483,6 +3581,13 @@ async def run_subagent(
                 tool_calls_this_loop.append((tool_use_id, tool_name, tool_input))
 
         if not tool_calls_this_loop:
+            # Paused turn (server-side tool) — resume so the subagent finishes.
+            if response.stop_reason == "pause_turn":
+                log.info(f"[{agent_name}] pause_turn — resuming")
+                loop_messages.append({"role": "assistant", "content": assistant_content})
+                continue
+            if response.stop_reason == "refusal":
+                log.warning(f"[{agent_name}] model refusal")
             log.info(f"[{agent_name}] done in {time.monotonic()-t0:.1f}s — no more tool calls")
             break
 
@@ -3514,6 +3619,9 @@ async def run_subagent(
 
         loop_messages.append({"role": "user", "content": tool_results})
 
+        if response.stop_reason == "pause_turn":
+            log.info(f"[{agent_name}] pause_turn after tool calls — resuming")
+            continue
         if response.stop_reason != "tool_use":
             break
 
