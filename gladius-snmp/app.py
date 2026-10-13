@@ -10,8 +10,10 @@ import shutil
 import asyncio
 import logging
 import tempfile
+import threading
 import requests
 from pathlib import Path
+from urllib.parse import quote
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -34,6 +36,9 @@ POLL_INTERVAL     = int(os.getenv("POLL_INTERVAL", "60"))   # seconds between po
 GLADIUS_API_URL   = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
 GLADIUS_API_TOKEN = os.getenv("GLADIUS_API_TOKEN")
 JIRA_AUTO_EVENTS = os.getenv("JIRA_AUTO_EVENTS", "true").lower() in ("true", "1", "yes")
+ALERT_STATE_FILE  = Path(os.getenv("ALERT_STATE_FILE", str(DEVICES_FILE.parent / "alert_state.json")))
+JIRA_DEDUPE_SECS  = float(os.getenv("JIRA_DEDUPE_HOURS", "24")) * 3600   # reuse an open auto-ticket this long
+AUTO_TSHOOT_COOLDOWN = int(os.getenv("AUTO_TSHOOT_COOLDOWN", "1800"))     # min seconds between auto-tshoots per device
 
 _GLADIUS_API_HEADERS = {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
 
@@ -309,12 +314,98 @@ def _process_event_side_effects(evt: dict) -> None:
     except Exception as e:
         log.warning("Jira auto-ticket failed for %s: %s", evt["type"], e)
 
-    # Auto-tshoot for interface_down events that have a Jira ticket
-    if evt["type"] == "interface_down" and evt.get("jira_key"):
+    # Auto-tshoot for interface_down events that opened a new Jira ticket,
+    # at most once per device per AUTO_TSHOOT_COOLDOWN
+    if evt["type"] == "interface_down" and evt.get("jira_key") and not evt.get("jira_deduped") \
+            and _tshoot_allowed(evt["device_id"]):
         try:
             _trigger_auto_tshoot(evt)
         except Exception as e:
             log.warning("Auto-tshoot trigger failed for %s: %s", evt["type"], e)
+
+
+# ── Persistent alert state (survives restarts) ────────────────────────────────
+# _last_alerted, open auto-tickets and auto-tshoot times are kept in
+# ALERT_STATE_FILE so a restart neither re-alerts on devices that were already
+# down nor opens duplicate Jira tickets / LLM investigations.
+_alert_lock = threading.RLock()
+_open_tickets: dict[str, dict] = {}   # "dev_id|event_type|subject" → {"key", "url", "created"}
+_tshoot_last:  dict[str, float] = {}  # dev_id → epoch of last auto-tshoot
+_JIRA_DONE_STATUSES = {"done", "closed", "resolved", "cancelled", "canceled", "won't do", "won't fix"}
+
+
+def _load_alert_state():
+    try:
+        data = json.loads(ALERT_STATE_FILE.read_text())
+        with _alert_lock:
+            _last_alerted.update({k: v for k, v in data.get("last_alerted", {}).items() if isinstance(v, str)})
+            _open_tickets.update({k: v for k, v in data.get("open_tickets", {}).items()
+                                  if isinstance(v, dict) and v.get("key")})
+            _tshoot_last.update({k: float(v) for k, v in data.get("tshoot_last", {}).items()})
+        log.info("Loaded alert state: %d device(s), %d open ticket(s)", len(_last_alerted), len(_open_tickets))
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("Ignoring unreadable %s (%s) — first poll of each device will be a baseline",
+                    ALERT_STATE_FILE, e)
+
+
+def _save_alert_state():
+    with _alert_lock:
+        now = time.time()
+        for k in [k for k, t in _open_tickets.items() if now - t.get("created", 0) > JIRA_DEDUPE_SECS]:
+            _open_tickets.pop(k)
+        snapshot = json.dumps({"last_alerted": _last_alerted, "open_tickets": _open_tickets,
+                               "tshoot_last": _tshoot_last}, indent=2)
+        try:
+            _atomic_write_text(ALERT_STATE_FILE, snapshot)
+        except Exception as e:
+            log.error("Failed to save alert state: %s", e)
+
+
+def _ticket_subject(evt: dict) -> str:
+    """Dedupe key: one open auto-ticket per (device, event type, interface/peer/neighbour)."""
+    sub = evt.get("interface") or evt.get("peer") or evt.get("neighbor") or ""
+    return f"{evt['device_id']}|{evt['type']}|{sub}"
+
+
+def _jira_ticket_is_open(key: str) -> bool:
+    """Ask Jira (via gladius-api) whether an issue is still open. Unknown → open,
+    so a Jira hiccup errs on the side of commenting rather than duplicating."""
+    try:
+        r = requests.get(f"{GLADIUS_API_URL}/api/automation/jira/issue/{quote(key, safe='')}",
+                         headers=_GLADIUS_API_HEADERS, timeout=10)
+    except Exception as e:
+        log.warning("Jira status check for %s failed: %s", key, e)
+        return True
+    if r.status_code == 404:
+        return False
+    data = _response_json(r, f"Jira status {key}")
+    return data is None or str(data.get("status", "")).lower() not in _JIRA_DONE_STATUSES
+
+
+def _open_ticket_for(subject: str) -> dict | None:
+    with _alert_lock:
+        t = _open_tickets.get(subject)
+    if not t:
+        return None
+    if time.time() - t.get("created", 0) > JIRA_DEDUPE_SECS or not _jira_ticket_is_open(t["key"]):
+        with _alert_lock:
+            _open_tickets.pop(subject, None)
+        _save_alert_state()
+        return None
+    return t
+
+
+def _tshoot_allowed(dev_id: str) -> bool:
+    now = time.time()
+    with _alert_lock:
+        if now - _tshoot_last.get(dev_id, 0) < AUTO_TSHOOT_COOLDOWN:
+            log.info("Auto-tshoot for device %s suppressed (cooldown %ds)", dev_id, AUTO_TSHOOT_COOLDOWN)
+            return False
+        _tshoot_last[dev_id] = now
+    _save_alert_state()
+    return True
 
 
 def _response_json(r, what: str) -> dict | None:
@@ -331,10 +422,30 @@ def _response_json(r, what: str) -> dict | None:
 
 
 def _create_jira_for_event_sync(evt: dict):
-    """POST to gladius-pyats Jira endpoint (via gladius-api proxy) to create a ticket."""
+    """POST to gladius-pyats Jira endpoint (via gladius-api proxy) to create a ticket.
+    If an auto-ticket for the same subject is still open, comment on it instead."""
     device = evt.get("device") or evt.get("host", "Unknown")
     detail = evt.get("detail", "")
     evt_type = evt.get("type", "")
+
+    subject = _ticket_subject(evt)
+    existing = _open_ticket_for(subject)
+    if existing:
+        evt["jira_key"] = existing["key"]
+        evt["jira_url"] = existing.get("url", "")
+        evt["jira_deduped"] = True
+        r = requests.post(
+            f"{GLADIUS_API_URL}/api/automation/jira/comment",
+            json={"issue_key": existing["key"],
+                  "comment": f"Event recurred at {evt.get('timestamp', '')}: {detail}\n"
+                             f"(Gladius SNMP Monitor — no new ticket raised while this one is open)"},
+            headers=_GLADIUS_API_HEADERS,
+            timeout=15,
+        )
+        if _response_json(r, "Jira comment") is not None:
+            log.info("Jira ticket %s still open — commented recurrence of %s on %s", existing["key"], evt_type, device)
+        return
+
     label = evt_type.replace("_", " ").upper()
     priority = _JIRA_PRIORITY_MAP.get(evt_type, "P3")
     group = evt.get("group", "")
@@ -363,6 +474,9 @@ def _create_jira_for_event_sync(evt: dict):
     if data and data.get("ok") and data.get("key"):
         evt["jira_key"] = data["key"]
         evt["jira_url"] = data.get("url", "")
+        with _alert_lock:
+            _open_tickets[subject] = {"key": data["key"], "url": evt["jira_url"], "created": time.time()}
+        _save_alert_state()
         log.info("Jira ticket %s created for %s on %s", data["key"], evt_type, device)
     elif data is not None:
         log.warning("Jira create returned: %s", data)
@@ -646,10 +760,27 @@ def _detect_events(dev: dict, old_state: dict | None, new_state: dict) -> tuple[
 # ── Alert helpers ──────────────────────────────────────────────────────────────
 _STATUS_SEVERITY = {"ok": 0, "unknown": 0, "warn": 1, "error": 2}
 
-def _should_alert(dev_id: str, new_status: str) -> bool:
-    """Return True if the status has degraded since our last alert."""
-    prev = _last_alerted.get(dev_id, "ok")
-    return _STATUS_SEVERITY.get(new_status, 0) > _STATUS_SEVERITY.get(prev, 0)
+def _alert_transition(prev: str | None, new_status: str) -> str | None:
+    """What a device status means for alerting, given the last status we acted on.
+
+    prev is None when we have no record of the device (new device, or first run
+    without persisted alert state): that poll is a baseline and never alerts,
+    so a restart can't re-raise alerts for devices that were already down.
+    Returns "baseline", "degraded", "recovered" or None (no change).
+    """
+    if prev is None:
+        return "baseline"
+    if _STATUS_SEVERITY.get(new_status, 0) > _STATUS_SEVERITY.get(prev, 0):
+        return "degraded"
+    if new_status == "ok" and prev != "ok":
+        return "recovered"
+    return None
+
+
+def _set_last_alerted(dev_id: str, status: str) -> None:
+    with _alert_lock:
+        _last_alerted[dev_id] = status
+    _save_alert_state()
 
 
 def _send_alert_sync(dev: dict, old_status: str, new_status: str, snmp_data: dict) -> None:
@@ -671,48 +802,57 @@ def _send_alert_sync(dev: dict, old_status: str, new_status: str, snmp_data: dic
 
 
 # ── Background polling loop ────────────────────────────────────────────────────
+async def _poll_one(dev_id: str):
+    """Poll one registered device: system GET, alerting, protocol state."""
+    dev = _devices.get(dev_id)
+    if not dev:
+        return
+    result = await asyncio.to_thread(_poll_device_sync, dev)
+    old_status = _staleness(_status.get(dev_id, {})) if dev_id in _status else "unknown"
+    _status[dev_id] = result
+    new_status = _staleness(result)
+    log.info("Polled %s (%s) → %s %dms",
+             dev.get("name", dev["host"]), dev["host"],
+             new_status, result["response_ms"])
+
+    transition = _alert_transition(_last_alerted.get(dev_id), new_status)
+    if transition == "baseline":
+        _set_last_alerted(dev_id, new_status)
+        if new_status != "ok":
+            log.info("First poll of %s is %s — recorded as baseline, not alerted",
+                     dev.get("name", dev["host"]), new_status)
+    # Fire alert on status degradation (suppressed for muted devices)
+    elif transition == "degraded":
+        _set_last_alerted(dev_id, new_status)
+        if dev.get("muted"):
+            log.debug("MUTED — skipping alert POST for %s (%s) %s→%s",
+                      dev.get("name", dev["host"]), dev["host"], old_status, new_status)
+        else:
+            _spawn(asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result)))
+        # Device went down — generate event (also gated by mute inside _add_event)
+        if new_status == "error":
+            _add_event(dev, "device_down", "critical", f"Device unreachable ({result.get('error', 'no response')})")
+    elif transition == "recovered":
+        _set_last_alerted(dev_id, "ok")
+        _add_event(dev, "device_up", "info", "Device recovered")
+        log.info("Device %s recovered → alert state reset", dev.get("name", dev["host"]))
+
+    # Protocol state polling (only if device is reachable)
+    if new_status == "ok":
+        try:
+            # Enrich dev with sysName for event labels
+            enriched = {**dev, "sysName": result.get("sysName", "")}
+            proto_state = await asyncio.to_thread(_poll_protocol_state_sync, enriched)
+            confirmed, _ = _detect_events(enriched, _proto_state.get(dev_id), proto_state)
+            _proto_state[dev_id] = confirmed
+        except Exception as e:
+            log.debug("Protocol poll error for %s: %s", dev["host"], e)
+
+
 async def _poll_all():
     while True:
-        ids = list(_devices.keys())
-        for dev_id in ids:
-            dev = _devices.get(dev_id)
-            if not dev:
-                continue
-            result = await asyncio.to_thread(_poll_device_sync, dev)
-            old_status = _staleness(_status.get(dev_id, {})) if dev_id in _status else "unknown"
-            _status[dev_id] = result
-            new_status = _staleness(result)
-            log.info("Polled %s (%s) → %s %dms",
-                     dev.get("name", dev["host"]), dev["host"],
-                     new_status, result["response_ms"])
-
-            # Fire alert on status degradation (suppressed for muted devices)
-            if _should_alert(dev_id, new_status):
-                _last_alerted[dev_id] = new_status
-                if dev.get("muted"):
-                    log.debug("MUTED — skipping alert POST for %s (%s) %s→%s",
-                              dev.get("name", dev["host"]), dev["host"], old_status, new_status)
-                else:
-                    _spawn(asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result)))
-                # Device went down — generate event (also gated by mute inside _add_event)
-                if new_status == "error":
-                    _add_event(dev, "device_down", "critical", f"Device unreachable ({result.get('error', 'no response')})")
-            elif new_status == "ok" and _last_alerted.get(dev_id, "ok") != "ok":
-                _last_alerted[dev_id] = "ok"
-                _add_event(dev, "device_up", "info", "Device recovered")
-                log.info("Device %s recovered → alert state reset", dev.get("name", dev["host"]))
-
-            # Protocol state polling (only if device is reachable)
-            if new_status == "ok":
-                try:
-                    # Enrich dev with sysName for event labels
-                    enriched = {**dev, "sysName": result.get("sysName", "")}
-                    proto_state = await asyncio.to_thread(_poll_protocol_state_sync, enriched)
-                    confirmed, _ = _detect_events(enriched, _proto_state.get(dev_id), proto_state)
-                    _proto_state[dev_id] = confirmed
-                except Exception as e:
-                    log.debug("Protocol poll error for %s: %s", dev["host"], e)
-
+        for dev_id in list(_devices.keys()):
+            await _poll_one(dev_id)
         await asyncio.sleep(POLL_INTERVAL)
 
 
@@ -730,6 +870,7 @@ def _spawn(coro) -> asyncio.Task:
 async def lifespan(app: FastAPI):
     global _side_effects
     _load_devices()
+    _load_alert_state()
     _side_effects = asyncio.Queue(maxsize=_SIDE_EFFECT_QUEUE_MAX)
     _spawn(_side_effect_worker())
     # Kick off an immediate poll before the regular loop
