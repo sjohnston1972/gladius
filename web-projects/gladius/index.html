@@ -6441,7 +6441,7 @@
       }
     } catch(err) {
       typingEl.remove();
-      appendMsg('agent', `<span style="color:var(--danger)">Multi-device audit error: ${err.message}</span>`);
+      appendMsg('agent', `Multi-device audit error: ${err.message}`, { error: true });
     } finally {
       isSending = false;
     }
@@ -6616,7 +6616,7 @@
 
     } catch (err) {
       typingEl.remove();
-      appendMsg('agent', `<span style="color:var(--danger)">Connection error: ${err.message}. Is the Gladius API running?</span>`);
+      appendMsg('agent', `Connection error: ${err.message}. Is the Gladius API running?`, { error: true });
     } finally {
       isSending = false;
     }
@@ -6655,15 +6655,19 @@
     return html;
   }
 
-  function appendMsg(role, text) {
+  // opts.error: render `text` as a plain red error line (escaped, no markdown)
+  function appendMsg(role, text, opts = {}) {
     const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const div = document.createElement('div');
     div.className = 'msg ' + role;
     const initials = role === 'agent' ? 'G' : 'SJ';
+    const bubbleHtml = opts.error
+      ? `<span style="color:var(--danger)">${escHtml(text)}</span>`
+      : formatMessage(text);
     div.innerHTML = `
       <div class="msg-avatar ${role}">${initials}</div>
       <div>
-        <div class="msg-bubble">${formatMessage(text)}</div>
+        <div class="msg-bubble">${bubbleHtml}</div>
         <div class="msg-meta">${role === 'agent' ? 'AUDIT AGENT' : 'STEVEN JOHNSTON'} · ${now}</div>
       </div>`;
     chatMessages.appendChild(div);
@@ -7982,15 +7986,15 @@ ${cves.length ? `<!-- CVE TAB -->
   function _nmapResultHeader(target, profile) {
     const profiles = {quick:'QUICK SCAN',service:'SERVICE DETECTION',full_port:'FULL PORT',os_detection:'OS DETECTION',vuln_scripts:'VULN SCRIPTS',custom:'CUSTOM'};
     return `<div style="margin-bottom:14px;padding:10px 14px;border-left:3px solid var(--accent);background:rgba(0,212,255,0.04)">` +
-      `<div style="font-size:13px;font-weight:700;color:var(--accent);letter-spacing:0.5px;margin-bottom:2px">SCAN RESULTS — ${target}</div>` +
-      `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.8px">${profiles[profile]||profile.toUpperCase()} · ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>` +
+      `<div style="font-size:13px;font-weight:700;color:var(--accent);letter-spacing:0.5px;margin-bottom:2px">SCAN RESULTS — ${escHtml(target)}</div>` +
+      `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.8px">${escHtml(profiles[profile]||profile.toUpperCase())} ·${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>` +
     `</div>`;
   }
 
   function _scapyResultHeader(target, mode) {
     return `<div style="margin-bottom:14px;padding:10px 14px;border-left:3px solid var(--accent);background:rgba(0,212,255,0.04)">` +
-      `<div style="font-size:13px;font-weight:700;color:var(--accent);letter-spacing:0.5px;margin-bottom:2px">PACKET RESULTS — ${target}</div>` +
-      `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.8px">${mode.toUpperCase()} · ${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>` +
+      `<div style="font-size:13px;font-weight:700;color:var(--accent);letter-spacing:0.5px;margin-bottom:2px">PACKET RESULTS — ${escHtml(target)}</div>` +
+      `<div style="font-size:10px;color:var(--text-dim);letter-spacing:0.8px">${escHtml(mode.toUpperCase())} ·${new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>` +
     `</div>`;
   }
 
@@ -8055,7 +8059,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     // _nmapOutput tracks the "permanent" lines; the verb spinner span is appended separately
     let _nmapOutput =
-      `<span style="color:var(--accent)">// SCAN INITIATED — ${target} [${profile.toUpperCase()}]</span>\n` +
+      `<span style="color:var(--accent)">// SCAN INITIATED — ${escHtml(target)} [${escHtml(profile.toUpperCase())}]</span>\n` +
       `<span style="color:var(--text-dim)">// Gladius agent is invoking nmap via MCP…</span>\n\n`;
 
     const _spinnerSpan = `<span id="nmap-verb-spinner" style="color:var(--accent);font-weight:600;letter-spacing:.05em">▶ PROBING…</span>`;
@@ -8107,8 +8111,8 @@ ${cves.length ? `<!-- CVE TAB -->
               out.innerHTML = _nmapResultHeader(target, profile) + formatMessage(agentText);
             } else if (ev.type === 'tool_start') {
               const label = ev.tool === 'run_nmap_scan'
-                ? `<span style="color:var(--warn)">▶ nmap running against ${target}…</span>\n`
-                : `<span style="color:var(--text-dim)">  [${ev.tool}]</span>\n`;
+                ? `<span style="color:var(--warn)">▶ nmap running against ${escHtml(target)}…</span>\n`
+                : `<span style="color:var(--text-dim)">  [${escHtml(ev.tool)}]</span>\n`;
               _stopVerbSpinner();
               _nmapOutput += label;
               out.innerHTML = _nmapOutput;
@@ -8117,7 +8121,7 @@ ${cves.length ? `<!-- CVE TAB -->
               out.innerHTML = _nmapOutput;
             } else if (ev.type === 'error') {
               _stopVerbSpinner();
-              _nmapOutput += `\n<span style="color:var(--danger)">// Error: ${ev.content}</span>`;
+              _nmapOutput += `\n<span style="color:var(--danger)">// Error: ${escHtml(ev.content)}</span>`;
               out.innerHTML = _nmapOutput;
             }
           } catch(e) { /* skip malformed lines */ }
@@ -8130,7 +8134,7 @@ ${cves.length ? `<!-- CVE TAB -->
       notify('nmap', 'NMAP', `Scan complete — ${target}`);
     } catch(e) {
       _stopVerbSpinner();
-      if (out) { _nmapOutput += `\n<span style="color:var(--danger)">// Scan failed: ${e.message}</span>`; out.innerHTML = _nmapOutput; }
+      if (out) { _nmapOutput += `\n<span style="color:var(--danger)">// Scan failed: ${escHtml(e.message)}</span>`; out.innerHTML = _nmapOutput; }
       if (status) status.textContent = 'Scan failed';
       const chip = document.getElementById('tac-' + nmapChipId);
       if (chip) { chip.classList.remove('tac-active'); chip.style.borderColor='#ff4444'; chip.style.color='#ff4444'; const lbl=chip.querySelector('.tac-lbl'); if(lbl) lbl.textContent=target+' FAILED'; }
@@ -8228,7 +8232,7 @@ ${cves.length ? `<!-- CVE TAB -->
     prompt += ` After the operation completes, summarise: what was sent, what responses were received, any notable observations about the target's behaviour, open ports, OS hints, or security implications.`;
 
     let _scapyOutput =
-      `<span style="color:var(--accent)">// PACKET FORGE INITIATED — ${target} [${mode.toUpperCase()}]</span>\n` +
+      `<span style="color:var(--accent)">// PACKET FORGE INITIATED — ${escHtml(target)} [${escHtml(mode.toUpperCase())}]</span>\n` +
       `<span style="color:var(--text-dim)">// Gladius agent is invoking Scapy via MCP…</span>\n\n`;
 
     const _spinnerSpan = `<span id="scapy-verb-spinner" style="color:var(--accent);font-weight:600;letter-spacing:.05em">▶ CRAFTING…</span>`;
@@ -8283,8 +8287,8 @@ ${cves.length ? `<!-- CVE TAB -->
               out.innerHTML = _scapyResultHeader(target, mode) + formatMessage(agentText);
             } else if (ev.type === 'tool_start') {
               const label = ev.tool === 'run_scapy'
-                ? `<span style="color:var(--warn)">▶ Scapy ${mode} running against ${target}…</span>\n`
-                : `<span style="color:var(--text-dim)">  [${ev.tool}]</span>\n`;
+                ? `<span style="color:var(--warn)">▶ Scapy ${escHtml(mode)} running against ${escHtml(target)}…</span>\n`
+                : `<span style="color:var(--text-dim)">  [${escHtml(ev.tool)}]</span>\n`;
               _stopScapySpinner();
               _scapyOutput += label;
               out.innerHTML = _scapyOutput;
@@ -8293,7 +8297,7 @@ ${cves.length ? `<!-- CVE TAB -->
               out.innerHTML = _scapyOutput;
             } else if (ev.type === 'error') {
               _stopScapySpinner();
-              _scapyOutput += `\n<span style="color:var(--danger)">// Error: ${ev.content}</span>`;
+              _scapyOutput += `\n<span style="color:var(--danger)">// Error: ${escHtml(ev.content)}</span>`;
               out.innerHTML = _scapyOutput;
             }
           } catch(e) { /* skip malformed lines */ }
@@ -8306,7 +8310,7 @@ ${cves.length ? `<!-- CVE TAB -->
       notify('scapy', 'SCAPY', `${mode.toUpperCase()} complete — ${target}`);
     } catch(e) {
       _stopScapySpinner();
-      if (out) { _scapyOutput += `\n<span style="color:var(--danger)">// Failed: ${e.message}</span>`; out.innerHTML = _scapyOutput; }
+      if (out) { _scapyOutput += `\n<span style="color:var(--danger)">// Failed: ${escHtml(e.message)}</span>`; out.innerHTML = _scapyOutput; }
       if (status) status.textContent = 'Failed';
       const chip = document.getElementById('tac-' + scapyChipId);
       if (chip) { chip.classList.remove('tac-active'); chip.style.borderColor='#ff4444'; chip.style.color='#ff4444'; const lbl=chip.querySelector('.tac-lbl'); if(lbl) lbl.textContent=target+' FAILED'; }
@@ -9766,7 +9770,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
     } catch(e) {
       const tbody = document.getElementById('snmp-device-tbody');
-      if (tbody) tbody.innerHTML = `<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px">// SNMP service unreachable: ${e.message}</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="11" style="padding:20px;text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px">// SNMP service unreachable: ${escHtml(e.message)}</td></tr>`;
     }
   }
 
@@ -10058,7 +10062,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <div class="snmp-ds-title" style="margin-bottom:10px">INTERFACES <span style="font-size:9px;color:var(--text-dim)">(${ifRes?.count || 0} entries)</span></div>
         <div id="snmp-dp-ifaces">${_snmpBuildIfTable(id, ifRes)}</div>`;
     } catch(e) {
-      body.innerHTML = `<div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--danger)">// Error: ${e.message}</div>`;
+      body.innerHTML = `<div style="padding:40px;text-align:center;font-family:var(--font-mono);font-size:12px;color:var(--danger)">// Error: ${escHtml(e.message)}</div>`;
     }
   }
 
@@ -10434,7 +10438,7 @@ ${cves.length ? `<!-- CVE TAB -->
         </div>`;
       }).join('');
     } catch(e) {
-      grid.innerHTML = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:20px 0;grid-column:1/-1">// Health check failed: ${e.message}</div>`;
+      grid.innerHTML = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:20px 0;grid-column:1/-1">// Health check failed: ${escHtml(e.message)}</div>`;
     }
   }
 
@@ -10504,7 +10508,7 @@ ${cves.length ? `<!-- CVE TAB -->
       };
       body.innerHTML = [...running, ...done].map(_renderTask).join('');
     } catch(e) {
-      body.innerHTML = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:12px 0;text-align:center">// ${e.message}</div>`;
+      body.innerHTML = `<div style="font-family:var(--font-mono);font-size:12px;color:var(--danger);padding:12px 0;text-align:center">// ${escHtml(e.message)}</div>`;
     }
   }
 
@@ -11931,7 +11935,7 @@ ${cves.length ? `<!-- CVE TAB -->
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => renderCVETable(data.cves, 'Last 30 days — HIGH &amp; CRITICAL — all vendors'))
       .catch(err => {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// NVD fetch failed (${err}) — check gladius-api logs</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// NVD fetch failed (${escHtml(err)}) — check gladius-api logs</td></tr>`;
       });
   }
 
@@ -11975,7 +11979,7 @@ ${cves.length ? `<!-- CVE TAB -->
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(data => renderCVETable(data.cves, label + ` — ${data.total} total`))
       .catch(err => {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// Search failed (${err})</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// Search failed (${escHtml(err)})</td></tr>`;
       });
   }
 
@@ -12075,7 +12079,7 @@ ${cves.length ? `<!-- CVE TAB -->
       .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || r.status)))
       .then(data => renderPSIRTTable(data.advisories, `Latest CRITICAL &amp; HIGH — ${data.total} advisories`))
       .catch(err => {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// PSIRT fetch failed: ${err}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// PSIRT fetch failed: ${escHtml(err)}</td></tr>`;
       });
   }
 
@@ -12093,7 +12097,7 @@ ${cves.length ? `<!-- CVE TAB -->
       .then(r => r.ok ? r.json() : r.json().then(e => Promise.reject(e.detail || r.status)))
       .then(data => renderPSIRTTable(data.advisories, `${label} — ${data.total} found`))
       .catch(err => {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// PSIRT search failed: ${err}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// PSIRT search failed: ${escHtml(err)}</td></tr>`;
       });
   }
 
@@ -12202,7 +12206,7 @@ ${cves.length ? `<!-- CVE TAB -->
       .then(r => r.json())
       .then(data => renderEOXTable(data.records, `${data.total} record(s) found`))
       .catch(err => {
-        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// EOX search failed: ${err}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);font-family:var(--font-mono);font-size:12px;padding:30px">// EOX search failed: ${escHtml(err)}</td></tr>`;
       });
   }
 
@@ -13340,7 +13344,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
     } catch(err) {
       typingDiv.remove();
-      appendTshootMsg('agent', `<span style="color:var(--danger)">Connection error: ${err.message}</span>`);
+      appendTshootMsg('agent', `<span style="color:var(--danger)">Connection error: ${escHtml(err.message)}</span>`);
       removeTopbarChip(tshootChipId);
     } finally {
       tshootSending = false;
@@ -14420,7 +14424,7 @@ ${cves.length ? `<!-- CVE TAB -->
           </div>
         </div>`).join('');
     } catch(e) {
-      list.innerHTML = `<div class="auto-empty" style="color:#ff4444">Failed: ${e.message}</div>`;
+      list.innerHTML = `<div class="auto-empty" style="color:#ff4444">Failed: ${escHtml(e.message)}</div>`;
     }
   }
 
@@ -15265,7 +15269,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
       body.innerHTML = diags.map((d, i) => _renderDiagEntry(d, i)).join('');
     } catch(e) {
-      body.innerHTML = `<div style="padding:20px;color:var(--danger);font-size:11px">Error: ${e.message}</div>`;
+      body.innerHTML = `<div style="padding:20px;color:var(--danger);font-size:11px">Error: ${escHtml(e.message)}</div>`;
     }
   }
 
@@ -16030,7 +16034,7 @@ ${cves.length ? `<!-- CVE TAB -->
                   closeBtn.disabled = false;
                 }
               } catch(e) {
-                closeBtn.innerHTML = `&#10005; Error: ${e.message}`;
+                closeBtn.innerHTML = `&#10005; Error: ${escHtml(e.message)}`;
                 closeBtn.disabled = false;
               }
             };
