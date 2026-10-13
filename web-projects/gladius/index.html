@@ -5939,9 +5939,120 @@
     row.appendChild(addBtn);
   }
 
+  // @test-extract:begin core-helpers
+  // ── Shared escaping helpers ──────────────────────────────────────────────
+  // The ONE HTML escaper for this file. Safe for element text and for quoted
+  // attribute values ("..." or '...'). null/undefined render as ''.
   function escHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
+
+  // Only http(s) URLs may be written into href/src/window.open; anything else
+  // (other schemes, relative junk) collapses to `fallback`.
+  function safeUrl(u, fallback = '#') {
+    const s = String(u == null ? '' : u).trim();
+    return /^https?:\/\//i.test(s) ? s : fallback;
+  }
+
+  // Argument for an inline on*="fn(...)" handler. JSON-encode first (JS string
+  // context) then HTML-escape (attribute context); use WITHOUT surrounding
+  // quotes:  onclick="openThing(${jsArg(id)})"
+  function jsArg(v) {
+    return escHtml(JSON.stringify(v === undefined ? null : v));
+  }
+
+  // Tagged template that HTML-escapes every interpolation by default:
+  //   el.innerHTML = safeHtml`<b>${title}</b>${rawHtml(trustedMarkup)}`;
+  // Arrays are joined, each item escaped unless it is itself rawHtml/safeHtml.
+  // The result stringifies to the markup (String(x), `${x}`, innerHTML = x).
+  function _SafeHtml(s) { this.s = String(s); }
+  _SafeHtml.prototype.toString = function () { return this.s; };
+  function rawHtml(s) { return s instanceof _SafeHtml ? s : new _SafeHtml(s == null ? '' : s); }
+  function safeHtml(strings, ...vals) {
+    const one = v => (v instanceof _SafeHtml ? v.s : escHtml(v));
+    let out = strings[0];
+    vals.forEach((v, i) => {
+      out += (Array.isArray(v) ? v.map(one).join('') : one(v)) + strings[i + 1];
+    });
+    return new _SafeHtml(out);
+  }
+
+  // ── Severity helpers (findings) ──────────────────────────────────────────
+  function isCveFinding(f) {
+    return !!f && (f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || ''));
+  }
+  // Lower = more severe. Unknown severities sort last.
+  function sevRank(sev) {
+    switch (String(sev || '').toUpperCase()) {
+      case 'CRITICAL': return 0;
+      case 'HIGH':     return 1;
+      case 'MEDIUM':   return 2;
+      case 'LOW':      return 3;
+      case 'INFO':     return 4;
+      case 'PASS':     return 5;
+      default:         return 9;
+    }
+  }
+  // Stable copy sorted most-severe first.
+  function sortBySeverity(findings) {
+    return (findings || [])
+      .map((f, i) => [f, i])
+      .sort((a, b) => (sevRank(a[0] && a[0].severity) - sevRank(b[0] && b[0].severity)) || (a[1] - b[1]))
+      .map(p => p[0]);
+  }
+  // CSS class for .severity-badge
+  function sevBadgeClass(f) {
+    if (isCveFinding(f)) return 'cve';
+    switch (String((f && f.severity) || 'LOW').toUpperCase()) {
+      case 'CRITICAL': return 'critical';
+      case 'HIGH':     return 'high';
+      case 'MEDIUM':   return 'medium';
+      case 'PASS':     return 'pass';
+      default:         return 'low';
+    }
+  }
+  // Short badge label (plain text — escape before putting in HTML)
+  function sevBadgeLabel(f) {
+    if (isCveFinding(f)) return 'CVE';
+    const sev = String((f && f.severity) || 'LOW').toUpperCase();
+    return sev === 'MEDIUM' ? 'MED' : sev === 'CRITICAL' ? 'CRIT' : sev;
+  }
+
+  // ── Audit / finding normaliser ───────────────────────────────────────────
+  // The audit agent writes findings as {impact, fix, commands}; older code
+  // (report generator, audit context) reads {description, remediation}.
+  // Normalise once — on audit_saved and when reading history — by ADDING the
+  // legacy field names (never removing the agent's own fields) and
+  // upper-casing severity. Idempotent.
+  function normalizeFinding(f) {
+    if (!f || typeof f !== 'object') return f;
+    const out = Object.assign({}, f);
+    if (out.severity != null) out.severity = String(out.severity).trim().toUpperCase();
+    const str = v => (Array.isArray(v) ? v.join(', ') : (v == null ? '' : String(v)));
+    if (!out.description && out.impact) out.description = str(out.impact);
+    if (!out.remediation && (out.commands || out.fix)) out.remediation = str(out.commands || out.fix);
+    return out;
+  }
+  function normalizeAudit(a) {
+    if (!a || typeof a !== 'object') return a;
+    const out = Object.assign({}, a);
+    out.findings = Array.isArray(a.findings) ? a.findings.map(normalizeFinding) : [];
+    return out;
+  }
+
+  // Trim a chat history before sending: keep at most `maxMsgs` recent
+  // messages and roughly `maxChars` of content, always starting on a user
+  // turn. The newest message is always kept.
+  function trimHistory(msgs, maxMsgs = 30, maxChars = 120000) {
+    const len = m => (typeof m.content === 'string' ? m.content.length : JSON.stringify(m.content || '').length);
+    let out = (msgs || []).slice(-maxMsgs);
+    let total = out.reduce((n, m) => n + len(m), 0);
+    while (out.length > 1 && total > maxChars) { total -= len(out[0]); out = out.slice(1); }
+    while (out.length > 1 && out[0].role !== 'user') out = out.slice(1);
+    return out;
+  }
+  // @test-extract:end core-helpers
 
   // ── Styled dialog primitive (replaces window.alert / window.confirm) ────
   // Returns a Promise that resolves to the chosen button's value.
@@ -7180,10 +7291,6 @@
     return '#dc2626';
   }
 
-  function escH(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
   function generateReportHTML(audit) {
     const findings  = audit.findings || [];
     const isCveFn   = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
@@ -7214,19 +7321,19 @@
       const catTotal = d.passed + d.failed;
       const catScore = catTotal > 0 ? Math.round(d.passed / catTotal * 100) : 0;
       const bCol = scoreBarColor(catScore);
-      return `<tr><td style="padding:10px 16px;color:#334155;">${escH(cat)}</td><td style="padding:10px 16px;text-align:center;color:#16a34a;font-weight:600;">${d.passed}</td><td style="padding:10px 16px;text-align:center;color:#dc2626;font-weight:600;">${d.failed}</td><td style="padding:10px 16px;"><div style="background:#e2e8f0;border-radius:9999px;height:8px;overflow:hidden;"><div style="height:8px;border-radius:9999px;background:${bCol};width:${catScore}%;"></div></div></td><td style="padding:10px 16px;text-align:right;font-weight:700;color:${bCol};">${catScore}%</td></tr>`;
+      return `<tr><td style="padding:10px 16px;color:#334155;">${escHtml(cat)}</td><td style="padding:10px 16px;text-align:center;color:#16a34a;font-weight:600;">${d.passed}</td><td style="padding:10px 16px;text-align:center;color:#dc2626;font-weight:600;">${d.failed}</td><td style="padding:10px 16px;"><div style="background:#e2e8f0;border-radius:9999px;height:8px;overflow:hidden;"><div style="height:8px;border-radius:9999px;background:${bCol};width:${catScore}%;"></div></div></td><td style="padding:10px 16px;text-align:right;font-weight:700;color:${bCol};">${catScore}%</td></tr>`;
     }).join('\n');
 
     // Action plan buckets
-    const actionImmediate = highs.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escH(f.title)}</b> <span style="color:#94a3b8;">(${escH(inferCategory(f))})</span></li>`).join('');
-    const actionShort     = meds.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escH(f.title)}</b> <span style="color:#94a3b8;">(${escH(inferCategory(f))})</span></li>`).join('');
-    const actionPlanned   = lows.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escH(f.title)}</b> <span style="color:#94a3b8;">(${escH(inferCategory(f))})</span></li>`).join('');
+    const actionImmediate = highs.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
+    const actionShort     = meds.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
+    const actionPlanned   = lows.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
 
     // Finding card (Summary tab)
     function findingCard(f, borderCol, bgCol) {
       const cat    = inferCategory(f);
       const catBg  = f.severity === 'HIGH' ? '#dc2626' : f.severity === 'MEDIUM' ? '#ea580c' : '#ca8a04';
-      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:10px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escH(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;white-space:nowrap;margin-left:8px;">${escH(cat)}</span></div><div style="font-size:0.85rem;color:#475569;margin-bottom:4px;"><b>Impact:</b> ${escH(f.description || '')}</div><div style="font-size:0.85rem;color:#475569;"><b>Fix:</b> <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:3px;font-size:0.82rem;">${escH(f.remediation || '')}</code></div></div>`;
+      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:10px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escHtml(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;white-space:nowrap;margin-left:8px;">${escHtml(cat)}</span></div><div style="font-size:0.85rem;color:#475569;margin-bottom:4px;"><b>Impact:</b> ${escHtml(f.description || '')}</div><div style="font-size:0.85rem;color:#475569;"><b>Fix:</b> <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:3px;font-size:0.82rem;">${escHtml(f.remediation || '')}</code></div></div>`;
     }
 
     // Remediation card with copyable code block
@@ -7238,11 +7345,11 @@
       const rawCmd = (f.remediation || '').replace(/^Configure:\s*/i,'').trim();
       // Split comma-separated commands onto separate lines, each indented
       const cmdLines = rawCmd.split(/,\s*(?=[a-z])/i).map(l => '  ' + l.trim()).join('\n');
-      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:16px 18px;margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escH(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;margin-left:8px;">${escH(cat)}</span></div></div><div style="font-size:0.82rem;color:#475569;margin-bottom:10px;"><b>Impact:</b> ${escH(f.description || '')}</div><div style="position:relative;margin-bottom:4px;"><pre id="${id}" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">configure terminal\n${escH(cmdLines)}\nend</pre><button onclick="copyCode(this,'${id}')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div></div>`;
+      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:16px 18px;margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escHtml(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;margin-left:8px;">${escHtml(cat)}</span></div></div><div style="font-size:0.82rem;color:#475569;margin-bottom:10px;"><b>Impact:</b> ${escHtml(f.description || '')}</div><div style="position:relative;margin-bottom:4px;"><pre id="${id}" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">configure terminal\n${escHtml(cmdLines)}\nend</pre><button onclick="copyCode(this,'${id}')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div></div>`;
     }
 
     // Passed checks list
-    const passedItems = passes.map(f => `<div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:0.88rem;"><span style="color:#16a34a;margin-right:10px;font-size:1rem;">&#10003;</span><span style="flex:1;color:#334155;">${escH(f.title)}</span><span style="color:#94a3b8;font-size:0.76rem;">${escH(inferCategory(f))}</span></div>`).join('');
+    const passedItems = passes.map(f => `<div style="display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:0.88rem;"><span style="color:#16a34a;margin-right:10px;font-size:1rem;">&#10003;</span><span style="flex:1;color:#334155;">${escHtml(f.title)}</span><span style="color:#94a3b8;font-size:0.76rem;">${escHtml(inferCategory(f))}</span></div>`).join('');
 
     // CVE findings
     const cveItems = cves.map(f => findingCard(f, '#a855f7', '#faf5ff')).join('');
@@ -7280,9 +7387,9 @@
       ${chk('Out-of-band management path confirmed', '')}
       ${chk('Secondary admin account tested and working', '')}
       ${section('#059669', '5. Implementation')}
-      ${highs.length ? chk('HIGH priority findings addressed first', escH(highTitles)) : ''}
-      ${meds.length  ? chk('MEDIUM priority findings addressed', escH(medTitles))  : ''}
-      ${lows.length  ? chk('LOW priority findings addressed', escH(lowTitles))   : ''}
+      ${highs.length ? chk('HIGH priority findings addressed first', escHtml(highTitles)) : ''}
+      ${meds.length  ? chk('MEDIUM priority findings addressed', escHtml(medTitles))  : ''}
+      ${lows.length  ? chk('LOW priority findings addressed', escHtml(lowTitles))   : ''}
       ${chk('Each command verified immediately after entry', '')}
       ${chk('No configure terminal left open unintentionally', '')}
       ${chk('Config saved after each section (copy run start)', '')}
@@ -7335,7 +7442,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Security Audit &mdash; ${escH(audit.ip || audit.device)} &mdash; ${escH(ts)}</title>
+<title>Security Audit &mdash; ${escHtml(audit.ip || audit.device)} &mdash; ${escHtml(ts)}</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #1e293b; line-height: 1.5; }
@@ -7435,7 +7542,7 @@
 
 <div class="hdr">
   <h1>&#128274; Network Device Security Audit &mdash; Gladius</h1>
-  <div class="sub">${escH(audit.ip || '')} &nbsp;&middot;&nbsp; ${escH(audit.ios || 'IOS XE')} &nbsp;&middot;&nbsp; ${escH(ts)}</div>
+  <div class="sub">${escHtml(audit.ip || '')} &nbsp;&middot;&nbsp; ${escHtml(audit.ios || 'IOS XE')} &nbsp;&middot;&nbsp; ${escHtml(ts)}</div>
 </div>
 
 <nav class="tab-nav">
@@ -7469,11 +7576,11 @@
       </div>
       <div class="card" style="margin-bottom:0;padding:16px 20px;">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 28px;">
-          <div class="dr"><span class="lbl">Hostname</span><span class="val">${escH(audit.device || '—')}</span></div>
-          <div class="dr"><span class="lbl">IP Address</span><span class="val">${escH(audit.ip || '—')}</span></div>
+          <div class="dr"><span class="lbl">Hostname</span><span class="val">${escHtml(audit.device || '—')}</span></div>
+          <div class="dr"><span class="lbl">IP Address</span><span class="val">${escHtml(audit.ip || '—')}</span></div>
           <div class="dr"><span class="lbl">Platform</span><span class="val">IOS XE</span></div>
-          <div class="dr"><span class="lbl">Version</span><span class="val">${escH(audit.ios || '—')}</span></div>
-          <div class="dr"><span class="lbl">Audit Date</span><span class="val" style="font-family:inherit;font-size:0.8rem;">${escH(ts)}</span></div>
+          <div class="dr"><span class="lbl">Version</span><span class="val">${escHtml(audit.ios || '—')}</span></div>
+          <div class="dr"><span class="lbl">Audit Date</span><span class="val" style="font-family:inherit;font-size:0.8rem;">${escHtml(ts)}</span></div>
           <div class="dr"><span class="lbl">CVEs Found</span><span class="val" style="color:${cves.length ? '#a855f7' : '#16a34a'}">${cves.length}</span></div>
         </div>
       </div>
@@ -7528,7 +7635,7 @@
   </div>
 
   <div style="text-align:center;color:#94a3b8;font-size:0.76rem;padding:12px 0 4px;">
-    Generated by Gladius Network Security Platform &nbsp;&middot;&nbsp; ${escH(ts)}
+    Generated by Gladius Network Security Platform &nbsp;&middot;&nbsp; ${escHtml(ts)}
   </div>
 </div>
 </div>
@@ -8287,9 +8394,9 @@ ${cves.length ? `<!-- CVE TAB -->
       const enabled = s.enabled ? '' : ' style="opacity:0.4"';
       const enableLabel = s.enabled ? 'DISABLE' : 'ENABLE';
       const notifyParts = [];
-      if (s.notify_slack) notifyParts.push(`<span style="color:var(--accent)">&#128276;</span> <span style="color:var(--text-dim)">${_autoEsc(s.notify_slack.length > 40 ? '…' + s.notify_slack.slice(-35) : s.notify_slack)}</span>`);
-      if (s.notify_email) notifyParts.push(`<span style="color:var(--accent)">&#9993;</span> <span style="color:var(--text-dim)">${_autoEsc(s.notify_email)}</span>`);
-      if (s.jira_auto_ticket) notifyParts.push(`<span style="color:#4a9eff">&#9881;</span> <span style="color:var(--text-dim)">Jira: ${_autoEsc(s.jira_auto_ticket)}</span>`);
+      if (s.notify_slack) notifyParts.push(`<span style="color:var(--accent)">&#128276;</span> <span style="color:var(--text-dim)">${escHtml(s.notify_slack.length > 40 ? '…' + s.notify_slack.slice(-35) : s.notify_slack)}</span>`);
+      if (s.notify_email) notifyParts.push(`<span style="color:var(--accent)">&#9993;</span> <span style="color:var(--text-dim)">${escHtml(s.notify_email)}</span>`);
+      if (s.jira_auto_ticket) notifyParts.push(`<span style="color:#4a9eff">&#9881;</span> <span style="color:var(--text-dim)">Jira: ${escHtml(s.jira_auto_ticket)}</span>`);
       const notifyRow = notifyParts.length
         ? `<div style="font-size:9px;margin-top:4px;display:flex;gap:12px;flex-wrap:wrap">${notifyParts.join('')}</div>`
         : `<div style="font-size:9px;margin-top:4px;color:var(--text-dim);opacity:0.5">No notifications configured</div>`;
@@ -8299,8 +8406,8 @@ ${cves.length ? `<!-- CVE TAB -->
       </div>`;
       return `<div class="sched-list-item" style="flex-wrap:wrap"${enabled}>
         <div style="display:flex;align-items:center;gap:8px;width:100%">
-          <span class="sched-name">${_autoEsc(s.name)}</span>
-          <span class="sched-cron">${_autoEsc(s.cron_expr)}</span>
+          <span class="sched-name">${escHtml(s.name)}</span>
+          <span class="sched-cron">${escHtml(s.cron_expr)}</span>
           <span class="sched-actions">
             <button onclick="schedRunNow('${s.id}')" title="Run now">&#9654;</button>
             <button onclick="schedEdit('${s.id}')">EDIT</button>
@@ -8332,7 +8439,7 @@ ${cves.length ? `<!-- CVE TAB -->
       devList.innerHTML = (devItems.length ? allDevLabel : '') + devItems.map(d =>
         `<label style="display:flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);cursor:pointer;padding:2px 0">
           <input type="checkbox" class="sched-dev-cb" value="${d.id}" style="accent-color:var(--accent)" onchange="if(!this.checked && document.getElementById('sched-dev-all')) document.getElementById('sched-dev-all').checked=false">
-          ${_autoEsc(d.hostname)} (${_autoEsc(d.ip)})
+          ${escHtml(d.hostname)} (${escHtml(d.ip)})
         </label>`
       ).join('') || '<span style="color:var(--text-dim);font-size:10px">No devices</span>';
 
@@ -8340,7 +8447,7 @@ ${cves.length ? `<!-- CVE TAB -->
       featList.innerHTML = (feats.features || []).map(f =>
         `<label style="display:flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);cursor:pointer;padding:2px 0">
           <input type="checkbox" class="sched-feat-cb" value="${f.id}" style="accent-color:var(--accent)">
-          ${_autoEsc(f.name)}
+          ${escHtml(f.name)}
         </label>`
       ).join('') || '<span style="color:var(--text-dim);font-size:10px">No features</span>';
     } catch(e) { console.error('schedLoadDevicesAndFeatures', e); }
@@ -8433,7 +8540,7 @@ ${cves.length ? `<!-- CVE TAB -->
       await fetch(`/api/automation/learn/schedules/${id}/run`, { method: 'POST' });
       spawnTopbarChip(chipId, `${typeLabel}: ${name}`, 'automation');
       _autoInjectAgentMessage(
-        `<div style="font-size:11px;color:var(--accent)">&#9654; <strong>${_autoEsc(typeLabel)}</strong> schedule <strong>${_autoEsc(name)}</strong> triggered — running in background…</div>`
+        `<div style="font-size:11px;color:var(--accent)">&#9654; <strong>${escHtml(typeLabel)}</strong> schedule <strong>${escHtml(name)}</strong> triggered — running in background…</div>`
       );
       // Poll for completion
       const beforeCount = sched._histCount || 0;
@@ -8473,7 +8580,7 @@ ${cves.length ? `<!-- CVE TAB -->
               : ` — <span style="color:#00cc66">no changes</span>`;
           }
           _autoInjectAgentMessage(
-            `<div style="font-size:11px;color:var(--text-secondary)">&#10003; <strong>${_autoEsc(typeLabel)}</strong> schedule <strong>${_autoEsc(name)}</strong> completed: ${resultInfo}</div>`
+            `<div style="font-size:11px;color:var(--text-secondary)">&#10003; <strong>${escHtml(typeLabel)}</strong> schedule <strong>${escHtml(name)}</strong> completed: ${resultInfo}</div>`
           );
           setTopbarChipDone(chipId);
           setTimeout(() => removeTopbarChip(chipId), 5000);
@@ -8516,7 +8623,7 @@ ${cves.length ? `<!-- CVE TAB -->
           _schedHistoryDiffs[hkey] = { diff_text: h.diff_text, summary: h.summary || '', ran_at: h.ran_at, prev_ran_at: prevRanAt, sched_name: schedName, history_id: h.id };
           const hasAnalysis = h.analysis && h.analysis.trim();
           const previewLines = h.diff_text.substring(0, 1000).split('\n').map(ln => {
-            const esc = _autoEsc(ln);
+            const esc = escHtml(ln);
             if (ln.startsWith('-')) return `<div style="background:rgba(255,68,68,0.10);color:#ff6b6b">${esc}</div>`;
             if (ln.startsWith('+')) return `<div style="background:rgba(0,204,102,0.10);color:#00cc66">${esc}</div>`;
             return `<div style="color:var(--text-dim)">${esc}</div>`;
@@ -8534,14 +8641,14 @@ ${cves.length ? `<!-- CVE TAB -->
             ${changeBadge}
             ${entryButtons}
           </div>
-          ${h.summary ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">${_autoEsc(h.summary)}</div>` : ''}
+          ${h.summary ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">${escHtml(h.summary)}</div>` : ''}
           ${diffPreview}
         </div>`;
       }).join('');
 
       // Inject into chat area
       _autoInjectAgentMessage(`<div style="font-family:var(--font-mono)">
-        <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">SCHEDULE HISTORY &mdash; ${_autoEsc(schedName.toUpperCase())} (last ${history.length})</div>
+        <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)">SCHEDULE HISTORY &mdash; ${escHtml(schedName.toUpperCase())} (last ${history.length})</div>
         ${lines}
       </div>`);
     } catch(e) { console.error('schedViewHistory', e); }
@@ -8584,27 +8691,27 @@ ${cves.length ? `<!-- CVE TAB -->
         for (let j = 0; j < maxLen; j++) {
           if (j < removals.length && j < additions.length) {
             // Changed line (both old and new exist)
-            htmlA += `<span class="dl changed">${_autoEsc(removals[j].substring(1))}</span>`;
-            htmlB += `<span class="dl changed">${_autoEsc(additions[j].substring(1))}</span>`;
+            htmlA += `<span class="dl changed">${escHtml(removals[j].substring(1))}</span>`;
+            htmlB += `<span class="dl changed">${escHtml(additions[j].substring(1))}</span>`;
           } else if (j < removals.length) {
             // Removed — no matching addition
-            htmlA += `<span class="dl removed">${_autoEsc(removals[j].substring(1))}</span>`;
+            htmlA += `<span class="dl removed">${escHtml(removals[j].substring(1))}</span>`;
             htmlB += `<span class="dl"></span>`;
           } else {
             // Added — no matching removal
             htmlA += `<span class="dl"></span>`;
-            htmlB += `<span class="dl added">${_autoEsc(additions[j].substring(1))}</span>`;
+            htmlB += `<span class="dl added">${escHtml(additions[j].substring(1))}</span>`;
           }
         }
       } else if (ln.startsWith('+')) {
         // Standalone addition (not preceded by removals)
         htmlA += `<span class="dl"></span>`;
-        htmlB += `<span class="dl added">${_autoEsc(ln.substring(1))}</span>`;
+        htmlB += `<span class="dl added">${escHtml(ln.substring(1))}</span>`;
         i++;
       } else {
         // Context / unchanged line
-        htmlA += `<span class="dl unchanged">${_autoEsc(ln)}</span>`;
-        htmlB += `<span class="dl unchanged">${_autoEsc(ln)}</span>`;
+        htmlA += `<span class="dl unchanged">${escHtml(ln)}</span>`;
+        htmlB += `<span class="dl unchanged">${escHtml(ln)}</span>`;
         i++;
       }
     }
@@ -8627,7 +8734,7 @@ ${cves.length ? `<!-- CVE TAB -->
     // User message
     const userWrap = document.createElement('div');
     userWrap.className = 'msg user';
-    userWrap.innerHTML = `<div><div class="msg-bubble">Analyze scheduled diff: ${_autoEsc(entry.sched_name)} (${new Date(entry.ran_at).toLocaleString()})</div>
+    userWrap.innerHTML = `<div><div class="msg-bubble">Analyze scheduled diff: ${escHtml(entry.sched_name)} (${new Date(entry.ran_at).toLocaleString()})</div>
       <div class="msg-meta">${new Date().toLocaleTimeString()} · YOU</div></div>`;
     messages.appendChild(userWrap);
     messages.scrollTop = messages.scrollHeight;
@@ -8637,10 +8744,10 @@ ${cves.length ? `<!-- CVE TAB -->
     agentWrap.className = 'msg agent';
     const bubbleId = 'sched-analyze-b-' + Date.now();
     const headerHtml = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:0.05em;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px">` +
-      `&#9881; SCHEDULED DIFF ANALYSIS &mdash; ${_autoEsc(entry.sched_name.toUpperCase())}</div>`;
+      `&#9881; SCHEDULED DIFF ANALYSIS &mdash; ${escHtml(entry.sched_name.toUpperCase())}</div>`;
     agentWrap.innerHTML = `<div class="msg-avatar agent">F</div>
       <div><div class="msg-bubble" id="${bubbleId}">${headerHtml}<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>
-      <div class="msg-meta">${new Date().toLocaleTimeString()} · ${_autoEsc(model || 'OLLAMA')}</div></div>`;
+      <div class="msg-meta">${new Date().toLocaleTimeString()} · ${escHtml(model || 'OLLAMA')}</div></div>`;
     messages.appendChild(agentWrap);
     messages.scrollTop = messages.scrollHeight;
 
@@ -8668,7 +8775,7 @@ ${cves.length ? `<!-- CVE TAB -->
       html += _diffAnalysisSendToTshoot(analysis, entry.sched_name);
       bubble.innerHTML = html;
     } catch(e) {
-      bubble.innerHTML = headerHtml + `<div style="color:#ff4444">Analysis failed: ${_autoEsc(e.message)}</div>`;
+      bubble.innerHTML = headerHtml + `<div style="color:#ff4444">Analysis failed: ${escHtml(e.message)}</div>`;
     }
     removeTopbarChip(chipId);
     messages.scrollTop = messages.scrollHeight;
@@ -8696,7 +8803,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
 
       const headerHtml = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:0.05em;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px">` +
-        `&#129302; AI REASONING &mdash; ${_autoEsc((entry.sched_name || '').toUpperCase())} &mdash; ${new Date(entry.ran_at).toLocaleString()}</div>`;
+        `&#129302; AI REASONING &mdash; ${escHtml((entry.sched_name || '').toUpperCase())} &mdash; ${new Date(entry.ran_at).toLocaleString()}</div>`;
 
       const agentWrap = document.createElement('div');
       agentWrap.className = 'msg agent';
@@ -8710,7 +8817,7 @@ ${cves.length ? `<!-- CVE TAB -->
       messages.appendChild(agentWrap);
       messages.scrollTop = messages.scrollHeight;
     } catch(e) {
-      _autoInjectAgentMessage(`<div style="color:#ff4444;font-size:11px">Failed to load analysis: ${_autoEsc(e.message)}</div>`);
+      _autoInjectAgentMessage(`<div style="color:#ff4444;font-size:11px">Failed to load analysis: ${escHtml(e.message)}</div>`);
     }
     removeTopbarChip(chipId);
   }
@@ -8748,7 +8855,7 @@ ${cves.length ? `<!-- CVE TAB -->
         _schedHistoryDiffs[entryId] = { diff_text: e.diff_text || '', summary: e.summary || '', ran_at: e.ran_at, prev_ran_at: null, sched_name: name, history_id: e.id };
         return `<div style="padding:8px 10px;border-bottom:1px solid var(--border);border-left:3px solid ${statusColor};margin-bottom:4px;border-radius:3px">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <span style="color:${statusColor};font-weight:600;font-size:11px">${_autoEsc(name)}</span>
+            <span style="color:${statusColor};font-weight:600;font-size:11px">${escHtml(name)}</span>
             <span style="color:var(--text-dim);font-size:10px">${ts}</span>
             ${sevBadge}
             <div style="display:flex;gap:4px;margin-left:auto">
@@ -8765,7 +8872,7 @@ ${cves.length ? `<!-- CVE TAB -->
         ${rows}
       </div>`);
     } catch(e) {
-      _autoInjectAgentMessage(`<div style="color:#ff4444;font-size:11px">Failed to load reasoning log: ${_autoEsc(e.message)}</div>`);
+      _autoInjectAgentMessage(`<div style="color:#ff4444;font-size:11px">Failed to load reasoning log: ${escHtml(e.message)}</div>`);
     }
     removeTopbarChip(chipId);
   }
@@ -8922,8 +9029,8 @@ ${cves.length ? `<!-- CVE TAB -->
           <button onclick="event.stopPropagation();pingOpenEditModal(${d.id})">EDIT</button>
           <button class="del" onclick="event.stopPropagation();pingDeleteDevice(${d.id})">DEL</button>
         </div>
-        <div class="ping-dev-name">${escapeHtml(d.name)}</div>
-        <div class="ping-dev-host">${escapeHtml(d.host)} · ${d.probe_type.toUpperCase()} · ${lat}</div>
+        <div class="ping-dev-name">${escHtml(d.name)}</div>
+        <div class="ping-dev-host">${escHtml(d.host)} · ${d.probe_type.toUpperCase()} · ${lat}</div>
         <div class="ping-sparkline-row">${pingRenderSparklineSVG(_pingSparklines[d.id] || [])}</div>
       </div>`;
     }).join('');
@@ -9100,7 +9207,7 @@ ${cves.length ? `<!-- CVE TAB -->
           const lossColor = h.loss_pct > 50 ? 'color:#ff4444' : h.loss_pct > 0 ? 'color:#ffaa00' : '';
           return `<tr>
           <td>${h.hop}</td>
-          <td style="color:var(--text-primary)">${escapeHtml(h.ip || '*')}</td>
+          <td style="color:var(--text-primary)">${escHtml(h.ip || '*')}</td>
           <td>${h.avg_ms != null ? h.avg_ms.toFixed(1) : '—'}</td>
           <td>${h.min_ms != null ? h.min_ms.toFixed(2) : '—'}</td>
           <td>${h.max_ms != null ? h.max_ms.toFixed(1) : '—'}</td>
@@ -9115,7 +9222,7 @@ ${cves.length ? `<!-- CVE TAB -->
         <thead><tr><th>HOP</th><th>IP</th><th>LATENCIES (ms)</th></tr></thead>
         <tbody>${latest.map(h => `<tr>
           <td>${h.hop}</td>
-          <td style="color:var(--text-primary)">${escapeHtml(h.ip || '*')}</td>
+          <td style="color:var(--text-primary)">${escHtml(h.ip || '*')}</td>
           <td>${(h.latencies || []).map(l => l != null ? l.toFixed(1) : '*').join(' / ')}</td>
         </tr>`).join('')}</tbody></table>`;
     }
@@ -9217,7 +9324,7 @@ ${cves.length ? `<!-- CVE TAB -->
     container.innerHTML = _pingDevices.map((d, i) =>
       `<label style="display:flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);cursor:pointer">
         <input type="checkbox" value="${d.id}" onchange="pingRenderCompare()" checked style="accent-color:${colors[i % colors.length]}">
-        <span style="color:${colors[i % colors.length]}">${escapeHtml(d.name)}</span>
+        <span style="color:${colors[i % colors.length]}">${escHtml(d.name)}</span>
       </label>`
     ).join('');
     pingRenderCompare();
@@ -9365,7 +9472,7 @@ ${cves.length ? `<!-- CVE TAB -->
         return `<div style="padding:4px 0;border-bottom:1px solid rgba(128,128,128,0.15)">
           <span style="color:var(--${sev})">[${a.severity?.toUpperCase() || 'INFO'}]</span>
           <span style="color:var(--text-dim)">${ts}</span>
-          ${escapeHtml(a.message || '')}
+          ${escHtml(a.message || '')}
         </div>`;
       }).join('');
     } catch(e) {}
@@ -12547,7 +12654,7 @@ ${cves.length ? `<!-- CVE TAB -->
     input.style.height = 'auto';
 
     designMessages.push({ role: 'user', content: text });
-    appendDesignMsg('user', escapeHtml(text));
+    appendDesignMsg('user', escHtml(text));
 
     designStreaming = true;
 
@@ -12593,7 +12700,7 @@ ${cves.length ? `<!-- CVE TAB -->
               notify('design', 'DESIGN AGENT', 'Response ready');
               setTopbarChipDone(designChipId);
             } else if (ev.type === 'error') {
-              bubble.innerHTML = `<span style="color:var(--danger)">Error: ${escapeHtml(ev.content)}</span>`;
+              bubble.innerHTML = `<span style="color:var(--danger)">Error: ${escHtml(ev.content)}</span>`;
               if (orbitWrap) orbitWrap.classList.remove('design-active');
               removeTopbarChip(designChipId);
             }
@@ -12601,7 +12708,7 @@ ${cves.length ? `<!-- CVE TAB -->
         }
       }
     } catch(err) {
-      bubble.innerHTML = `<span style="color:var(--danger)">Connection error: ${escapeHtml(err.message)}</span>`;
+      bubble.innerHTML = `<span style="color:var(--danger)">Connection error: ${escHtml(err.message)}</span>`;
       if (orbitWrap) orbitWrap.classList.remove('design-active');
       removeTopbarChip(designChipId);
     }
@@ -12688,7 +12795,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     input.value = '';
     input.style.height = 'auto';
-    appendDesignMsg('user', escapeHtml(text));
+    appendDesignMsg('user', escHtml(text));
     designStreaming = true;
 
     const chipId = 'critique-' + Date.now();
@@ -12825,14 +12932,14 @@ ${cves.length ? `<!-- CVE TAB -->
             } else if (ev.type === 'error') {
               setCritiqueCardState('design', '', 'Error');
               setCritiqueCardState('critic', '', 'Error');
-              appendDesignMsg('design', `<span style="color:var(--danger)">Critique error: ${escapeHtml(ev.content)}</span>`);
+              appendDesignMsg('design', `<span style="color:var(--danger)">Critique error: ${escHtml(ev.content)}</span>`);
               removeTopbarChip(chipId);
             }
           } catch(e) {}
         }
       }
     } catch(err) {
-      appendDesignMsg('design', `<span style="color:var(--danger)">Connection error: ${escapeHtml(err.message)}</span>`);
+      appendDesignMsg('design', `<span style="color:var(--danger)">Connection error: ${escHtml(err.message)}</span>`);
       removeTopbarChip(chipId);
     }
 
@@ -12844,10 +12951,6 @@ ${cves.length ? `<!-- CVE TAB -->
       const p = document.getElementById('critique-panel');
       if (p) p.style.display = 'none';
     }, 8000);
-  }
-
-  function escapeHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   // Init design welcome timestamp
@@ -13635,7 +13738,7 @@ ${cves.length ? `<!-- CVE TAB -->
               bubble.innerHTML = formatMessage(fullText);
               AUTO_MSGS().scrollTop = AUTO_MSGS().scrollHeight;
             } else if (ev.type === 'error') {
-              bubble.innerHTML = `<span style="color:#ff4444">⚠ ${_autoEsc(ev.content)}</span>`;
+              bubble.innerHTML = `<span style="color:#ff4444">⚠ ${escHtml(ev.content)}</span>`;
               _autoStopOrbit();
             }
           } catch(_) {}
@@ -13669,7 +13772,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
 
     } catch(e) {
-      bubble.innerHTML = `<span style="color:#ff4444">⚠ ${_autoEsc(e.message)}</span>`;
+      bubble.innerHTML = `<span style="color:#ff4444">⚠ ${escHtml(e.message)}</span>`;
       _autoStopOrbit();
     }
 
@@ -13680,10 +13783,6 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   // ── Script dropdown + viewer ──────────────────────────────────────────────
-  function _autoEsc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-  }
-
   function _autoRenderTiles(scripts) {
     const sel  = document.getElementById('auto-script-select');
     const cEl  = document.getElementById('auto-script-count');
@@ -13700,7 +13799,7 @@ ${cves.length ? `<!-- CVE TAB -->
       scripts.map(s => {
         const pl   = PLAT[s.platform] || s.platform;
         const stat = s.last_run_status || 'NEVER';
-        return `<option value="${s.id}">[${pl}] ${_autoEsc(s.name)} · ${stat}</option>`;
+        return `<option value="${s.id}">[${pl}] ${escHtml(s.name)} · ${stat}</option>`;
       }).join('');
     // Restore previous selection if still present
     if (prev && scripts.find(s => String(s.id) === String(prev))) {
@@ -13734,7 +13833,7 @@ ${cves.length ? `<!-- CVE TAB -->
       document.getElementById('auto-viewer-title').textContent = data.name || 'SCRIPT VIEWER';
 
       const metaEl = document.getElementById('auto-viewer-meta');
-      metaEl.innerHTML = `<span class="auto-plat">${pl}</span>&nbsp; <span class="auto-stat-${stat}">${stat}</span>&nbsp; ${_autoEsc(ts)}${data.description ? '&nbsp;·&nbsp;' + _autoEsc(data.description) : ''}`;
+      metaEl.innerHTML = `<span class="auto-plat">${pl}</span>&nbsp; <span class="auto-stat-${stat}">${stat}</span>&nbsp; ${escHtml(ts)}${data.description ? '&nbsp;·&nbsp;' + escHtml(data.description) : ''}`;
       metaEl.style.display = 'block';
 
       codeEl.textContent = data.script || '# (empty script)';
@@ -13754,7 +13853,7 @@ ${cves.length ? `<!-- CVE TAB -->
     // Populate device select
     const devSel = document.getElementById('auto-multirun-device');
     devSel.innerHTML = _autoDevices.length
-      ? _autoDevices.map(d => `<option value="${d.id}"${d.is_dev_switch?' selected':''}>${_autoEsc(d.hostname)} (${d.ip})${d.is_dev_switch?' [DEV]':''}</option>`).join('')
+      ? _autoDevices.map(d => `<option value="${d.id}"${d.is_dev_switch?' selected':''}>${escHtml(d.hostname)} (${d.ip})${d.is_dev_switch?' [DEV]':''}</option>`).join('')
       : '<option value="">No devices registered</option>';
     // Reset output mode to deterministic on open
     const outMode = document.getElementById('auto-multirun-output-mode');
@@ -13766,8 +13865,8 @@ ${cves.length ? `<!-- CVE TAB -->
       const pl   = PLAT[s.platform] || s.platform;
       const stat = s.last_run_status || 'NEVER';
       return `<label class="auto-multirun-item">
-        <input type="checkbox" class="auto-multirun-cb" value="${s.id}" data-name="${_autoEsc(s.name)}" onchange="_autoMultiRunCount()">
-        <span class="auto-multirun-name">${_autoEsc(s.name)}</span>
+        <input type="checkbox" class="auto-multirun-cb" value="${s.id}" data-name="${escHtml(s.name)}" onchange="_autoMultiRunCount()">
+        <span class="auto-multirun-name">${escHtml(s.name)}</span>
         <span class="auto-multirun-meta"><span class="auto-plat">${pl}</span>&nbsp;<span class="auto-stat-${stat}">${stat}</span></span>
       </label>`;
     }).join('');
@@ -13818,7 +13917,7 @@ ${cves.length ? `<!-- CVE TAB -->
       await _autoLoadScripts();
     } catch(e) {
       removeTopbarChip(chipId);
-      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">${_autoEsc(scriptName)}: run failed — ${_autoEsc(e.message)}</div>`);
+      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">${escHtml(scriptName)}: run failed — ${escHtml(e.message)}</div>`);
       return;
     }
     if (runResult.passed) { setTopbarChipDone(chipId); } else {
@@ -13832,7 +13931,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const rawOutput = runResult.output || runResult.error || '';
       const status    = runResult.passed ? '&#10003; PASSED' : '&#10007; FAILED';
       const statusColor = runResult.passed ? 'var(--accent)' : '#ff4444';
-      const statusBar = `<div style="font-size:11px;color:${statusColor};font-weight:700;margin-bottom:8px">${status} &mdash; ${_autoEsc(deviceName)}</div>`;
+      const statusBar = `<div style="font-size:11px;color:${statusColor};font-weight:700;margin-bottom:8px">${status} &mdash; ${escHtml(deviceName)}</div>`;
 
       if (!rawOutput.trim()) {
         _autoInjectAgentMessage(`${statusBar}<span style="font-size:11px;color:var(--text-dim)">No output captured.</span>`);
@@ -13864,10 +13963,10 @@ ${cves.length ? `<!-- CVE TAB -->
       if (reviewModel) {
         await _autoStreamReview(statusBar, cleanText, reviewModel, runResult.device);
       } else {
-        _autoInjectAgentMessage(`${statusBar}<pre style="margin:0;white-space:pre-wrap;font-size:11px;line-height:1.5;color:var(--text-secondary)">${_autoEsc(cleanText)}</pre>`);
+        _autoInjectAgentMessage(`${statusBar}<pre style="margin:0;white-space:pre-wrap;font-size:11px;line-height:1.5;color:var(--text-secondary)">${escHtml(cleanText)}</pre>`);
       }
     } catch(e) {
-      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">${_autoEsc(scriptName)}: render error — ${_autoEsc(e.message)}</div>`);
+      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">${escHtml(scriptName)}: render error — ${escHtml(e.message)}</div>`);
     }
   }
 
@@ -13960,7 +14059,7 @@ ${cves.length ? `<!-- CVE TAB -->
     document.getElementById('auto-run-output').textContent = 'Select a device and click RUN…';
     const sel = document.getElementById('auto-run-device');
     sel.innerHTML = _autoDevices.length
-      ? _autoDevices.map(d => `<option value="${d.id}"${d.is_dev_switch?' selected':''}>${_autoEsc(d.hostname)} (${d.ip})${d.is_dev_switch?' [DEV]':''}</option>`).join('')
+      ? _autoDevices.map(d => `<option value="${d.id}"${d.is_dev_switch?' selected':''}>${escHtml(d.hostname)} (${d.ip})${d.is_dev_switch?' [DEV]':''}</option>`).join('')
       : '<option value="">No devices — sync SNMP or add via Testbed</option>';
     // Reset output mode to deterministic on open
     const outMode = document.getElementById('auto-run-output-mode');
@@ -14066,7 +14165,7 @@ ${cves.length ? `<!-- CVE TAB -->
       await _autoLoadScripts();
     } catch(e) {
       removeTopbarChip(chipId);
-      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">Run failed: ${_autoEsc(e.message)}</div>`);
+      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">Run failed: ${escHtml(e.message)}</div>`);
       return;
     }
     setTopbarChipDone(chipId);
@@ -14076,7 +14175,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const rawOutput = runResult.output || runResult.error || '';
       const status     = runResult.passed ? '&#10003; PASSED' : '&#10007; FAILED';
       const statusColor = runResult.passed ? 'var(--accent)' : '#ff4444';
-      const statusBar  = `<div style="font-size:11px;color:${statusColor};font-weight:700;margin-bottom:8px">${status} &mdash; ${_autoEsc(runResult.device||'unknown')}</div>`;
+      const statusBar  = `<div style="font-size:11px;color:${statusColor};font-weight:700;margin-bottom:8px">${status} &mdash; ${escHtml(runResult.device||'unknown')}</div>`;
 
       if (!rawOutput.trim()) {
         _autoInjectAgentMessage(`${statusBar}<span style="font-size:11px;color:var(--text-dim)">No output captured.</span>`);
@@ -14096,7 +14195,7 @@ ${cves.length ? `<!-- CVE TAB -->
       // Extract GLADIUS_DATA sections from output
       const parsedSections = _autoExtractGladiusData(stripped);
       if (parsedSections.length > 0) {
-        const device = _autoEsc(runResult.device || '');
+        const device = escHtml(runResult.device || '');
         const ts = runResult.run_at ? new Date(runResult.run_at).toLocaleString() : '';
         let allHtml = statusBar + `<div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">Script results — ${device} @ ${ts}</div>`;
         parsedSections.forEach(s => {
@@ -14112,10 +14211,10 @@ ${cves.length ? `<!-- CVE TAB -->
       if (reviewModel) {
         await _autoStreamReview(statusBar, cleanText, reviewModel, runResult.device);
       } else {
-        _autoInjectAgentMessage(`${statusBar}<pre style="margin:0;white-space:pre-wrap;font-size:11px;line-height:1.5;color:var(--text-secondary)">${_autoEsc(cleanText)}</pre>`);
+        _autoInjectAgentMessage(`${statusBar}<pre style="margin:0;white-space:pre-wrap;font-size:11px;line-height:1.5;color:var(--text-secondary)">${escHtml(cleanText)}</pre>`);
       }
     } catch(e) {
-      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">Agent review error: ${_autoEsc(e.message)}</div>`);
+      _autoInjectAgentMessage(`<div style="font-size:11px;color:#ff4444;font-weight:700">Agent review error: ${escHtml(e.message)}</div>`);
     }
     notify('automation', 'PYATS', `${scriptName || 'Script'} run complete`);
   }
@@ -14147,7 +14246,7 @@ ${cves.length ? `<!-- CVE TAB -->
       <div class="msg-avatar agent">F</div>
       <div>
         <div class="msg-bubble" id="${bubbleId}">${statusBar}<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>
-        <div class="msg-meta">${new Date().toLocaleTimeString()} · ${_autoEsc(model)}</div>
+        <div class="msg-meta">${new Date().toLocaleTimeString()} · ${escHtml(model)}</div>
       </div>`;
     messages.appendChild(wrap);
     messages.scrollTop = messages.scrollHeight;
@@ -14183,7 +14282,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
       _apitestAddCopyBtns(bubble);
     } catch(e) {
-      bubble.innerHTML = statusBar + `<div style="font-size:11px;color:#ff4444">Review failed: ${_autoEsc(e.message)}</div>`;
+      bubble.innerHTML = statusBar + `<div style="font-size:11px;color:#ff4444">Review failed: ${escHtml(e.message)}</div>`;
     }
     _autoHistory.push({role: 'assistant', content: fullText || '[review failed]'});
   }
@@ -14225,25 +14324,25 @@ ${cves.length ? `<!-- CVE TAB -->
         const pl   = PLAT[s.platform] || s.platform || '—';
         const stat = s.last_run_status || 'NEVER';
         const ts   = s.last_run_at ? new Date(s.last_run_at).toLocaleString() : 'Never run';
-        const desc = s.description ? _autoEsc(s.description) : '<span style="color:var(--text-dim);font-style:italic">No description</span>';
+        const desc = s.description ? escHtml(s.description) : '<span style="color:var(--text-dim);font-style:italic">No description</span>';
         return `<div class="auto-tile" id="repotile-${s.id}">
-          <div class="auto-tile-name">${_autoEsc(s.name)}</div>
+          <div class="auto-tile-name">${escHtml(s.name)}</div>
           <div class="auto-tile-desc">${desc}</div>
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${_autoEsc(ts)}</div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim)">${escHtml(ts)}</div>
           <div class="auto-tile-footer">
             <div class="auto-tile-badges">
               <span class="auto-plat">${pl}</span>
               <span class="auto-stat-${stat}">${stat}</span>
             </div>
             <div class="auto-tile-btns">
-              <button class="auto-tbtn" onclick="autoViewScriptCode('${s.id}','${_autoEsc(s.name)}')">&#128065; View</button>
-              <button class="auto-tbtn del" onclick="autoDeleteFromRepo('${s.id}','${_autoEsc(s.name)}')">&#10005; Delete</button>
+              <button class="auto-tbtn" onclick="autoViewScriptCode('${s.id}','${escHtml(s.name)}')">&#128065; View</button>
+              <button class="auto-tbtn del" onclick="autoDeleteFromRepo('${s.id}','${escHtml(s.name)}')">&#10005; Delete</button>
             </div>
           </div>
         </div>`;
       }).join('');
     } catch(e) {
-      list.innerHTML = `<div class="auto-empty" style="color:#ff4444">Failed: ${_autoEsc(e.message)}</div>`;
+      list.innerHTML = `<div class="auto-empty" style="color:#ff4444">Failed: ${escHtml(e.message)}</div>`;
     }
   }
 
@@ -14305,12 +14404,12 @@ ${cves.length ? `<!-- CVE TAB -->
       const PLAT = {iosxe:'IOS-XE', ios:'IOS', nxos:'NX-OS', eos:'EOS'};
       list.innerHTML = data.templates.map(t => `
         <div class="auto-tile">
-          <div class="auto-tile-name">${_autoEsc(t.name)}</div>
-          <div class="auto-tile-desc">${_autoEsc(t.description)}</div>
+          <div class="auto-tile-name">${escHtml(t.name)}</div>
+          <div class="auto-tile-desc">${escHtml(t.description)}</div>
           <div class="auto-tile-footer">
             <div class="auto-tile-badges"><span class="auto-plat">${PLAT[t.platform]||t.platform}</span></div>
             <div class="auto-tile-btns">
-              <button class="auto-tbtn" id="deploy-btn-${t.id}" onclick="autoDeployTemplate('${t.id}','${_autoEsc(t.name)}')">Deploy to Repo</button>
+              <button class="auto-tbtn" id="deploy-btn-${t.id}" onclick="autoDeployTemplate('${t.id}','${escHtml(t.name)}')">Deploy to Repo</button>
             </div>
           </div>
         </div>`).join('');
@@ -14362,8 +14461,8 @@ ${cves.length ? `<!-- CVE TAB -->
       </tr></thead>
       <tbody>${_autoDevices.map(d => `
         <tr style="border-bottom:1px solid var(--border)">
-          <td style="padding:5px 8px;color:var(--text-primary)">${_autoEsc(d.hostname)}</td>
-          <td style="padding:5px 8px;color:var(--text-dim)">${_autoEsc(d.ip)}</td>
+          <td style="padding:5px 8px;color:var(--text-primary)">${escHtml(d.hostname)}</td>
+          <td style="padding:5px 8px;color:var(--text-dim)">${escHtml(d.ip)}</td>
           <td style="padding:5px 8px"><span class="auto-plat">${PLAT[d.platform]||d.platform}</span></td>
           <td style="padding:5px 8px;color:var(--text-dim)">${d.source||'manual'}</td>
           <td style="padding:5px 8px;text-align:center">
@@ -14462,7 +14561,7 @@ ${cves.length ? `<!-- CVE TAB -->
       _learnFeatures = d.features || [];
       const grid = document.getElementById('learn-feature-grid');
       grid.innerHTML = _learnFeatures.map(f =>
-        `<span class="learn-chip" data-feature="${f.id}" onclick="this.classList.toggle('selected')" title="${_autoEsc(f.description)}">${_autoEsc(f.name)}</span>`
+        `<span class="learn-chip" data-feature="${f.id}" onclick="this.classList.toggle('selected')" title="${escHtml(f.description)}">${escHtml(f.name)}</span>`
       ).join('');
     } catch(e) { console.error('Learn features:', e); }
   }
@@ -14479,8 +14578,8 @@ ${cves.length ? `<!-- CVE TAB -->
       list.innerHTML = d.devices.map(dev =>
         `<div class="learn-device-row">
           <input type="checkbox" class="learn-dev-cb" value="${dev.id}">
-          <span class="learn-device-name">${_autoEsc(dev.hostname)}</span>
-          <span class="learn-device-ip">${_autoEsc(dev.ip)}</span>
+          <span class="learn-device-name">${escHtml(dev.hostname)}</span>
+          <span class="learn-device-ip">${escHtml(dev.ip)}</span>
         </div>`
       ).join('');
     } catch(e) { console.error('Learn devices:', e); }
@@ -14526,8 +14625,8 @@ ${cves.length ? `<!-- CVE TAB -->
       const ts = new Date(s.created_at).toLocaleString();
       return `<div class="learn-snap-row" data-id="${s.id}">
         <input type="checkbox" class="learn-snap-cb" value="${s.id}" onchange="learnSnapSelectionChanged()">
-        <span class="learn-snap-device">${_autoEsc(s.device_name)}</span>
-        <span class="learn-snap-feature">${_autoEsc(s.feature)}</span>
+        <span class="learn-snap-device">${escHtml(s.device_name)}</span>
+        <span class="learn-snap-feature">${escHtml(s.feature)}</span>
         <span class="learn-snap-time">${ts}</span>
       </div>`;
     }).join('');
@@ -14586,14 +14685,14 @@ ${cves.length ? `<!-- CVE TAB -->
       // Show failures in chat
       (data.results || []).filter(r => !r.success).forEach(r => {
         _autoInjectAgentMessage(
-          `<div style="font-size:11px;color:#ff4444;font-weight:700">Learn ${_autoEsc(r.feature)} on ${_autoEsc(r.device)} failed: ${_autoEsc(r.error)}</div>`
+          `<div style="font-size:11px;color:#ff4444;font-weight:700">Learn ${escHtml(r.feature)} on ${escHtml(r.device)} failed: ${escHtml(r.error)}</div>`
         );
       });
 
       // Show successes
       if (ok > 0) {
         const successList = (data.results || []).filter(r => r.success)
-          .map(r => `${_autoEsc(r.device)} / ${_autoEsc(r.feature)}`)
+          .map(r => `${escHtml(r.device)} / ${escHtml(r.feature)}`)
           .join(', ');
         _autoInjectAgentMessage(
           `<div style="font-size:11px;color:var(--accent);font-weight:700">&#10003; Learned: ${successList}</div>`
@@ -14658,7 +14757,7 @@ ${cves.length ? `<!-- CVE TAB -->
       notify('automation', 'DIFF', data.has_changes ? `Changes: +${addCt} -${delCt}` : 'No changes');
     } catch(e) {
       _autoInjectAgentMessage(
-        `<div style="font-size:11px;color:#ff4444;font-weight:700">Diff failed: ${_autoEsc(e.message)}</div>`
+        `<div style="font-size:11px;color:#ff4444;font-weight:700">Diff failed: ${escHtml(e.message)}</div>`
       );
       removeTopbarChip(diffChipId);
       notify('automation', 'DIFF', 'Diff failed');
@@ -14684,7 +14783,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (sev) {
       html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;margin-bottom:12px;border-radius:6px;background:${sevBg};border:1px solid ${sevBorder}">`;
       html += `<span style="font-size:11px;font-weight:700;color:${sevColor};letter-spacing:0.05em;text-transform:uppercase">${sev === 'HIGH' ? '&#9888; ' : sev === 'MEDIUM' ? '&#9670; ' : '&#10003; '}${sev} SEVERITY</span>`;
-      if (summary) html += `<span style="font-size:11px;color:var(--text-secondary);flex:1">${_autoEsc(summary)}</span>`;
+      if (summary) html += `<span style="font-size:11px;color:var(--text-secondary);flex:1">${escHtml(summary)}</span>`;
       html += `</div>`;
     }
 
@@ -14696,7 +14795,7 @@ ${cves.length ? `<!-- CVE TAB -->
       .trim();
 
     // Format numbered items and section headers
-    body = _autoEsc(body)
+    body = escHtml(body)
       .replace(/^(ANALYSIS:?)$/gm, `<div style="font-size:10px;font-weight:700;color:var(--accent);letter-spacing:0.05em;margin:12px 0 6px;padding-bottom:4px;border-bottom:1px solid var(--border)">ANALYSIS</div>`)
       .replace(/^(\d+)\.\s*(.+)$/gm, (_, num, rest) => {
         return `<div style="display:flex;gap:8px;margin:6px 0;padding:6px 8px;background:color-mix(in srgb, var(--accent) 4%, transparent);border-radius:4px">
@@ -14750,7 +14849,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const userText = `Analyze this ${feature.toUpperCase()} diff between ${device} (${tsA}) and ${deviceB} (${tsB})`;
     userWrap.innerHTML = `
       <div>
-        <div class="msg-bubble">${_autoEsc(userText)}</div>
+        <div class="msg-bubble">${escHtml(userText)}</div>
         <div class="msg-meta">${new Date().toLocaleTimeString()} · YOU</div>
       </div>`;
     messages.appendChild(userWrap);
@@ -14761,13 +14860,13 @@ ${cves.length ? `<!-- CVE TAB -->
     agentWrap.className = 'msg agent';
     const bubbleId = 'learn-analyze-b-' + Date.now();
     const headerHtml = `<div style="font-family:var(--font-mono);font-size:10px;color:var(--accent);letter-spacing:0.05em;margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:6px">` +
-      `&#9881; DIFF ANALYSIS &mdash; ${_autoEsc(feature.toUpperCase())} &mdash; ${_autoEsc(device)}` +
+      `&#9881; DIFF ANALYSIS &mdash; ${escHtml(feature.toUpperCase())} &mdash; ${escHtml(device)}` +
       `</div>`;
     agentWrap.innerHTML = `
       <div class="msg-avatar agent">F</div>
       <div>
         <div class="msg-bubble" id="${bubbleId}">${headerHtml}<div class="typing-indicator"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div></div>
-        <div class="msg-meta">${new Date().toLocaleTimeString()} · ${_autoEsc(model || 'OLLAMA')}</div>
+        <div class="msg-meta">${new Date().toLocaleTimeString()} · ${escHtml(model || 'OLLAMA')}</div>
       </div>`;
     messages.appendChild(agentWrap);
     messages.scrollTop = messages.scrollHeight;
@@ -14811,13 +14910,13 @@ ${cves.length ? `<!-- CVE TAB -->
       // Collapsed diff
       const diffId = 'diff-collapse-' + Date.now();
       const diffHtml = diffLines.map(line => {
-        if (line.startsWith('+')) return `<span style="color:#00cc66">${_autoEsc(line)}</span>`;
-        if (line.startsWith('-')) return `<span style="color:#ff4444">${_autoEsc(line)}</span>`;
+        if (line.startsWith('+')) return `<span style="color:#00cc66">${escHtml(line)}</span>`;
+        if (line.startsWith('-')) return `<span style="color:#ff4444">${escHtml(line)}</span>`;
         if (line.startsWith('  ') && line.includes(':')) {
           const [path, ...rest] = line.split(':');
-          return `<span style="color:var(--accent)">${_autoEsc(path)}:</span>${_autoEsc(rest.join(':'))}`;
+          return `<span style="color:var(--accent)">${escHtml(path)}:</span>${escHtml(rest.join(':'))}`;
         }
-        return _autoEsc(line);
+        return escHtml(line);
       }).join('\n');
       html += `<div style="margin-bottom:10px"><a href="#" onclick="event.preventDefault();var el=document.getElementById('${diffId}');el.style.display=el.style.display==='none'?'block':'none';this.textContent=el.style.display==='none'?'▸ Show raw diff':'▾ Hide raw diff'" style="color:var(--accent);text-decoration:none;font-size:10px;font-family:var(--font-mono)">▸ Show raw diff</a>`;
       html += `<pre id="${diffId}" style="display:none;margin:6px 0 0;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:10px;line-height:1.5;white-space:pre-wrap;max-height:200px;overflow-y:auto">${diffHtml}</pre></div>`;
@@ -14835,7 +14934,7 @@ ${cves.length ? `<!-- CVE TAB -->
       _autoHistory.push({role: 'assistant', content: analysis});
       notify('automation', 'LEARN', `${feature} diff analysis complete`);
     } catch(e) {
-      bubble.innerHTML = headerHtml + `<div style="font-size:11px;color:#ff4444">Analysis failed: ${_autoEsc(e.message)}</div>`;
+      bubble.innerHTML = headerHtml + `<div style="font-size:11px;color:#ff4444">Analysis failed: ${escHtml(e.message)}</div>`;
       removeTopbarChip(chipId);
     }
   }
@@ -14878,8 +14977,8 @@ ${cves.length ? `<!-- CVE TAB -->
     const addCt = diffLines.filter(l => l.startsWith('+')).length;
     const delCt = diffLines.filter(l => l.startsWith('-')).length;
     document.getElementById('learn-diff-modal-meta').innerHTML =
-      `<span><strong style="color:var(--accent)">A:</strong> ${_autoEsc(infoA.device)} @ ${tsA}</span>` +
-      `<span><strong style="color:var(--accent)">B:</strong> ${_autoEsc(infoB.device)} @ ${tsB}</span>` +
+      `<span><strong style="color:var(--accent)">A:</strong> ${escHtml(infoA.device)} @ ${tsA}</span>` +
+      `<span><strong style="color:var(--accent)">B:</strong> ${escHtml(infoB.device)} @ ${tsB}</span>` +
       `<span style="color:#00cc66">+${addCt} added</span>` +
       `<span style="color:#ff4444">-${delCt} removed</span>`;
 
@@ -14912,20 +15011,20 @@ ${cves.length ? `<!-- CVE TAB -->
 
         if (hasA && hasB && valA === valB) {
           // Unchanged
-          htmlA += `<span class="dl unchanged">${_autoEsc(key)}: ${_autoEsc(valA)}</span>`;
-          htmlB += `<span class="dl unchanged">${_autoEsc(key)}: ${_autoEsc(valB)}</span>`;
+          htmlA += `<span class="dl unchanged">${escHtml(key)}: ${escHtml(valA)}</span>`;
+          htmlB += `<span class="dl unchanged">${escHtml(key)}: ${escHtml(valB)}</span>`;
         } else if (hasA && hasB) {
           // Changed
-          htmlA += `<span class="dl changed">${_autoEsc(key)}: ${_autoEsc(valA)}</span>`;
-          htmlB += `<span class="dl changed">${_autoEsc(key)}: ${_autoEsc(valB)}</span>`;
+          htmlA += `<span class="dl changed">${escHtml(key)}: ${escHtml(valA)}</span>`;
+          htmlB += `<span class="dl changed">${escHtml(key)}: ${escHtml(valB)}</span>`;
         } else if (hasA && !hasB) {
           // Removed in B
-          htmlA += `<span class="dl removed">${_autoEsc(key)}: ${_autoEsc(valA)}</span>`;
+          htmlA += `<span class="dl removed">${escHtml(key)}: ${escHtml(valA)}</span>`;
           htmlB += `<span class="dl"></span>`;
         } else {
           // Added in B
           htmlA += `<span class="dl"></span>`;
-          htmlB += `<span class="dl added">${_autoEsc(key)}: ${_autoEsc(valB)}</span>`;
+          htmlB += `<span class="dl added">${escHtml(key)}: ${escHtml(valB)}</span>`;
         }
       }
       sideA.innerHTML = htmlA || '<span class="dl" style="color:var(--text-dim)">Empty snapshot</span>';
@@ -14935,7 +15034,7 @@ ${cves.length ? `<!-- CVE TAB -->
       sideA.onscroll = () => { sideB.scrollTop = sideA.scrollTop; sideB.scrollLeft = sideA.scrollLeft; };
       sideB.onscroll = () => { sideA.scrollTop = sideB.scrollTop; sideA.scrollLeft = sideB.scrollLeft; };
     } catch(e) {
-      sideA.innerHTML = `<span class="dl" style="color:#ff4444">Failed to load: ${_autoEsc(e.message)}</span>`;
+      sideA.innerHTML = `<span class="dl" style="color:#ff4444">Failed to load: ${escHtml(e.message)}</span>`;
       sideB.innerHTML = '';
     }
   }
@@ -14970,7 +15069,7 @@ ${cves.length ? `<!-- CVE TAB -->
     navigator.clipboard.writeText(text).then(() => {
       const info = _learnLastDiff ? (side === 'a' ? _learnLastDiff.snapshot_a : _learnLastDiff.snapshot_b) : null;
       const label = info ? `${info.device} snapshot` : `Side ${side.toUpperCase()}`;
-      _autoInjectAgentMessage(`<div style="font-size:11px;color:var(--accent)">&#10003; ${_autoEsc(label)} copied to clipboard</div>`);
+      _autoInjectAgentMessage(`<div style="font-size:11px;color:var(--accent)">&#10003; ${escHtml(label)} copied to clipboard</div>`);
     });
   }
 
@@ -15290,10 +15389,6 @@ ${cves.length ? `<!-- CVE TAB -->
       </div>`;
   }
 
-  function _apitestEsc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
   function _apitestAppendMsg(role, html) {
     const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const div = document.createElement('div');
@@ -15365,7 +15460,7 @@ ${cves.length ? `<!-- CVE TAB -->
     input.value   = '';
     input.style.height = 'auto';
 
-    _apitestAppendMsg('user', _apitestEsc(text));
+    _apitestAppendMsg('user', escHtml(text));
     _apitestHistory.push({role:'user', content: text});
 
     const agentDiv  = document.createElement('div');
@@ -15427,7 +15522,7 @@ ${cves.length ? `<!-- CVE TAB -->
               bubble.innerHTML = formatMessage(fullText);
               if (nearBottom) APITEST_MSGS().scrollTop = APITEST_MSGS().scrollHeight;
             } else if (ev.type === 'error') {
-              bubble.innerHTML = `<span style="color:#ff4444">${_apitestEsc(ev.content)}</span>`;
+              bubble.innerHTML = `<span style="color:#ff4444">${escHtml(ev.content)}</span>`;
               _apitestStopOrbit();
             }
           } catch(_) {}
@@ -15445,7 +15540,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
 
     } catch(e) {
-      bubble.innerHTML = `<span style="color:#ff4444">${_apitestEsc(e.message)}</span>`;
+      bubble.innerHTML = `<span style="color:#ff4444">${escHtml(e.message)}</span>`;
       _apitestStopOrbit();
     }
 
@@ -15698,10 +15793,6 @@ ${cves.length ? `<!-- CVE TAB -->
       </div>`;
   }
 
-  function _itsmEsc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
   function _itsmAppendMsg(role, html) {
     const now = new Date().toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     const div = document.createElement('div');
@@ -15776,7 +15867,7 @@ ${cves.length ? `<!-- CVE TAB -->
     input.value   = '';
     input.style.height = 'auto';
 
-    _itsmAppendMsg('user', _itsmEsc(text));
+    _itsmAppendMsg('user', escHtml(text));
     _itsmHistory.push({role:'user', content: text});
 
     const agentDiv  = document.createElement('div');
@@ -15838,7 +15929,7 @@ ${cves.length ? `<!-- CVE TAB -->
               bubble.innerHTML = formatMessage(fullText);
               if (nearBottom) ITSM_MSGS().scrollTop = ITSM_MSGS().scrollHeight;
             } else if (ev.type === 'error') {
-              bubble.innerHTML = `<span style="color:#ff4444">${_itsmEsc(ev.content)}</span>`;
+              bubble.innerHTML = `<span style="color:#ff4444">${escHtml(ev.content)}</span>`;
               _itsmStopOrbit();
             }
           } catch(_) {}
@@ -15945,7 +16036,7 @@ ${cves.length ? `<!-- CVE TAB -->
       }
 
     } catch(e) {
-      bubble.innerHTML = `<span style="color:#ff4444">${_itsmEsc(e.message)}</span>`;
+      bubble.innerHTML = `<span style="color:#ff4444">${escHtml(e.message)}</span>`;
       _itsmStopOrbit();
     }
 
