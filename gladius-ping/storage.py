@@ -2,6 +2,7 @@
 storage.py - CSV-based persistence for ping results and device config
 """
 import csv
+import io
 import json
 import math
 import os
@@ -199,26 +200,76 @@ def save_result(device_id: int, latency_ms: float | None, success: bool, jitter_
             ])
 
 
+_SEEK_MIN_SPAN = 64 * 1024   # stop bisecting once the window is this small
+_SEEK_BACKOFF = 64 * 1024    # re-read this much before the bisected offset
+
+
+def _parse_line_ts(line: bytes) -> datetime | None:
+    try:
+        return datetime.fromisoformat(line.split(b",", 1)[0].decode("utf-8").strip())
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _offset_before(f, header_end: int, cutoff: datetime) -> int:
+    """Byte offset of a line start before the first row with timestamp >= cutoff.
+
+    Rows are appended in time order, so bisect on byte offsets instead of
+    parsing the whole file. Every row before the returned offset is older
+    than `cutoff`; callers still filter each row, so the result is the same
+    as a full scan.
+    """
+    f.seek(0, os.SEEK_END)
+    lo, hi = header_end, f.tell()
+    while hi - lo > _SEEK_MIN_SPAN:
+        mid = (lo + hi) // 2
+        f.seek(mid)
+        f.readline()                 # skip the partial line we landed in
+        pos = f.tell()
+        ts = _parse_line_ts(f.readline())
+        if ts is not None and ts < cutoff:
+            lo = pos
+        else:
+            hi = mid
+    return lo
+
+
+def _iter_csv_since(path: Path, cutoff: datetime):
+    """Yield DictReader rows from a time-ordered CSV, skipping (most of) the
+    rows older than `cutoff` without parsing them. Callers must still filter."""
+    with open(path, "rb") as f:
+        header = f.readline()
+        header_end = f.tell()
+        fieldnames = next(csv.reader([header.decode("utf-8")]), None)
+        if not fieldnames:
+            return
+        start = _offset_before(f, header_end, cutoff)
+        start = max(header_end, start - _SEEK_BACKOFF)
+        f.seek(start)
+        if start > header_end:
+            f.readline()             # resync to a line boundary
+        text = io.TextIOWrapper(f, encoding="utf-8", newline="")
+        yield from csv.DictReader(text, fieldnames=fieldnames)
+
+
 def load_results(device_id: int, hours: int = 1) -> list[dict]:
     path = _result_file(device_id)
     if not path.exists():
         return []
     cutoff = datetime.utcnow() - timedelta(hours=hours)
     rows = []
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                ts = datetime.fromisoformat(row["timestamp"])
-                if ts >= cutoff:
-                    rows.append({
-                        "timestamp": row["timestamp"],
-                        "latency_ms": float(row["latency_ms"]) if row["latency_ms"] else None,
-                        "success": bool(int(row["success"])),
-                        "jitter_ms": float(row["jitter_ms"]) if row["jitter_ms"] else None,
-                    })
-            except (ValueError, KeyError):
-                continue
+    for row in _iter_csv_since(path, cutoff):
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            if ts >= cutoff:
+                rows.append({
+                    "timestamp": row["timestamp"],
+                    "latency_ms": float(row["latency_ms"]) if row["latency_ms"] else None,
+                    "success": bool(int(row["success"])),
+                    "jitter_ms": float(row["jitter_ms"]) if row["jitter_ms"] else None,
+                })
+        except (ValueError, KeyError, TypeError):  # TypeError: row still being appended
+            continue
     return rows
 
 
@@ -285,19 +336,17 @@ def load_sla_report(device_id: int, days: int = 30) -> list[dict]:
         return []
     cutoff = datetime.utcnow() - timedelta(days=days)
     day_buckets: dict = defaultdict(lambda: {"up": 0, "total": 0})
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                ts = datetime.fromisoformat(row["timestamp"])
-                if ts < cutoff:
-                    continue
-                key = ts.strftime("%Y-%m-%d")
-                day_buckets[key]["total"] += 1
-                if int(row["success"]):
-                    day_buckets[key]["up"] += 1
-            except (ValueError, KeyError):
+    for row in _iter_csv_since(path, cutoff):
+        try:
+            ts = datetime.fromisoformat(row["timestamp"])
+            if ts < cutoff:
                 continue
+            key = ts.strftime("%Y-%m-%d")
+            day_buckets[key]["total"] += 1
+            if int(row["success"]):
+                day_buckets[key]["up"] += 1
+        except (ValueError, KeyError, TypeError):
+            continue
     result = []
     for i in range(days):
         key = (datetime.utcnow() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
