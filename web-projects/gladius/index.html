@@ -687,6 +687,7 @@
     margin-top: 2px;
   }
 
+  .severity-badge.critical { background: var(--danger); color: var(--bg-deep, #000); border: 1px solid var(--danger); font-weight: 700; }
   .severity-badge.high { background: var(--danger-dim); color: var(--danger); border: 1px solid var(--danger); }
   .severity-badge.medium { background: var(--warn-dim); color: var(--warn); border: 1px solid var(--warn); }
   .severity-badge.low { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent); }
@@ -7955,16 +7956,13 @@ ${cves.length ? `<!-- CVE TAB -->
       </div>`;
 
     // Findings list
-    const sevOrder = { HIGH:0, MEDIUM:1, LOW:2, PASS:3 };
-    const sorted = [...findings].sort((a,b) => (sevOrder[a.severity]||9)-(sevOrder[b.severity]||9));
+    const sorted = sortBySeverity(findings);
     const findingsHtml = sorted.length ? `
       <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">${sorted.length} Findings</div>
       <div class="report-panel-findings">
         ${sorted.map(f => {
-          const isCve = isCveFn(f);
-          const sev = f.severity || 'LOW';
-          const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
-          const lbl = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
+          const cls = sevBadgeClass(f);
+          const lbl = sevBadgeLabel(f);
           return `<div class="report-panel-finding">
             <div class="severity-badge ${cls}" style="margin-top:1px">${escHtml(lbl)}</div>
             <div class="report-panel-text">
@@ -10709,8 +10707,7 @@ ${cves.length ? `<!-- CVE TAB -->
       body.innerHTML = '<div style="padding:20px 0;text-align:center;font-family:var(--font-mono);font-size:13px;color:var(--text-dim)">// No findings recorded</div>';
       return;
     }
-    const sevOrder = { HIGH: 0, MEDIUM: 1, LOW: 2, PASS: 3 };
-    const sorted = [...findings].sort((a,b) => (sevOrder[a.severity]||9) - (sevOrder[b.severity]||9));
+    const sorted = sortBySeverity(findings);
     // Store full sorted list for detail panel — always uses unfiltered index
     window._dashFindings = sorted;
     const isCveFinding = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
@@ -10726,10 +10723,8 @@ ${cves.length ? `<!-- CVE TAB -->
     }
     body.innerHTML = visible.map((f) => {
       const i = sorted.indexOf(f);
-      const sev = f.severity || 'LOW';
-      const isCve = isCveFinding(f);
-      const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
-      const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
+      const cls = sevBadgeClass(f);
+      const label = sevBadgeLabel(f);
       return `<div class="finding-item" style="cursor:pointer" onclick="openDetail(${i})">
         <div class="severity-badge ${cls}">${escHtml(label)}</div>
         <div class="finding-text">
@@ -11512,9 +11507,8 @@ ${cves.length ? `<!-- CVE TAB -->
     const f = findings[index];
     if (!f) return;
     const isCve = f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
-    const sev = f.severity || 'LOW';
-    const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
-    const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
+    const cls = sevBadgeClass(f);
+    const label = sevBadgeLabel(f);
     const badge = document.getElementById('detail-severity');
     if (badge) { badge.textContent = label; badge.className = `severity-badge ${cls}`; }
     setEl('detail-title', f.title || 'Finding');
