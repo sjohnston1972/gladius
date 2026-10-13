@@ -268,6 +268,19 @@ def _trigger_auto_tshoot(evt: dict):
         log.warning("Auto-tshoot trigger returned: %s", data)
 
 
+def _ospf_nbr_key(oid_str: str) -> str:
+    """Neighbour key from an ospfNbrTable OID.
+
+    Rows are indexed by ospfNbrIpAddr (4 sub-ids) followed by
+    ospfNbrAddressLessIndex (1 sub-id, 0 for numbered neighbours), so the IP
+    is sub-ids [-5:-1]. Address-less neighbours all share 0.0.0.0, so their
+    interface index is appended to keep them distinct.
+    """
+    parts = oid_str.split(".")
+    ip = ".".join(parts[-5:-1])
+    return ip if parts[-1] == "0" else f"{ip}/{parts[-1]}"
+
+
 def _poll_protocol_state_sync(dev: dict) -> dict:
     """Walk interface oper status, BGP peer state, OSPF neighbor state. Returns parsed state dict."""
     host = dev["host"]
@@ -327,7 +340,7 @@ def _poll_protocol_state_sync(dev: dict) -> dict:
             if ei or es:
                 break
             for var in varBinds:
-                nbr_ip = ".".join(str(var[0]).split(".")[-4:])
+                nbr_ip = _ospf_nbr_key(str(var[0]))
                 ospf_state = var[1].prettyPrint()
                 state["ospf"][nbr_ip] = ospf_state
             if len(state["ospf"]) >= 50:
