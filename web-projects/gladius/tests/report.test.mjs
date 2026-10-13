@@ -55,6 +55,17 @@ test('report includes impact text, commands and CRITICAL hardening findings', ()
   assert.match(out, /<b>Fix:<\/b> Add a banner/);
 });
 
+test('report stylesheet holds no app CSS (CSS placement trap)', () => {
+  const { ctx } = makeCtx();
+  const style = ctx.generateReportHTML(structuredClone(AGENT_AUDIT)).match(/<style>([\s\S]*?)<\/style>/)[1];
+  // App variables do not exist in the standalone report; app selectors here never reach the page.
+  assert.ok(!/var\(--/.test(style), 'report <style> must not use app CSS variables');
+  assert.ok(!/\.settings-row|\.toggle-wrap|\.toggle-slider/.test(style));
+  // ...and the settings toggle styles do live in the main document stylesheet
+  const mainCss = readIndex().split('</style>')[0];
+  assert.match(mainCss, /\.toggle-wrap input:checked \+ \.toggle-slider/);
+});
+
 test('report escapes agent text', () => {
   const { ctx } = makeCtx();
   const a = structuredClone(AGENT_AUDIT);
