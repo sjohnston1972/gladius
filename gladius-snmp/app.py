@@ -6,8 +6,10 @@ import uuid
 import json
 import time
 import hmac
+import shutil
 import asyncio
 import logging
+import tempfile
 import requests
 from pathlib import Path
 from datetime import datetime, timezone
@@ -60,26 +62,99 @@ _last_alerted:     dict[str, str] = {}   # id → last status we alerted on (to 
 _iface_miss_count: dict[str, int] = {}   # "devid::iface::miss" → consecutive miss count
 
 # ── Device persistence ─────────────────────────────────────────────────────────
-def _load_devices():
-    global _devices
-    DEVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if DEVICES_FILE.exists():
+# Set when devices.json exists but neither it nor its .bak could be parsed.
+# While set, every save is refused so the unreadable (possibly recoverable)
+# file is never overwritten with an empty registry.
+_registry_error: str | None = None
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write via a temp file in the same directory + os.replace, so a crash
+    mid-write never leaves a truncated file. The file is created 0600."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
         try:
-            _devices = json.loads(DEVICES_FILE.read_text())
-            log.info("Loaded %d device(s) from %s", len(_devices), DEVICES_FILE)
-        except Exception as e:
-            log.warning("Failed to load devices: %s", e)
-            _devices = {}
-    else:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _devices_backup_path() -> Path:
+    return DEVICES_FILE.with_name(DEVICES_FILE.name + ".bak")
+
+
+def _read_devices_file(path: Path) -> dict:
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict):
+        raise ValueError("expected a JSON object of id → device")
+    return data
+
+
+def _load_devices():
+    global _devices, _registry_error
+    DEVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _registry_error = None
+    if not DEVICES_FILE.exists():
         _devices = {}
+        return
+    try:
+        _devices = _read_devices_file(DEVICES_FILE)
+        log.info("Loaded %d device(s) from %s", len(_devices), DEVICES_FILE)
+        return
+    except Exception as e:
+        load_err = e
+
+    # Keep a copy of the unreadable file for the operator before anything else
+    corrupt = DEVICES_FILE.with_name(f"{DEVICES_FILE.name}.corrupt-{int(time.time())}")
+    try:
+        shutil.copy2(DEVICES_FILE, corrupt)
+    except Exception as e:
+        log.error("Could not copy unreadable %s aside: %s", DEVICES_FILE, e)
+        corrupt = None
+
+    bak = _devices_backup_path()
+    try:
+        _devices = _read_devices_file(bak)
+        log.error("Failed to load %s (%s) — copy kept at %s; restored %d device(s) from %s",
+                  DEVICES_FILE, load_err, corrupt, len(_devices), bak)
+    except Exception as e:
+        _devices = {}
+        _registry_error = (f"{DEVICES_FILE} is unreadable ({load_err}) and no usable backup "
+                           f"({e}); registry is read-only until the file is repaired")
+        log.error("%s — copy kept at %s", _registry_error, corrupt)
 
 
 def _save_devices():
+    if _registry_error:
+        log.error("Refusing to save devices: %s", _registry_error)
+        return
     try:
-        DEVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DEVICES_FILE.write_text(json.dumps(_devices, indent=2))
+        # Keep the previous version as .bak, but only if it is itself valid
+        if DEVICES_FILE.exists():
+            try:
+                prev = DEVICES_FILE.read_text()
+                if not isinstance(json.loads(prev), dict):
+                    raise ValueError("not a JSON object")
+                _atomic_write_text(_devices_backup_path(), prev)
+            except Exception as e:
+                log.warning("Not backing up %s: %s", DEVICES_FILE, e)
+        _atomic_write_text(DEVICES_FILE, json.dumps(_devices, indent=2))
     except Exception as e:
         log.error("Failed to save devices: %s", e)
+
+
+def _require_writable_registry():
+    """Endpoint guard: refuse registry changes while devices.json is unreadable."""
+    if _registry_error:
+        raise HTTPException(status_code=503, detail="Device registry is read-only: devices.json could not be loaded")
 
 
 # ── SNMP helpers ───────────────────────────────────────────────────────────────
@@ -661,6 +736,7 @@ def list_devices():
 
 @app.post("/devices", status_code=201, dependencies=[Depends(require_token)])
 async def add_device(body: DeviceIn):
+    _require_writable_registry()
     dev_id = str(uuid.uuid4())
     dev = {
         "id":            dev_id,
@@ -687,6 +763,7 @@ async def add_device(body: DeviceIn):
 
 @app.delete("/devices/{dev_id}", status_code=204, dependencies=[Depends(require_token)])
 def delete_device(dev_id: str):
+    _require_writable_registry()
     if dev_id not in _devices:
         raise HTTPException(status_code=404, detail="Device not found")
     _devices.pop(dev_id)
@@ -696,6 +773,7 @@ def delete_device(dev_id: str):
 
 @app.post("/devices/mute-all", dependencies=[Depends(require_token)])
 async def mute_all_devices(request: Request):
+    _require_writable_registry()
     body = await request.json()
     muted = body.get("muted", True)
     for dev_id in _devices:
@@ -706,6 +784,7 @@ async def mute_all_devices(request: Request):
 
 @app.patch("/devices/{dev_id}", dependencies=[Depends(require_token)])
 def patch_device(dev_id: str, body: DevicePatch):
+    _require_writable_registry()
     if dev_id not in _devices:
         raise HTTPException(status_code=404, detail="Device not found")
     updates = body.model_dump(exclude_none=True)
