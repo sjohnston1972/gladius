@@ -242,7 +242,12 @@ _OSPF_STATES = {"1": "down", "2": "attempt", "3": "init", "4": "twoway", "5": "e
                 "6": "exchange", "7": "loading", "8": "full"}
 
 def _add_event(dev: dict, event_type: str, severity: str, detail: str, extra: dict = None):
-    """Append a protocol event and cap the list. Skip if device is muted."""
+    """Append a protocol event and cap the list. Skip if device is muted.
+
+    Must be called on the event loop. Never blocks: Jira / auto-tshoot HTTP
+    calls are queued for _side_effect_worker, which fills in jira_key/jira_url
+    on the stored event once the ticket exists.
+    """
     if dev.get("muted"):
         log.debug("MUTED — skipping event [%s] %s %s: %s", severity, dev.get("name", dev["host"]), event_type, detail)
         return None
@@ -262,21 +267,67 @@ def _add_event(dev: dict, event_type: str, severity: str, detail: str, extra: di
         _events[:] = _events[-_MAX_EVENTS:]
     log.info("EVENT [%s] %s %s: %s", severity.upper(), dev.get("name", dev["host"]), event_type, detail)
 
-    # Auto-create Jira ticket for critical/warning events
+    # Auto-create Jira ticket (and auto-tshoot for interface_down) off the event loop
     if JIRA_AUTO_EVENTS and event_type in _JIRA_EVENT_TYPES:
+        _enqueue_side_effects(evt)
+
+    return evt
+
+
+# ── Event side effects (Jira / auto-tshoot) ───────────────────────────────────
+_side_effects: asyncio.Queue | None = None   # created in lifespan
+_SIDE_EFFECT_QUEUE_MAX = 500
+
+
+def _enqueue_side_effects(evt: dict) -> None:
+    if _side_effects is None:
+        log.debug("Side-effect worker not running — skipping Jira for %s", evt["type"])
+        return
+    try:
+        _side_effects.put_nowait(evt)
+    except asyncio.QueueFull:
+        log.warning("Side-effect queue full — dropping Jira/tshoot for %s %s", evt["type"], evt["detail"])
+
+
+async def _side_effect_worker():
+    """Single consumer: runs the blocking HTTP calls for each event in a thread,
+    one event at a time, so an event storm can never stall the event loop."""
+    while True:
+        evt = await _side_effects.get()
         try:
-            _create_jira_for_event_sync(evt)
+            await asyncio.to_thread(_process_event_side_effects, evt)
         except Exception as e:
-            log.warning("Jira auto-ticket failed for %s: %s", event_type, e)
+            log.warning("Side effects failed for %s: %s", evt.get("type"), e)
+        finally:
+            _side_effects.task_done()
+
+
+def _process_event_side_effects(evt: dict) -> None:
+    """Blocking — runs in a worker thread."""
+    try:
+        _create_jira_for_event_sync(evt)
+    except Exception as e:
+        log.warning("Jira auto-ticket failed for %s: %s", evt["type"], e)
 
     # Auto-tshoot for interface_down events that have a Jira ticket
-    if event_type == "interface_down" and evt.get("jira_key"):
+    if evt["type"] == "interface_down" and evt.get("jira_key"):
         try:
             _trigger_auto_tshoot(evt)
         except Exception as e:
-            log.warning("Auto-tshoot trigger failed for %s: %s", event_type, e)
+            log.warning("Auto-tshoot trigger failed for %s: %s", evt["type"], e)
 
-    return evt
+
+def _response_json(r, what: str) -> dict | None:
+    """Return the JSON body of a successful response, else log and return None."""
+    if not r.ok:
+        log.warning("%s returned HTTP %d: %s", what, r.status_code, r.text[:200])
+        return None
+    try:
+        data = r.json()
+    except ValueError:
+        log.warning("%s returned non-JSON (%s): %s", what, r.headers.get("content-type"), r.text[:200])
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _create_jira_for_event_sync(evt: dict):
@@ -308,12 +359,12 @@ def _create_jira_for_event_sync(evt: dict):
         headers=_GLADIUS_API_HEADERS,
         timeout=15,
     )
-    data = r.json()
-    if data.get("ok") and data.get("key"):
+    data = _response_json(r, "Jira create")
+    if data and data.get("ok") and data.get("key"):
         evt["jira_key"] = data["key"]
         evt["jira_url"] = data.get("url", "")
         log.info("Jira ticket %s created for %s on %s", data["key"], evt_type, device)
-    else:
+    elif data is not None:
         log.warning("Jira create returned: %s", data)
 
 
@@ -334,11 +385,11 @@ def _trigger_auto_tshoot(evt: dict):
         headers=_GLADIUS_API_HEADERS,
         timeout=10,
     )
-    data = r.json()
-    if data.get("ok"):
+    data = _response_json(r, "Auto-tshoot")
+    if data and data.get("ok"):
         log.info("Auto-tshoot triggered for %s (%s), task_id=%s",
                  payload["device"], payload["event_type"], data.get("task_id"))
-    else:
+    elif data is not None:
         log.warning("Auto-tshoot trigger returned: %s", data)
 
 
@@ -613,7 +664,8 @@ def _send_alert_sync(dev: dict, old_status: str, new_status: str, snmp_data: dic
     }
     try:
         r = requests.post(f"{GLADIUS_API_URL}/api/snmp/alert", json=payload, headers=_GLADIUS_API_HEADERS, timeout=10)
-        log.info("Alert POSTed for %s: %s→%s (HTTP %d)", dev.get("name"), old_status, new_status, r.status_code)
+        log.log(logging.INFO if r.ok else logging.WARNING, "Alert POSTed for %s: %s→%s (HTTP %d)",
+                dev.get("name"), old_status, new_status, r.status_code)
     except Exception as e:
         log.warning("Failed to send alert for %s: %s", dev.get("name"), e)
 
@@ -641,9 +693,7 @@ async def _poll_all():
                     log.debug("MUTED — skipping alert POST for %s (%s) %s→%s",
                               dev.get("name", dev["host"]), dev["host"], old_status, new_status)
                 else:
-                    asyncio.create_task(
-                        asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result))
-                    )
+                    _spawn(asyncio.to_thread(_send_alert_sync, dev, old_status, new_status, dict(result)))
                 # Device went down — generate event (also gated by mute inside _add_event)
                 if new_status == "error":
                     _add_event(dev, "device_down", "critical", f"Device unreachable ({result.get('error', 'no response')})")
@@ -666,11 +716,24 @@ async def _poll_all():
         await asyncio.sleep(POLL_INTERVAL)
 
 
+_bg_tasks: set[asyncio.Task] = set()   # strong refs so background tasks aren't garbage-collected
+
+
+def _spawn(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _side_effects
     _load_devices()
+    _side_effects = asyncio.Queue(maxsize=_SIDE_EFFECT_QUEUE_MAX)
+    _spawn(_side_effect_worker())
     # Kick off an immediate poll before the regular loop
-    asyncio.create_task(_poll_all())
+    _spawn(_poll_all())
     yield
 
 
