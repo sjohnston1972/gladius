@@ -1,0 +1,25 @@
+services:
+  gladius-ping:
+    container_name: gladius-ping
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - net_core
+    volumes:
+      - ./api.py:/app/api.py
+      - ./collector.py:/app/collector.py
+      - ./storage.py:/app/storage.py
+      - ./alerts.py:/app/alerts.py
+      - ./baseline.py:/app/baseline.py
+      - ./digest.py:/app/digest.py
+      - ./speedtest_runner.py:/app/speedtest_runner.py
+      - ./main.py:/app/main.py
+      - ./data:/app/data
+    ports:
+      - "8100:8000"
+
+networks:
+  net_core:
+    external: true
