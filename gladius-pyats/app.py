@@ -3727,29 +3727,12 @@ async def _run_schedule_job(sched: dict, sched_type: str, device_ids: list, feat
     # Jira auto-ticket for scheduled diffs with changes
     jira_auto = sched.get("jira_auto_ticket", "")
     if JIRA_CONFIGURED and jira_auto and diff_text:
-        jira_severity = "P3"
-        jira_summary = f"Network Change Detected — {sched['name']}"
-        should_ticket = True
-
-        if analysis_text:
-            sev_match = re.search(r"SEVERITY:\s*(LOW|MEDIUM|HIGH)", analysis_text, re.IGNORECASE)
-            if sev_match:
-                sev = sev_match.group(1).upper()
-                if sev == "HIGH":
-                    jira_severity = "P2"
-                elif sev == "MEDIUM":
-                    jira_severity = "P3"
-                    if jira_auto == "high_only":
-                        should_ticket = False
-                elif sev == "LOW":
-                    jira_severity = "P4"
-                    if jira_auto in ("high_only", "medium_plus"):
-                        should_ticket = False
-            sum_match = re.search(r"SUMMARY:\s*(.+)", analysis_text, re.IGNORECASE)
-            if sum_match:
-                jira_summary = sum_match.group(1).strip()
-
-        if should_ticket:
+        should_ticket, jira_severity, jira_summary = _jira_ticket_decision(
+            jira_auto, analysis_text, f"Network Change Detected — {sched['name']}")
+        if not should_ticket:
+            log.info("Schedule '%s': no Jira ticket (filter=%s, severity %s)", sched["name"], jira_auto,
+                     "unknown — analysis missing or unparsable" if jira_severity is None else jira_severity)
+        else:
             try:
                 result = await _create_jira_ticket(
                     summary=jira_summary,
@@ -3762,6 +3745,27 @@ async def _run_schedule_job(sched: dict, sched_type: str, device_ids: list, feat
                 log.error("Jira auto-ticket failed for schedule '%s': %s", sched["name"], e)
 
     log.info("Schedule '%s' completed: %s", sched["name"], summary)
+
+
+_SEVERITY_PRIORITY = {"HIGH": "P2", "MEDIUM": "P3", "LOW": "P4"}
+_JIRA_AUTO_MIN_SEVERITY = {"medium_plus": ("MEDIUM", "HIGH"), "high_only": ("HIGH",)}
+
+
+def _jira_ticket_decision(jira_auto: str, analysis_text: str, default_summary: str
+                          ) -> tuple[bool, str | None, str]:
+    """Decide whether a scheduled diff should open a Jira ticket.
+    Returns (should_ticket, priority or None if severity unknown, summary).
+    'all' always tickets (P3 when the analysis gave no severity); a severity
+    filter ('medium_plus' / 'high_only') only tickets when the analysis
+    explicitly reports a qualifying SEVERITY — never when it is missing."""
+    allowed = _JIRA_AUTO_MIN_SEVERITY.get(jira_auto)     # None → 'all'
+    sev_match = re.search(r"SEVERITY:\s*(LOW|MEDIUM|HIGH)", analysis_text or "", re.IGNORECASE)
+    sum_match = re.search(r"SUMMARY:\s*(.+)", analysis_text or "", re.IGNORECASE)
+    summary = sum_match.group(1).strip() if sum_match else default_summary
+    if not sev_match:
+        return (True, "P3", summary) if allowed is None else (False, None, summary)
+    sev = sev_match.group(1).upper()
+    return (allowed is None or sev in allowed), _SEVERITY_PRIORITY[sev], summary
 
 
 def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text: str, analysis: str = "") -> str:
