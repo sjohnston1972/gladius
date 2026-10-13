@@ -5,6 +5,7 @@ import uuid
 import shlex
 import difflib
 import fnmatch
+import tempfile
 import subprocess
 import logging
 import threading
@@ -408,6 +409,11 @@ def _build_bash_exec(argv: list[str]) -> tuple[list[str], Path, dict]:
 # ── Persistent conversation history ───────────────────────────────────────────
 MAX_HISTORY  = 60
 HISTORY_FILE = Path(os.getenv("HISTORY_FILE", "/data/history.json"))
+# Conversations idle for longer than this are dropped (0 = keep forever).
+HISTORY_TTL_DAYS = _env_int("HISTORY_TTL_DAYS", 30)
+# Reserved top-level key holding per-conversation last-activity timestamps.
+# It has no "|" so older versions of the loader simply skip it.
+HISTORY_META_KEY = "__last_active__"
 _history_lock = threading.Lock()
 
 # ── Proactive messaging ────────────────────────────────────────────────────────
@@ -465,35 +471,90 @@ def notify_slack(message: str) -> bool:
 
 # ── History helpers ────────────────────────────────────────────────────────────
 
-def _load_history() -> dict:
+# Same persistence pattern as gladius-slack/app.py (separate containers, so
+# each keeps its own copy): atomic replace on save, quarantine instead of
+# overwrite on a corrupt file, and idle conversations expire.
+
+def _quarantine_history_file() -> None:
+    dest = HISTORY_FILE.with_name(f"{HISTORY_FILE.name}.corrupt-{int(time.time())}")
+    try:
+        os.replace(HISTORY_FILE, dest)
+        log.error("Moved unreadable history file to %s", dest)
+    except OSError as e:
+        log.error("Could not quarantine unreadable history file %s: %s", HISTORY_FILE, e)
+
+
+def _expire_history(history: dict, last_active: dict, now: float | None = None) -> int:
+    """Drop conversations idle for longer than HISTORY_TTL_DAYS."""
+    if HISTORY_TTL_DAYS <= 0:
+        return 0
+    now = time.time() if now is None else now
+    cutoff = now - HISTORY_TTL_DAYS * 86400
+    stale = [k for k in list(history) if last_active.get(k, now) < cutoff]
+    for k in stale:
+        history.pop(k, None)
+        last_active.pop(k, None)
+    return len(stale)
+
+
+def _load_history() -> tuple[dict, dict]:
+    """Return (history, last_active). A file that can't be parsed is moved
+    aside rather than silently replaced on the next save."""
+    history, last_active = defaultdict(list), {}
     HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not HISTORY_FILE.exists():
         log.info("No history file — starting fresh at %s", HISTORY_FILE)
-        return defaultdict(list)
+        return history, last_active
     try:
-        raw = json.loads(HISTORY_FILE.read_text())
-        loaded = defaultdict(list)
-        for k, v in raw.items():
-            parts = k.split("|", 1)
-            if len(parts) == 2:
-                loaded[tuple(parts)] = v
-        log.info("Loaded %d conversation(s) from %s", len(loaded), HISTORY_FILE)
-        return loaded
+        raw = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("top level is not a JSON object")
     except Exception as e:
-        log.warning("Failed to load history: %s — starting fresh", e)
-        return defaultdict(list)
+        log.error("Failed to load history from %s: %s — starting fresh", HISTORY_FILE, e)
+        _quarantine_history_file()
+        return history, last_active
+    meta = raw.get(HISTORY_META_KEY)
+    meta = meta if isinstance(meta, dict) else {}
+    now = time.time()
+    for k, v in raw.items():
+        parts = k.split("|", 1)
+        if len(parts) != 2 or not isinstance(v, list):
+            continue
+        key = tuple(parts)
+        history[key] = v
+        ts = meta.get(k)
+        last_active[key] = float(ts) if isinstance(ts, (int, float)) else now
+    expired = _expire_history(history, last_active, now)
+    log.info("Loaded %d conversation(s) from %s (%d expired)", len(history), HISTORY_FILE, expired)
+    return history, last_active
 
 
 def _save_history(history: dict) -> None:
+    """Write history atomically: temp file in the same directory, then replace."""
     try:
         HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         serialisable = {f"{k[0]}|{k[1]}": v for k, v in history.items()}
-        HISTORY_FILE.write_text(json.dumps(serialisable, indent=2))
+        serialisable[HISTORY_META_KEY] = {
+            f"{k[0]}|{k[1]}": _history_last_active.get(k, time.time()) for k in history
+        }
+        fd, tmp = tempfile.mkstemp(dir=HISTORY_FILE.parent, prefix=f".{HISTORY_FILE.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(serialisable, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, HISTORY_FILE)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except Exception as e:
         log.error("Failed to save history: %s", e)
 
 
-_history: dict = _load_history()
+_history, _history_last_active = _load_history()
 
 
 def _reply_thread_ts(event: dict) -> str | None:
@@ -525,6 +586,8 @@ def _append_history(key: tuple, role: str, content: str) -> None:
         _history[key].append({"role": role, "content": content})
         if len(_history[key]) > MAX_HISTORY:
             _history[key] = _trim_history(_history[key])
+        _history_last_active[key] = time.time()
+        _expire_history(_history, _history_last_active)
         _save_history(_history)
 
 
