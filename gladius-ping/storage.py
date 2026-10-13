@@ -528,6 +528,9 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 _SETTINGS_DEFAULTS = {
     "slack_webhook_url": "",
     "cooldown_sec": 300,
+    "down_after_failures": 3,      # consecutive failed probes before a DOWN alert
+    "anomaly_window_samples": 5,   # anomaly alert needs anomaly_min_samples of the
+    "anomaly_min_samples": 3,      # last anomaly_window_samples samples to be anomalous
     "default_interval_sec": 5,
     "retention_days": 30,
     "webhook_url": "",

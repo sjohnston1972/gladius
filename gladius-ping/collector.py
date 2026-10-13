@@ -226,14 +226,14 @@ def _probe_iteration(device: dict, last_latency: float | None,
         }
 
     # Check alert thresholds
-    check_and_alert(device, latency, success, jitter, route_changed=route_changed)
+    check_and_alert(device, latency, success, jitter, route_changed=route_changed,
+                    failures=_streak.get(device_id, 0))
 
-    # Anomaly detection
+    # Anomaly detection (alerts only when the anomaly persists over several samples)
     if success and latency is not None:
         import baseline as bl
-        if bl.is_anomaly(device_id, latency):
-            from alerts import fire_anomaly_alert
-            fire_anomaly_alert(device, latency, bl.get_baseline(device_id))
+        from alerts import check_anomaly
+        check_anomaly(device, latency, bl.is_anomaly(device_id, latency), bl.get_baseline(device_id))
 
     return last_latency
 
