@@ -13,7 +13,7 @@ gladius-pyats - C:\docker\net-core\gladius-pyats
 
 Gladius is a cyberpunk-themed network security audit platform running as a homelab Docker stack.
 A user types into a web UI chat, which talks to a FastAPI backend, which drives an AI agent
-(Claude claude-sonnet-4-6) via MCP tools that SSH into Cisco network devices, run security checks,
+(Claude claude-haiku-5-5) via MCP tools that SSH into Cisco network devices, run security checks,
 query a NIST/CIS knowledge base, look up CVEs, and save structured results back to the dashboard.
 
 ---

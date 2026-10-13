@@ -115,7 +115,7 @@ canvas { display:block; }
 
 <div id="ticker">
   <div id="ticker-inner">
-    ◈ GLADIUS SYSTEM NOMINAL &nbsp;///&nbsp; CLAUDE claude-sonnet-4-6 ONLINE &nbsp;///&nbsp;
+    ◈ GLADIUS SYSTEM NOMINAL &nbsp;///&nbsp; CLAUDE claude-haiku-5-5 ONLINE &nbsp;///&nbsp;
     MCP TOOLS CACHED &nbsp;///&nbsp; ChromaDB VECTOR STORE READY &nbsp;///&nbsp;
     SSH SESSIONS MONITORED &nbsp;///&nbsp; NVD API CONNECTED &nbsp;///&nbsp;
     SLACK BOT LISTENING &nbsp;///&nbsp; OVERSEER WATCHING &nbsp;///&nbsp;
@@ -181,7 +181,7 @@ const NODE_DEFS = [
   {
     id:'gladius-api', label:'GLADIUS-API', sub:'FastAPI :8080',
     color:C.orange, rx:-0.04, ry:-0.04, type:'core',
-    desc:['Central FastAPI hub','Claude claude-sonnet-4-6 agent loop','SSE streaming to browser','MCP subprocess manager','Tool cache + health endpoints'],
+    desc:['Central FastAPI hub','Claude claude-haiku-5-5 agent loop','SSE streaming to browser','MCP subprocess manager','Tool cache + health endpoints'],
   },
   {
     id:'mcp', label:'NETWORK-AUDIT-MCP', sub:'MCP stdio',
@@ -207,7 +207,7 @@ const NODE_DEFS = [
   {
     id:'overseer', label:'GLADIUS-OVERSEER', sub:'Socket Mode',
     color:C.red, rx:-0.42, ry:0.38, type:'service',
-    desc:['AI overseer agent','Claude claude-sonnet-4-6 model','Full project file access','Read/write/bash tools','Proactive Slack notifications'],
+    desc:['AI overseer agent','Claude claude-haiku-5-5 model','Full project file access','Read/write/bash tools','Proactive Slack notifications'],
   },
   {
     id:'cisco', label:'CISCO DEVICES', sub:'SSH targets',

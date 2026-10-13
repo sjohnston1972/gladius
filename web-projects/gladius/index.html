@@ -4074,9 +4074,9 @@
           <label class="form-label">AI Model</label>
           <select class="form-select" id="nmap-model-select">
             <optgroup label="Claude (Anthropic)">
-              <option value="claude:claude-haiku-4-5-20251001" selected>haiku 4.5</option>
-              <option value="claude:claude-sonnet-4-6">sonnet 4.6</option>
-              <option value="claude:claude-opus-4-6">opus 4.6</option>
+              <option value="claude:claude-haiku-5-5" selected>haiku 5.5</option>
+              <option value="claude:claude-sonnet-5-5">sonnet 5.5</option>
+              <option value="claude:claude-opus-5-5">opus 5.5</option>
             </optgroup>
             <optgroup label="Ollama (Local)" id="nmap-ollama-models"></optgroup>
           </select>
@@ -4162,9 +4162,9 @@
           <label class="form-label">AI Model</label>
           <select class="form-select" id="scapy-model-select">
             <optgroup label="Claude (Anthropic)">
-              <option value="claude:claude-haiku-4-5-20251001" selected>haiku 4.5</option>
-              <option value="claude:claude-sonnet-4-6">sonnet 4.6</option>
-              <option value="claude:claude-opus-4-6">opus 4.6</option>
+              <option value="claude:claude-haiku-5-5" selected>haiku 5.5</option>
+              <option value="claude:claude-sonnet-5-5">sonnet 5.5</option>
+              <option value="claude:claude-opus-5-5">opus 5.5</option>
             </optgroup>
             <optgroup label="Ollama (Local)" id="scapy-ollama-models"></optgroup>
           </select>
@@ -7953,7 +7953,7 @@ ${cves.length ? `<!-- CVE TAB -->
     spawnTopbarChip(nmapChipId, 'NMAP ' + target, 'nmap');
 
     try {
-      const nmapModelRaw = document.getElementById('nmap-model-select')?.value || 'claude:claude-haiku-4-5-20251001';
+      const nmapModelRaw = document.getElementById('nmap-model-select')?.value || 'claude:claude-haiku-5-5';
       const [nmapProvider, ...nmapModelParts] = nmapModelRaw.split(':');
       const nmapModel = nmapModelParts.join(':');
       let nmapEndpoint, nmapBody;
@@ -8126,7 +8126,7 @@ ${cves.length ? `<!-- CVE TAB -->
     spawnTopbarChip(scapyChipId, 'SCAPY ' + target, 'scapy');
 
     try {
-      const scapyModelRaw = document.getElementById('scapy-model-select')?.value || 'claude:claude-haiku-4-5-20251001';
+      const scapyModelRaw = document.getElementById('scapy-model-select')?.value || 'claude:claude-haiku-5-5';
       const [scapyProvider, ...scapyModelParts] = scapyModelRaw.split(':');
       const scapyModel = scapyModelParts.join(':');
       let scapyEndpoint, scapyBody;
@@ -10289,7 +10289,7 @@ ${cves.length ? `<!-- CVE TAB -->
     { key: 'mcp',           label: 'MCP SERVER',    desc: 'network-audit-mcp · stdio'        },
     { key: 'knowledge_base',label: 'KNOWLEDGE BASE',desc: 'chroma-db · network_security_guidelines' },
     { key: 'nist_nvd',      label: 'NIST NVD',      desc: 'services.nvd.nist.gov'            },
-    { key: 'claude_api',    label: 'ANTHROPIC',     desc: 'api.anthropic.com · claude-sonnet-4-6' },
+    { key: 'claude_api',    label: 'ANTHROPIC',     desc: 'api.anthropic.com · claude-haiku-5-5' },
     { key: 'gladius_pyats', label: 'AUTOMATION AGENT', desc: 'gladius-pyats · port 8090'         },
     { key: 'psirt',         label: 'CISCO PSIRT',   desc: 'apix.cisco.com/security/advisories' },
     { key: 'eox',           label: 'CISCO EOX',     desc: 'apix.cisco.com/supporttools/eox'  },

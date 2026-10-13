@@ -56,7 +56,7 @@ DEV_SWITCH_HN     = os.getenv("DEV_SWITCH_HN",     "DEV")
 LAB_USERNAME      = os.getenv("LAB_USERNAME",      "")
 LAB_PASSWORD      = os.getenv("LAB_PASSWORD",      "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL",      "claude-sonnet-4-6")
+CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL",      "claude-haiku-5-5")
 
 # Jira Cloud integration
 GLADIUS_API_URL = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
@@ -1714,7 +1714,7 @@ APITEST_SYSTEM_PROMPT = """You are Gladius API, an API testing and validation ag
 - Never fabricate API endpoints or response schemas — if unsure, say so"""
 
 
-CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+CLAUDE_MODELS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
 
 @app.get("/api/models", dependencies=[Depends(require_token)])
 async def list_models():

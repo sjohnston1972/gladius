@@ -67,7 +67,7 @@ Browser  ──  nginx (web-projects)  ──  index.html
    │  SSE stream / REST                                     │
    ▼                                        ┌──────────────┴───────────────┐
 gladius-api  (FastAPI :8080)  ◄─────────────┤ gladius-slack  (audit bot)   │
-   │  Runs Claude claude-sonnet-4-6          │ forwards msgs → /api/chat    │
+   │  Runs Claude claude-haiku-5-5          │ forwards msgs → /api/chat    │
    │  Intercepts save/email calls            └──────────────────────────────┘
    │
    │  stdio (MCP protocol)                   gladius-overseer  (AI overseer)
@@ -101,7 +101,7 @@ chroma-db  (ChromaDB :8000)
 ## Audit Flow
 
 When you type something like *"audit 192.168.1.1"* in the main chat, exactly one
-agent is involved — **Claude (`claude-sonnet-4-6`) inside `gladius-api`**, driven
+agent is involved — **Claude (`claude-haiku-5-5`) inside `gladius-api`**, driven
 by the system prompt at `gladius-api/server.py`. Foundation-Sec, the PenTest
 agent, and pyATS are **not** called during a normal audit; they're separate
 flows. The system prompt enforces a strict 3-phase, max-3-loops structure to

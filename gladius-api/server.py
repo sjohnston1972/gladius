@@ -72,7 +72,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-MODEL             = "claude-sonnet-4-6"
+MODEL             = "claude-haiku-5-5"
 OLLAMA_URL        = os.getenv("OLLAMA_URL", "http://192.168.1.250:11434")
 MCP_COMMAND       = "docker"
 MCP_ARGS          = ["exec", "-i", "network-audit-mcp", "python", "/app/server.py"]
