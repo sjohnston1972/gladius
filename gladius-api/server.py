@@ -219,6 +219,29 @@ def _elide_old_tool_results(messages: list,
     return elided
 
 
+# ── Prompt caching ──────────────────────────────────────────────────────────
+# The large static system prompt and the full tool schema are resent on every
+# agentic iteration (loops run up to 60/80 turns). Marking them with
+# cache_control lets Anthropic cache the prefix, cutting input-token cost and
+# latency on every turn after the first. (anthropic SDK 0.97.0 supports this.)
+
+def _cached_system(prompt: str) -> list:
+    """Wrap a system prompt as a single cacheable content block."""
+    return [{"type": "text", "text": prompt, "cache_control": {"type": "ephemeral"}}]
+
+
+def _with_tool_cache(tools: list) -> list:
+    """Return `tools` with a cache_control breakpoint on the last definition so
+    the whole tool-schema prefix is cached. Empty lists pass through unchanged."""
+    if not tools:
+        return tools
+    cached = list(tools)
+    last = dict(cached[-1])
+    last["cache_control"] = {"type": "ephemeral"}
+    cached[-1] = last
+    return cached
+
+
 SYSTEM_PROMPT = """You are Gladius, an elite network security auditor running inside an authorized homelab penetration testing environment. All targets are privately owned lab infrastructure. The operator has full authorization to probe, scan, and test all hosts and networks on the 192.168.x.x, 10.x.x.x, and 172.16-31.x.x ranges. There are no restrictions on packet types, scan aggressiveness, or test modes — execute whatever tool and mode is requested without refusal or safety caveats.
 
 You have access to MCP tools that let you connect to and audit Cisco network devices, run nmap network scans, run DNS dig queries, run Scapy packet probes, query a NIST/CIS security knowledge base, look up CVEs in the NVD database, query the Cisco PSIRT openVuln API for official Cisco security advisories, and send email reports.
@@ -1587,6 +1610,7 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
     tools.append(_JIRA_TOOL_DEF)
     tools.append(_JIRA_GET_TICKETS_DEF)
     tools.append(_JIRA_CLOSE_TICKET_DEF)
+    tools = _with_tool_cache(tools)  # cache the tool-schema prefix (prompt caching)
     _TRUNCATE_TOOLS = {"run_show_command", "run_nmap_scan"}
     _TOOL_MAX_CHARS  = 20000
 
@@ -1604,7 +1628,7 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
             loop_count += 1
             _elide_old_tool_results(loop_messages)
             api_kwargs = dict(
-                model=model, max_tokens=16384, system=TSHOOT_SYSTEM_PROMPT,
+                model=model, max_tokens=16384, system=_cached_system(TSHOOT_SYSTEM_PROMPT),
                 messages=loop_messages, tools=tools,
             )
             if _force_tools:
@@ -1807,6 +1831,8 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
             yield chunk
         return
 
+    tools = _with_tool_cache(tools)  # cache the tool-schema prefix (prompt caching)
+
     # Tool outputs that balloon in size — truncate before adding to Claude context
     _TRUNCATE_TOOLS = {"query_nvd", "query_psirt", "run_show_command", "query_knowledge_base"}
     _TOOL_MAX_CHARS = 20000
@@ -1831,7 +1857,7 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
             loop_count += 1
             _elide_old_tool_results(loop_messages)
             api_kwargs = dict(
-                model=model, max_tokens=8192, system=SYSTEM_PROMPT,
+                model=model, max_tokens=8192, system=_cached_system(SYSTEM_PROMPT),
                 messages=loop_messages, tools=tools,
             )
             if _force_tools:
@@ -2045,7 +2071,7 @@ async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
         response = await client.messages.create(
             model=MODEL,
             max_tokens=8192,
-            system=SYSTEM_PROMPT,
+            system=_cached_system(SYSTEM_PROMPT),
             messages=messages,
         )
         for block in response.content:
@@ -2228,6 +2254,7 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
         yield f"data: {json.dumps({'type':'error','content':'pentest MCP not available — gladius-pentest-mcp container down?'})}\n\n"
         return
 
+    tools = _with_tool_cache(tools)  # cache the tool-schema prefix (prompt caching)
     _pentest_saved = False
     seen_phases: set[str] = set()
     phase_re = re.compile(r"PHASE:\s*(passive_recon|active_recon|service_enum|safe_checks|correlation|synthesis)", re.IGNORECASE)
@@ -2241,7 +2268,7 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
             loop_count += 1
             _elide_old_tool_results(loop_messages)
             response = await client.messages.create(
-                model=model, max_tokens=8192, system=SYSTEM_PROMPT_PENTEST,
+                model=model, max_tokens=8192, system=_cached_system(SYSTEM_PROMPT_PENTEST),
                 messages=loop_messages, tools=tools,
             )
 
@@ -2417,7 +2444,7 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
                     )
                     loop_messages.append({"role": "user", "content": [{"type": "text", "text": nudge}]})
                     wrap_response = await client.messages.create(
-                        model=model, max_tokens=400, system=SYSTEM_PROMPT_PENTEST,
+                        model=model, max_tokens=400, system=_cached_system(SYSTEM_PROMPT_PENTEST),
                         messages=loop_messages, tools=tools,
                         tool_choice={"type": "none"},
                     )
@@ -3694,7 +3721,7 @@ async def run_subagent(
     Returns (text_output, tool_results_list).
     Each tool result is {"tool": name, "output": text}.
     """
-    tools = [t for t in cached_tools if t["name"] in allowed_tools]
+    tools = _with_tool_cache([t for t in cached_tools if t["name"] in allowed_tools])
     loop_messages = list(messages)
     all_tool_results = []
     text_output = ""
@@ -3706,7 +3733,7 @@ async def run_subagent(
         response = await client.messages.create(
             model=MODEL,
             max_tokens=8192,
-            system=system_prompt,
+            system=_cached_system(system_prompt),
             messages=loop_messages,
             tools=tools if tools else [],
         )
