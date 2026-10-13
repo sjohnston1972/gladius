@@ -5994,6 +5994,12 @@
       default:         return 9;
     }
   }
+  // Agent-supplied severity reduced to a bare upper-case token (letters and
+  // underscores only) so it is safe as a CSS class suffix and as badge text.
+  function sevToken(sev, dflt = '') {
+    const t = String(sev == null ? '' : sev).toUpperCase().replace(/[^A-Z_]/g, '');
+    return t || dflt;
+  }
   // Stable copy sorted most-severe first.
   function sortBySeverity(findings) {
     return (findings || [])
@@ -6754,7 +6760,7 @@
       CVE:      'background:#ff000033;color:#ff4444;border:1px solid #ff4444',
       INFO:     'background:#0088ff33;color:#4af;border:1px solid #4af'
     };
-    const badge = (sev) => `<span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${badgeCss[sev]||badgeCss.INFO}">${sev}</span>`;
+    const badge = (sev) => `<span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${badgeCss[sev]||badgeCss.INFO}">${escHtml(sev)}</span>`;
 
     // Failed findings rows
     const failed = findings.filter(f => f.severity !== 'PASS');
@@ -6763,7 +6769,7 @@
       const sev = f.type === 'cve' ? 'CVE' : (f.severity || 'INFO');
       rows += `<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:5px 8px;white-space:nowrap">${badge(sev)}</td>
-        <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${f.title || f.cve_id || ''}</td>
+        <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${escHtml(f.title || f.cve_id || '')}</td>
       </tr>`;
     });
     if (failed.length > 15) rows += `<tr><td colspan="2" style="padding:5px 8px;font-size:11px;color:var(--text-dim);font-family:var(--font-mono)">… and ${failed.length - 15} more</td></tr>`;
@@ -6774,7 +6780,7 @@
     passes.forEach(f => {
       passRows += `<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:4px 8px;white-space:nowrap">${badge('PASS')}</td>
-        <td style="padding:4px 8px;font-size:11px;color:var(--text-dim)">${f.title || ''}</td>
+        <td style="padding:4px 8px;font-size:11px;color:var(--text-dim)">${escHtml(f.title || '')}</td>
       </tr>`;
     });
     const passSection = passes.length ? `
@@ -6792,8 +6798,8 @@
         <div style="background:var(--bg-panel);padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px">
           <div style="font-size:22px;font-weight:700;color:${gaugeCol}">${score}%</div>
           <div>
-            <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${audit.device || audit.ip}</div>
-            <div style="font-size:10px;color:var(--text-dim)">${audit.ip} · ${audit.ios || ''}</div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary)">${escHtml(audit.device || audit.ip)}</div>
+            <div style="font-size:10px;color:var(--text-dim)">${escHtml(audit.ip)} · ${escHtml(audit.ios || '')}</div>
           </div>
           <div style="margin-left:auto;text-align:right;font-size:10px;color:var(--text-dim)">
             NIST <span style="color:var(--accent)">${nist}%</span> &nbsp; CIS <span style="color:var(--accent)">${cis}%</span>
@@ -6918,8 +6924,8 @@
       allFailed.forEach(f => {
         const sev = f.type === 'cve' ? 'CVE' : (f.severity || 'INFO');
         const title = f.title || f.cve_id || '(no title)';
-        const titleNode = f.ref
-          ? T(title, [LINK(f.ref)])
+        const titleNode = safeUrl(f.ref, '')
+          ? T(title, [LINK(safeUrl(f.ref))])
           : T(title);
         findRows.push(TR([TC(P(T(sev, [STRONG]))), TC(P(titleNode))]));
       });
@@ -6967,7 +6973,7 @@
             const cmds = f.commands.includes('\n') ? f.commands : f.commands.split(/,\s*/).join('\n');
             item.push(CB(cmds, 'shell'));
           }
-          if (f.ref) item.push(P(T('Reference: '), T(f.ref, [LINK(f.ref)])));
+          if (f.ref) item.push(P(T('Reference: '), safeUrl(f.ref, '') ? T(f.ref, [LINK(safeUrl(f.ref))]) : T(f.ref)));
           return item;
         });
         content.push(OL(orderedItems));
@@ -7914,10 +7920,10 @@ ${cves.length ? `<!-- CVE TAB -->
           const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
           const lbl = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
           return `<div class="report-panel-finding">
-            <div class="severity-badge ${cls}" style="margin-top:1px">${lbl}</div>
+            <div class="severity-badge ${cls}" style="margin-top:1px">${escHtml(lbl)}</div>
             <div class="report-panel-text">
-              <strong>${f.title || ''}</strong>
-              <span>${f.description || ''}</span>
+              <strong>${escHtml(f.title || '')}</strong>
+              <span>${escHtml(f.description || f.impact || '')}</span>
             </div>
           </div>`;
         }).join('')}
@@ -9470,7 +9476,7 @@ ${cves.length ? `<!-- CVE TAB -->
         const ts = new Date(a.timestamp).toLocaleString();
         const sev = a.severity === 'critical' ? 'danger' : a.severity === 'warning' ? 'warn' : 'text-dim';
         return `<div style="padding:4px 0;border-bottom:1px solid rgba(128,128,128,0.15)">
-          <span style="color:var(--${sev})">[${a.severity?.toUpperCase() || 'INFO'}]</span>
+          <span style="color:var(--${sev})">[${escHtml(a.severity?.toUpperCase() || 'INFO')}]</span>
           <span style="color:var(--text-dim)">${ts}</span>
           ${escHtml(a.message || '')}
         </div>`;
@@ -9546,13 +9552,13 @@ ${cves.length ? `<!-- CVE TAB -->
       return;
     }
 
-    const sev = (finding.type === 'cve' || finding.cve_id) ? 'CVE' : (finding.severity || 'INFO');
+    const sev = (finding.type === 'cve' || finding.cve_id) ? 'CVE' : String(finding.severity || 'INFO').toUpperCase();
     if (_liveCounts[sev] !== undefined) _liveCounts[sev]++;
     const css = _BADGE_CSS[sev] || 'background:#0088ff33;color:#4af;border:1px solid #4af';
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid var(--border)';
     tr.innerHTML = `
-      <td style="padding:5px 8px;white-space:nowrap"><span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${css}">${sev}</span></td>
+      <td style="padding:5px 8px;white-space:nowrap"><span style="font-size:9px;padding:1px 5px;border-radius:2px;font-family:var(--font-mono);${css}">${escHtml(sev)}</span></td>
       <td style="padding:5px 8px;font-size:12px;color:var(--text-secondary)">${escHtml(finding.title || finding.cve_id || '')}</td>`;
     _liveTbody.appendChild(tr);
     chatMessages.scrollTop = chatMessages.scrollHeight;
@@ -10677,7 +10683,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const cls = isCve ? 'cve' : sev === 'HIGH' ? 'high' : sev === 'MEDIUM' ? 'medium' : sev === 'PASS' ? 'pass' : 'low';
       const label = isCve ? 'CVE' : sev === 'MEDIUM' ? 'MED' : sev;
       return `<div class="finding-item" style="cursor:pointer" onclick="openDetail(${i})">
-        <div class="severity-badge ${cls}">${label}</div>
+        <div class="severity-badge ${cls}">${escHtml(label)}</div>
         <div class="finding-text">
           <strong>${escHtml(f.title || '')}</strong>
         </div>
@@ -16493,7 +16499,7 @@ ${cves.length ? `<!-- CVE TAB -->
   }
 
   function pentestRenderFindingCard(f) {
-    const sev = (f.severity || 'INFO').toUpperCase();
+    const sev = sevToken(f.severity, 'INFO');
     return `<div class="pt-finding-card sev-${sev}">
       <div><span class="sev-tag">${escHtml(sev)}</span><strong>${escHtml(f.title || '(untitled)')}</strong></div>
       <div style="opacity:0.7;margin-top:3px">${escHtml(f.host || '')} · ${escHtml(f.phase || '')} · ${escHtml(f.attack_technique || '')}</div>
@@ -16585,11 +16591,11 @@ ${cves.length ? `<!-- CVE TAB -->
                   <span class="psc-id">${escHtml(eng.engagement_id||'')}</span>
                 </div>
                 <div class="psc-stats">
-                  <span class="psc-stat"><b>${ftot}</b> findings</span>
-                  <span class="psc-stat psc-crit"><b>${fcrit}</b> critical</span>
-                  <span class="psc-stat psc-high"><b>${fhigh}</b> high</span>
-                  <span class="psc-stat"><b>${paths}</b> attack paths</span>
-                  <span class="psc-stat"><b>${hosts}</b> hosts</span>
+                  <span class="psc-stat"><b>${escHtml(ftot)}</b> findings</span>
+                  <span class="psc-stat psc-crit"><b>${escHtml(fcrit)}</b> critical</span>
+                  <span class="psc-stat psc-high"><b>${escHtml(fhigh)}</b> high</span>
+                  <span class="psc-stat"><b>${escHtml(paths)}</b> attack paths</span>
+                  <span class="psc-stat"><b>${escHtml(hosts)}</b> hosts</span>
                 </div>
                 <div class="psc-actions">
                   <button type="button" class="btn btn-ghost psc-open" onclick="pentestOpenSavedEngagement('${escHtml(eng.engagement_id||'')}')">Open in Reports →</button>
@@ -16795,7 +16801,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const groups = {};
     let withFix = 0, missingFix = 0;
     for (const f of findings) {
-      const sev = (f.severity || 'INFO').toUpperCase();
+      const sev = sevToken(f.severity, 'INFO');
       const host = f.host || '(no host)';
       groups[sev] = groups[sev] || {};
       groups[sev][host] = groups[sev][host] || [];
@@ -16833,8 +16839,8 @@ ${cves.length ? `<!-- CVE TAB -->
               const tid = String(f.attack_technique).replace('.', '/');
               links.push(`<a href="https://attack.mitre.org/techniques/${escHtml(tid)}/" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">↗ MITRE ${escHtml(f.attack_technique)}</a>`);
             }
-            if (f.ref && /^https?:/i.test(f.ref)) {
-              links.push(`<a href="${escHtml(f.ref)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">↗ Reference</a>`);
+            if (f.ref && safeUrl(f.ref, '')) {
+              links.push(`<a href="${escHtml(safeUrl(f.ref))}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;text-decoration:none">↗ Reference</a>`);
             }
             // Always include a Google fallback keyed on the finding title — gives the
             // operator at least one click-through even when no structured ref exists.
@@ -17465,7 +17471,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const fs = eng.findings || [];
     if (!fs.length) return '<div style="font-size:11px;color:var(--text-dim)">None.</div>';
     return fs.map((f,i) => {
-      const sev = (f.severity||'INFO').toUpperCase();
+      const sev = sevToken(f.severity, 'INFO');
       return `<div class="pt-finding-card sev-${sev}" onclick="pentestOpenDrawer('${escHtml(eng.engagement_id||'')}', '${escHtml(f.id||String(i))}')" style="cursor:pointer">
         <div><span class="sev-tag">${escHtml(sev)}</span><strong>${escHtml(f.title||'(untitled)')}</strong></div>
         <div style="opacity:0.7;margin-top:3px">${escHtml(f.host||'')} · ${escHtml(f.phase||'')} · ${escHtml(f.attack_technique||'')}</div>
@@ -17523,7 +17529,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (!f) return;
 
     // Build adjacency context
-    const sev = (f.severity||'INFO').toUpperCase();
+    const sev = sevToken(f.severity, 'INFO');
     const sameHost = (eng.findings||[]).filter(x => x.host === f.host && x.id !== f.id);
     const inPaths  = (eng.attack_paths||[]).filter(p => (p.finding_chain||[]).includes(f.id));
     const parent   = f.parent_id ? (eng.findings||[]).find(x => x.id === f.parent_id) : null;
@@ -17531,21 +17537,21 @@ ${cves.length ? `<!-- CVE TAB -->
     const safeEng = escHtml(engId);
     const safeFid = escHtml(f.id || '');
 
-    const refLink = f.ref ? `<a href="${escHtml(f.ref)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">${escHtml(f.ref)}</a>` : '';
+    const refLink = f.ref ? `<a href="${escHtml(safeUrl(f.ref))}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">${escHtml(f.ref)}</a>` : '';
     const cveLink = f.cve ? (String(f.cve).match(/^CVE-/i) ?
         `<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">${escHtml(f.cve)}</a>` :
         escHtml(f.cve)) : '';
 
     const sameHostHtml = sameHost.length
       ? `<ul style="margin:0;padding-left:18px">${sameHost.slice(0,8).map(o => {
-          const osev = (o.severity||'INFO').toUpperCase();
+          const osev = sevToken(o.severity, 'INFO');
           return `<li><a href="#" onclick="event.preventDefault();pentestOpenDrawer('${safeEng}','${escHtml(o.id||'')}')" style="color:var(--text);text-decoration:none"><span style="color:var(--text-dim);font-family:var(--font-mono);font-size:10px;margin-right:6px">[${osev}]</span>${escHtml(o.title||o.id||'?')}</a></li>`;
         }).join('')}</ul>`
       : '';
 
     const pathsHtml = inPaths.length
       ? `<ul style="margin:0;padding-left:18px">${inPaths.map(p => {
-          const psev = (p.severity||'').toUpperCase();
+          const psev = sevToken(p.severity);
           const chain = (p.finding_chain||[]).join(' → ');
           return `<li><span style="color:var(--text-dim);font-family:var(--font-mono);font-size:10px;margin-right:6px">[${psev}]</span>${escHtml(p.id||'?')}<div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);margin-top:2px">${escHtml(chain)}</div></li>`;
         }).join('')}</ul>`
@@ -17564,7 +17570,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
       <div style="display:flex;gap:6px;margin:0 0 14px 0;flex-wrap:wrap">
         <button class="btn btn-ghost" style="font-size:11px;border-color:var(--accent);color:var(--accent)" onclick="fsecOpenWithScope({engagement_id:'${safeEng}', finding_id:'${safeFid}', label:'${safeEng}', sublabel:${escHtml(JSON.stringify(f.title||''))}})" title="Discuss this finding in the chat">🛡 Discuss in chat</button>
-        ${f.ref ? `<a href="${escHtml(f.ref)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:11px;text-decoration:none">↗ Reference</a>` : ''}
+        ${safeUrl(f.ref, '') ? `<a href="${escHtml(safeUrl(f.ref))}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:11px;text-decoration:none">↗ Reference</a>` : ''}
         ${f.cve && String(f.cve).match(/^CVE-/i) ? `<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener" class="btn btn-ghost" style="font-size:11px;text-decoration:none">↗ NVD</a>` : ''}
       </div>
 
@@ -17620,7 +17626,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const fmap = Object.fromEntries((eng.findings||[]).map(f => [f.id, f]));
 
     const findingsHtml = (eng.findings||[]).map(f => {
-      const sev = (f.severity||'INFO').toUpperCase();
+      const sev = sevToken(f.severity, 'INFO');
       const cve = f.cve && String(f.cve).match(/^CVE-/i)
         ? `<a href="https://nvd.nist.gov/vuln/detail/${escHtml(f.cve)}" target="_blank" rel="noopener">${escHtml(f.cve)}</a>`
         : (f.cve ? escHtml(f.cve) : '');
@@ -17645,7 +17651,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     const pathsHtml = (eng.attack_paths||[]).map(p => {
       const chain = (p.finding_chain||[]).map(fid => fmap[fid] ? escHtml(fmap[fid].title||fid) : escHtml(fid)).join(' → ');
-      const sev = (p.severity||'').toUpperCase();
+      const sev = sevToken(p.severity);
       return `<div style="border:1px solid ${c.border};border-left:4px solid ${sevBorder(sev)};border-radius:3px;padding:12px 16px;margin:10px 0;background:${c.bg};page-break-inside:avoid">
         <div><span style="background:${sevBg(sev)};color:${sevFg(sev)};padding:2px 8px;border-radius:2px;font-family:monospace;font-size:10px;letter-spacing:1px;font-weight:600">${sev || 'PATH'}</span></div>
         <div style="font-size:12px;line-height:1.55;margin-top:8px">${formatMessage(p.narrative||'')}</div>
@@ -17659,7 +17665,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const remGroups = {};
     let withFix = 0, missingFix = 0;
     for (const f of (eng.findings||[])) {
-      const sev = (f.severity || 'INFO').toUpperCase();
+      const sev = sevToken(f.severity, 'INFO');
       const host = f.host || '(no host)';
       remGroups[sev] = remGroups[sev] || {};
       remGroups[sev][host] = remGroups[sev][host] || [];
@@ -17681,8 +17687,8 @@ ${cves.length ? `<!-- CVE TAB -->
               const tid = String(f.attack_technique).replace('.', '/');
               refs.push(`<a href="https://attack.mitre.org/techniques/${escHtml(tid)}/" target="_blank" rel="noopener">MITRE ${escHtml(f.attack_technique)}</a>`);
             }
-            if (f.ref && /^https?:/i.test(f.ref)) {
-              refs.push(`<a href="${escHtml(f.ref)}" target="_blank" rel="noopener">${escHtml(f.ref)}</a>`);
+            if (f.ref && safeUrl(f.ref, '')) {
+              refs.push(`<a href="${escHtml(safeUrl(f.ref))}" target="_blank" rel="noopener">${escHtml(f.ref)}</a>`);
             }
             const refLine = refs.length
               ? `<div style="font-size:11px;margin-top:6px"><strong>References:</strong> ${refs.join(' &nbsp;·&nbsp; ')}</div>`

@@ -118,3 +118,10 @@ test('trimHistory keeps recent turns, starts on a user turn, respects char budge
   assert.equal(h.trimHistory([{ role: 'user', content: 'x'.repeat(999) }], 30, 10).length, 1);
   assert.equal(h.trimHistory([], 5).length, 0);
 });
+
+test('sevToken strips anything but letters/underscore', () => {
+  assert.equal(h.sevToken('high'), 'HIGH');
+  assert.equal(h.sevToken('crit"><img>', 'INFO'), 'CRITIMG');
+  assert.equal(h.sevToken(null, 'INFO'), 'INFO');
+  assert.equal(h.sevToken('---'), '');
+});
