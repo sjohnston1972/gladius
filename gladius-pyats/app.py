@@ -392,12 +392,20 @@ def sanitize_script(script: str) -> str:
 
 # ── Testbed Builder ───────────────────────────────────────────────────────────
 
-def build_testbed_yaml(devices: list) -> str:
+# Written in place of real passwords in testbeds shown to users; pyATS resolves
+# %ENV{} at load time, so an exported testbed still works where LAB_PASSWORD is set.
+TESTBED_PASSWORD_PLACEHOLDER = "%ENV{LAB_PASSWORD}"
+
+
+def build_testbed_yaml(devices: list, redact: bool = False) -> str:
+    """Build a pyATS testbed. redact=True replaces every password with
+    TESTBED_PASSWORD_PLACEHOLDER — use it for anything returned to a client;
+    only the internal script runner gets real credentials."""
     tb = {"devices": {}}
     for d in devices:
         dev_key  = d.get("hostname", d.get("ip"))
         username = d.get("username") or LAB_USERNAME
-        password = d.get("password") or LAB_PASSWORD
+        password = TESTBED_PASSWORD_PLACEHOLDER if redact else (d.get("password") or LAB_PASSWORD)
         platform = d.get("platform", "iosxe")
         ip       = d.get("ip")
         tb["devices"][dev_key] = {
@@ -2864,7 +2872,7 @@ async def get_testbed():
     if not devices:
         return {"yaml": "", "devices": []}
     safe = [{k: v for k, v in d.items() if k != "password"} for d in devices]
-    return {"yaml": build_testbed_yaml(devices), "devices": safe}
+    return {"yaml": build_testbed_yaml(safe, redact=True), "devices": safe}
 
 
 # ── Genie Learn / Diff ────────────────────────────────────────────────────────
