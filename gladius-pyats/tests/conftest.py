@@ -7,6 +7,7 @@ no network, e.g.:
     docker run --rm --network none -v <repo>/gladius-pyats:/src -w /src \
         --entrypoint python gladius-pyats-gladius-pyats:latest -m pytest tests -q
 """
+import asyncio
 import os
 import sys
 import tempfile
@@ -37,6 +38,11 @@ def app():
     app_module.init_db()
     app_module._active_procs.clear()
     app_module._cancelled_tasks.clear()
+    app_module._live_tasks.clear()
+    app_module._running_schedules.clear()
+    # asyncio primitives bind to the first loop that waits on them; each test
+    # runs its own loop, so give each one a fresh semaphore.
+    app_module._pyats_slots = asyncio.Semaphore(app_module.PYATS_MAX_CONCURRENT)
     return app_module
 
 

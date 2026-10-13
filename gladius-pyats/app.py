@@ -17,7 +17,7 @@ import sys
 import ast
 import re
 import smtplib
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -1206,7 +1206,22 @@ def _gladius_api_headers() -> dict:
     return {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
 
 
-app = FastAPI(title="Gladius Automation Factory")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    init_db()
+    log.info("Automation Factory started — Ollama: %s  model: %s", OLLAMA_URL, OLLAMA_MODEL)
+    log.info("Dev switch: %s (%s)", DEV_SWITCH_HN, DEV_SWITCH_IP)
+    _spawn_background(_scheduler_loop(), name="scheduler")
+    yield
+    # Shutdown: cancel the scheduler and any in-flight schedule runs (their
+    # pyATS subprocesses are killed as the cancellation unwinds).
+    pending = list(_background_tasks)
+    for t in pending:
+        t.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+
+app = FastAPI(title="Gladius Automation Factory", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -1215,11 +1230,43 @@ app.add_middleware(
 )
 
 
-@app.on_event("startup")
-async def startup():
-    init_db()
-    log.info("Automation Factory started — Ollama: %s  model: %s", OLLAMA_URL, OLLAMA_MODEL)
-    log.info("Dev switch: %s (%s)", DEV_SWITCH_HN, DEV_SWITCH_IP)
+# ── Background tasks ──────────────────────────────────────────────────────────
+# asyncio only keeps weak references to tasks, so every fire-and-forget task is
+# held here until it finishes; failures are logged as soon as they happen.
+
+_background_tasks: set[asyncio.Task] = set()
+_running_schedules: set[str] = set()   # schedule ids with a run in progress
+
+
+def _background_done(task: asyncio.Task) -> None:
+    _background_tasks.discard(task)
+    if not task.cancelled() and task.exception() is not None:
+        log.error("Background task %s failed", task.get_name(), exc_info=task.exception())
+
+
+def _spawn_background(coro, name: str | None = None) -> asyncio.Task:
+    task = asyncio.create_task(coro, name=name)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_done)
+    return task
+
+
+def _start_schedule(sched: dict) -> bool:
+    """Run a schedule in the background unless a run of it is already in progress."""
+    sid = sched["id"]
+    if sid in _running_schedules:
+        log.warning("Schedule '%s' is still running — skipping overlapping run", sched.get("name", sid))
+        return False
+    _running_schedules.add(sid)
+
+    async def runner():
+        try:
+            await _execute_schedule(sched)
+        finally:
+            _running_schedules.discard(sid)
+
+    _spawn_background(runner(), name=f"schedule-{sid}")
+    return True
 
 
 # ── Running Tasks (register with gladius-api) ─────────────────────────────────
@@ -1227,6 +1274,11 @@ async def startup():
 _active_procs: dict[str, asyncio.subprocess.Process] = {}  # task_id → subprocess
 _cancelled_tasks: set[str] = set()                          # task_ids that have been killed
 _live_tasks: set[str] = set()                               # task_ids whose owning job is still running
+
+# Cap on concurrent pyATS subprocesses (each holds device SSH sessions and
+# a few hundred MB of memory); further runs wait for a free slot.
+PYATS_MAX_CONCURRENT = max(1, int(os.getenv("PYATS_MAX_CONCURRENT", "4")))
+_pyats_slots = asyncio.Semaphore(PYATS_MAX_CONCURRENT)
 
 async def _register_task(agent: str, description: str) -> str | None:
     """Register a task with gladius-api. Returns task_id or None on failure."""
@@ -2428,6 +2480,11 @@ async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int 
     """Run a pyATS script, return (passed, output). If task_id given, register proc for kill support.
     On timeout (or cancellation) the subprocess and its process group are killed and
     reaped before the exception propagates, so no orphaned run keeps device sessions open."""
+    async with _pyats_slots:
+        return await _run_script_in_slot(script_content, testbed_yaml, timeout, task_id)
+
+
+async def _run_script_in_slot(script_content: str, testbed_yaml: str, timeout: int, task_id: str | None):
     with tempfile.TemporaryDirectory() as tmpdir:
         script_path  = os.path.join(tmpdir, "test_script.py")
         testbed_path = os.path.join(tmpdir, "testbed.yaml")
@@ -3124,7 +3181,8 @@ async def run_schedule_now(schedule_id: str):
     if not row:
         raise HTTPException(404, "Schedule not found")
     sched = dict(row)
-    asyncio.create_task(_execute_schedule(sched))
+    if not _start_schedule(sched):
+        raise HTTPException(409, "Schedule is already running")
     return {"ok": True, "message": "Schedule triggered"}
 
 
@@ -3609,14 +3667,9 @@ async def _scheduler_loop():
             for row in rows:
                 sched = dict(row)
                 if _cron_matches(sched["cron_expr"], now):
-                    asyncio.create_task(_execute_schedule(sched))
+                    _start_schedule(sched)
         except Exception as e:
             log.error("Scheduler loop error: %s", e)
-
-
-@app.on_event("startup")
-async def start_scheduler():
-    asyncio.create_task(_scheduler_loop())
 
 
 if __name__ == "__main__":
