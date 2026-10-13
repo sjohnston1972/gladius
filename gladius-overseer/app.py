@@ -1,6 +1,9 @@
 import os
 import json
+import time
+import uuid
 import shlex
+import difflib
 import fnmatch
 import subprocess
 import logging
@@ -15,9 +18,23 @@ from slack_sdk import WebClient as SlackWebClient
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("gladius-overseer")
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        log.warning("%s is not an integer — using default %d", name, default)
+        return default
+
+
 BOT_TOKEN         = os.getenv("SLACK_BOT_TOKEN")
 APP_TOKEN         = os.getenv("SLACK_APP_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+# write_file, docker_restart and `git push` pause until an allowlisted Slack
+# user clicks Approve on a message in the requesting thread. No click within
+# this many seconds counts as Deny.
+APPROVAL_TIMEOUT = _env_int("OVERSEER_APPROVAL_TIMEOUT", 300)
 
 # ── Slack user-ID authorization allowlist ──────────────────────────────────────
 SLACK_ALLOWED_USERS = {
@@ -30,15 +47,17 @@ slack_web  = SlackWebClient(token=BOT_TOKEN)
 app        = App(token=BOT_TOKEN)
 
 
+def _is_allowed_user(user_id: str | None, team_id: str | None) -> bool:
+    if SLACK_ALLOWED_TEAM and team_id != SLACK_ALLOWED_TEAM:
+        return False
+    return bool(user_id) and user_id in SLACK_ALLOWED_USERS
+
+
 def _is_authorized(body: dict, event: dict) -> bool:
     """Only allow messages from an explicit Slack user/team allowlist read from env.
     The overseer runs a Claude agent with a bash tool and file/docker access, so this
     check is the primary gate on who can trigger arbitrary command execution."""
-    user_id = event.get("user")
-    team_id = body.get("team_id") or event.get("team")
-    if SLACK_ALLOWED_TEAM and team_id != SLACK_ALLOWED_TEAM:
-        return False
-    return bool(user_id) and user_id in SLACK_ALLOWED_USERS
+    return _is_allowed_user(event.get("user"), body.get("team_id") or event.get("team"))
 
 
 # ── Sandbox: file-access root + command allowlist ──────────────────────────────
@@ -560,6 +579,9 @@ Use the docker_restart tool (NOT bash) to restart a container — pass the conta
   There is no way to stop/rm/run a container through your tools.
 
 ## Guidelines
+- write_file, docker_restart and git push each wait for a human to click Approve in Slack.
+  If one comes back denied, stop and report that it was not approved — do not retry it or
+  try another way to achieve the same change.
 - Always keep the repo in sync with the live files after any change
 - Before making large or risky edits, commit the current state as a checkpoint first
 - After editing Python files, always restart the relevant container
@@ -667,6 +689,137 @@ TOOLS = [
 ]
 
 
+# ── Human approval ─────────────────────────────────────────────────────────────
+# Tool calls that change code, restart services or publish commits are
+# two-phase: the bot posts the proposed action with Approve/Deny buttons in
+# the requesting thread and the tool call blocks until an allowlisted user
+# clicks one (or APPROVAL_TIMEOUT passes, which counts as Deny). Read-only
+# tools are not gated.
+APPROVAL_DETAIL_LIMIT = 2500
+OVERSEER_SELF_DIRS = ("gladius-overseer", "repo/gladius-overseer")
+
+
+class RunContext:
+    """Who/where a Slack request came from, for approvals and audit logs."""
+
+    def __init__(self, client=None, channel: str | None = None,
+                 thread_ts: str | None = None, user: str | None = None):
+        self.client = client
+        self.channel = channel
+        self.thread_ts = thread_ts
+        self.user = user
+        self.approval_wait = 0.0   # seconds spent waiting on approval clicks
+
+
+_pending_approvals: dict[str, dict] = {}
+_approvals_lock = threading.Lock()
+
+
+def _is_self_path(path: Path) -> bool:
+    return any(path == OVERSEER_ROOT / d or (OVERSEER_ROOT / d) in path.parents for d in OVERSEER_SELF_DIRS)
+
+
+def _write_preview(path: Path, content: str) -> str:
+    """Unified diff of the proposed write, truncated for Slack."""
+    old = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
+    diff = "\n".join(difflib.unified_diff(
+        old.splitlines(), content.splitlines(),
+        fromfile=f"{path} (current)", tofile=f"{path} (proposed)", lineterm="", n=2,
+    ))
+    return diff or "(no changes)"
+
+
+def _approval_blocks(text: str, detail: str, approval_id: str | None, outcome: str | None) -> list:
+    blocks = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    if detail:
+        detail = detail.replace("```", "'''")
+        if len(detail) > APPROVAL_DETAIL_LIMIT:
+            detail = detail[:APPROVAL_DETAIL_LIMIT] + "\n…(truncated)"
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"```{detail}```"}})
+    if approval_id:
+        blocks.append({"type": "actions", "elements": [
+            {"type": "button", "action_id": "overseer_approve", "style": "primary",
+             "text": {"type": "plain_text", "text": "Approve"}, "value": approval_id},
+            {"type": "button", "action_id": "overseer_deny", "style": "danger",
+             "text": {"type": "plain_text", "text": "Deny"}, "value": approval_id},
+        ]})
+    if outcome:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": outcome}]})
+    return blocks
+
+
+def request_approval(ctx: RunContext | None, summary: str, detail: str = "") -> tuple[bool, str | None]:
+    """Ask the Slack thread to approve an action. Blocks until an allowlisted
+    user clicks Approve/Deny or the timeout passes. Returns (approved, approver)."""
+    if ctx is None or ctx.client is None or not ctx.channel:
+        log.warning("Approval needed for %r but there is no Slack context — denied", summary)
+        return False, None
+
+    approval_id = uuid.uuid4().hex
+    entry = {"event": threading.Event(), "approved": False, "by": None}
+    with _approvals_lock:
+        _pending_approvals[approval_id] = entry
+
+    text = f"🔐 *Approval needed* (request from <@{ctx.user}>)\n{summary}"
+    try:
+        msg = ctx.client.chat_postMessage(
+            channel=ctx.channel, thread_ts=ctx.thread_ts, text=f"Approval needed: {summary}",
+            blocks=_approval_blocks(text, detail, approval_id, None),
+        )
+    except Exception as e:
+        with _approvals_lock:
+            _pending_approvals.pop(approval_id, None)
+        log.error("Could not post approval request: %s", e)
+        return False, None
+
+    started = time.monotonic()
+    decided = entry["event"].wait(APPROVAL_TIMEOUT)
+    ctx.approval_wait += time.monotonic() - started
+    with _approvals_lock:
+        _pending_approvals.pop(approval_id, None)
+        approved, approver = (entry["approved"], entry["by"]) if decided else (False, None)
+
+    if not decided:
+        outcome = f"⌛ No response within {APPROVAL_TIMEOUT}s — denied"
+    elif approved:
+        outcome = f"✅ Approved by <@{approver}>"
+    else:
+        outcome = f"❌ Denied by <@{approver}>"
+    log.info("AUDIT approval id=%s action=%r requested_by=%s decided_by=%s approved=%s",
+             approval_id, summary, ctx.user, approver, approved)
+    try:
+        ctx.client.chat_update(channel=ctx.channel, ts=msg["ts"], text=f"{summary} — {outcome}",
+                               blocks=_approval_blocks(text, detail, None, outcome))
+    except Exception as e:
+        log.warning("Could not update approval message: %s", e)
+    return approved, approver
+
+
+def resolve_approval(body: dict, approved: bool) -> str:
+    """Record an Approve/Deny click. Only allowlisted users can decide."""
+    user = body.get("user") or {}
+    user_id = user.get("id")
+    team_id = (body.get("team") or {}).get("id") or user.get("team_id")
+    if not _is_allowed_user(user_id, team_id):
+        log.warning("Approval click from non-allowlisted user %s (team %s) ignored", user_id, team_id)
+        return "unauthorized"
+    actions = body.get("actions") or [{}]
+    approval_id = actions[0].get("value", "")
+    with _approvals_lock:
+        entry = _pending_approvals.get(approval_id)
+        if entry is None or entry["event"].is_set():
+            return "expired"
+        entry["approved"] = approved
+        entry["by"] = user_id
+        entry["event"].set()
+    return "ok"
+
+
+def _denied(what: str) -> str:
+    return (f"Denied: {what} was not approved by the operator. Do not retry it or "
+            f"look for another way to do it — report back that it was not approved.")
+
+
 def _run_docker_restart(container: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "restart", container],
@@ -679,7 +832,8 @@ def _run_docker_restart(container: str) -> subprocess.CompletedProcess:
     )
 
 
-def exec_tool(name: str, inp: dict) -> str:
+def exec_tool(name: str, inp: dict, ctx: RunContext | None = None) -> str:
+    requester = ctx.user if ctx else None
     try:
         if name == "read_file":
             try:
@@ -697,6 +851,15 @@ def exec_tool(name: str, inp: dict) -> str:
                 path = _resolve_sandboxed(inp["path"], write=True)
             except ValueError as e:
                 return f"Error: {e}"
+            content = inp["content"]
+            if path.is_file() and path.read_text(encoding="utf-8", errors="replace") == content:
+                return f"Unchanged: {path} already has this content."
+            summary = f"*write_file* → `{path}`"
+            if _is_self_path(path):
+                summary += "\n⚠️ This changes the overseer's own code."
+            approved, approver = request_approval(ctx, summary, _write_preview(path, content))
+            if not approved:
+                return _denied(f"the write to {path}")
             parent = path.parent
             parent.mkdir(parents=True, exist_ok=True)
             # Re-check after mkdir in case a symlink was introduced by the
@@ -706,7 +869,8 @@ def exec_tool(name: str, inp: dict) -> str:
             except ValueError as e:
                 return f"Error: {e}"
             with open(path, "w", encoding="utf-8") as f:
-                f.write(inp["content"])
+                f.write(content)
+            log.info("AUDIT write_file path=%s requested_by=%s approved_by=%s", path, requester, approver)
             return f"Written: {path}"
 
         elif name == "bash":
@@ -715,6 +879,11 @@ def exec_tool(name: str, inp: dict) -> str:
                 argv = _validate_bash_argv(shlex.split(cmd))
             except (BashRejected, ValueError) as e:
                 return f"Rejected: {e}"
+            if argv[:2] == ["git", "push"]:
+                approved, approver = request_approval(ctx, f"*git push* in `{_git_cwd()}`", shlex.join(argv))
+                if not approved:
+                    return _denied("the git push")
+                log.info("AUDIT git push argv=%s requested_by=%s approved_by=%s", argv, requester, approver)
             run_argv, cwd, env = _build_bash_exec(argv)
             result = subprocess.run(
                 run_argv,
@@ -734,12 +903,18 @@ def exec_tool(name: str, inp: dict) -> str:
             if container not in ALLOWED_CONTAINERS:
                 allowed = ", ".join(sorted(ALLOWED_CONTAINERS))
                 return f"Rejected: '{container}' is not an allowed container. Allowed: {allowed}"
+            summary = f"*docker_restart* → `{container}`"
+            if container == "gladius-overseer":
+                summary += "\n⚠️ This restarts the overseer itself."
+            approved, approver = request_approval(ctx, summary)
+            if not approved:
+                return _denied(f"the restart of {container}")
+            log.info("AUDIT docker_restart container=%s requested_by=%s approved_by=%s", container, requester, approver)
             if container == "gladius-overseer":
                 # Defer so the reply is posted first — otherwise we kill
                 # ourselves before responding. Same timeout as the normal
                 # (synchronous) path is applied inside the deferred call.
                 def _deferred():
-                    import time
                     time.sleep(8)
                     try:
                         _run_docker_restart(container)
@@ -788,10 +963,11 @@ def tool_label(name: str, inp: dict) -> str:
     return name
 
 
-def run_agent(history: list[dict]) -> str:
+def run_agent(history: list[dict], ctx: RunContext | None = None) -> str:
     """
     Run the Claude agentic tool-use loop with full conversation history.
     Returns the final text response. Tool calls are logged only — never shown to user.
+    `ctx` identifies the Slack request so gated tools can ask for approval.
     """
     messages   = list(history)
     final_text = ""
@@ -818,7 +994,7 @@ def run_agent(history: list[dict]) -> str:
                 continue
             label = tool_label(block.name, block.input)
             log.info("Tool: %s", label)
-            result = exec_tool(block.name, block.input)
+            result = exec_tool(block.name, block.input, ctx)
             log.info("Tool done: %s", label)
             tool_results.append({
                 "type": "tool_result",
@@ -873,8 +1049,10 @@ def handle_message(body: dict, client) -> None:
     except Exception as e:
         log.error("Failed to post placeholder: %s", e)
 
-    # Run Claude agent — all tool calls happen silently in the background
-    final_text = run_agent(current_history)
+    # Run Claude agent — all tool calls happen silently in the background;
+    # gated ones post an Approve/Deny prompt in this conversation.
+    ctx = RunContext(client, channel, event.get("thread_ts"), event.get("user"))
+    final_text = run_agent(current_history, ctx)
 
     # Persist assistant reply
     _append_history(thread_key, "assistant", final_text)
@@ -913,6 +1091,20 @@ def on_dm(body: dict, client) -> None:
 @app.event("app_mention")
 def on_mention(body: dict, client) -> None:
     handle_message(body, client)
+
+
+# Approve/Deny buttons on approval prompts. Requires Interactivity to be
+# enabled for the Slack app (delivered over Socket Mode, no public URL).
+@app.action("overseer_approve")
+def on_approve(ack, body: dict) -> None:
+    ack()
+    resolve_approval(body, True)
+
+
+@app.action("overseer_deny")
+def on_deny(ack, body: dict) -> None:
+    ack()
+    resolve_approval(body, False)
 
 
 if __name__ == "__main__":
