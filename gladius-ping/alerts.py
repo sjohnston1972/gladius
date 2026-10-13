@@ -2,6 +2,7 @@
 alerts.py - Threshold monitoring and Slack/webhook notifications
 """
 import os
+import queue
 import time
 import threading
 from collections import deque
@@ -65,11 +66,11 @@ def _can_alert(device_id: int, alert_type: str, cooldown: float | None = None) -
     return False
 
 
-def _send_slack(message: str):
+def _send_slack(message: str, s: dict | None = None):
     """Send a message to Slack. Requires SLACK_WEBHOOK_URL env var or settings."""
     webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
     if not webhook_url:
-        s = load_settings()
+        s = s if s is not None else load_settings()
         webhook_url = s.get("slack_webhook_url", "")
     if not webhook_url:
         print(f"[ALERT] Slack not configured. Message: {message}")
@@ -85,9 +86,9 @@ def _send_slack(message: str):
         print(f"[ALERT] Slack send failed: {e}")
 
 
-def _send_discord(message: str):
+def _send_discord(message: str, s: dict | None = None):
     """Send alert to Discord via incoming webhook."""
-    s = load_settings()
+    s = s if s is not None else load_settings()
     url = s.get("discord_webhook_url", "").strip()
     if not url:
         return
@@ -101,9 +102,9 @@ def _send_discord(message: str):
         print(f"[ALERT] Discord send failed: {e}")
 
 
-def _send_teams(message: str):
+def _send_teams(message: str, s: dict | None = None):
     """Send alert to Microsoft Teams via incoming webhook."""
-    s = load_settings()
+    s = s if s is not None else load_settings()
     url = s.get("teams_webhook_url", "").strip()
     if not url:
         return
@@ -121,9 +122,9 @@ def _send_teams(message: str):
         print(f"[ALERT] Teams send failed: {e}")
 
 
-def _send_email(subject: str, body: str):
+def _send_email(subject: str, body: str, s: dict | None = None):
     """Send alert email via SMTP."""
-    s = load_settings()
+    s = s if s is not None else load_settings()
     if not s.get("email_alerts_enabled"):
         return
     host = s.get("smtp_host", "").strip()
@@ -151,10 +152,11 @@ def _send_email(subject: str, body: str):
         print(f"[ALERT] Email send failed: {e}")
 
 
-def _send_webhook(device: dict, alert_type: str, value: float, threshold: float):
+def _send_webhook(device: dict, alert_type: str, value: float, threshold: float,
+                  s: dict | None = None):
     """POST JSON to a custom webhook URL from settings, if configured."""
     try:
-        s = load_settings()
+        s = s if s is not None else load_settings()
         url = s.get("webhook_url", "").strip()
         if not url:
             return
@@ -173,17 +175,54 @@ def _send_webhook(device: dict, alert_type: str, value: float, threshold: float)
         print(f"[ALERT] Custom webhook send failed: {e}")
 
 
-def _fire_alert(device: dict, alert_type: str, slack_msg: str, value: float = 0, threshold: float = 0):
-    """Send Slack message, log the alert, and post to custom webhook."""
-    _send_slack(slack_msg)
-    _send_discord(slack_msg)
-    _send_teams(slack_msg)
+def _deliver(device: dict, alert_type: str, slack_msg: str, value: float, threshold: float):
+    """Send one alert to every configured channel (runs on the notifier thread)."""
+    s = load_settings()   # once per alert, shared by all senders
+    _send_slack(slack_msg, s)
+    _send_discord(slack_msg, s)
+    _send_teams(slack_msg, s)
     import re
     clean = re.sub(r':[a-z_]+:', '', slack_msg).strip()
-    _send_email(f"PingPlotter: {alert_type} — {device['name']}", clean)
+    _send_email(f"PingPlotter: {alert_type} — {device['name']}", clean, s)
+    _send_webhook(device, alert_type, value, threshold, s)
+
+
+# Notifications go through a queue drained by one worker thread, so a slow or
+# unreachable Slack/Discord/Teams/SMTP/webhook target never stalls probing.
+_NOTIFY_QUEUE_MAX = 500
+_notify_queue: queue.Queue = queue.Queue(maxsize=_NOTIFY_QUEUE_MAX)
+_notifier: threading.Thread | None = None
+_notifier_lock = threading.Lock()
+
+
+def _notifier_loop():
+    while True:
+        item = _notify_queue.get()
+        try:
+            _deliver(*item)
+        except Exception as e:
+            print(f"[ALERT] Notification delivery failed: {e!r}")
+        finally:
+            _notify_queue.task_done()
+
+
+def _ensure_notifier():
+    global _notifier
+    with _notifier_lock:
+        if _notifier is None or not _notifier.is_alive():
+            _notifier = threading.Thread(target=_notifier_loop, daemon=True, name="alert-notifier")
+            _notifier.start()
+
+
+def _fire_alert(device: dict, alert_type: str, slack_msg: str, value: float = 0, threshold: float = 0):
+    """Log the alert and queue it for delivery to Slack/Discord/Teams/email/webhook."""
     log_alert(device["id"], device["name"], alert_type, value, threshold)
-    _send_webhook(device, alert_type, value, threshold)
     _check_correlation(device["id"], device["name"], alert_type)
+    _ensure_notifier()
+    try:
+        _notify_queue.put_nowait((dict(device), alert_type, slack_msg, value, threshold))
+    except queue.Full:
+        print(f"[ALERT] Notification queue full; dropped {alert_type} for {device['name']}")
 
 
 def _fmt_duration(seconds: float) -> str:
