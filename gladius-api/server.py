@@ -924,7 +924,7 @@ def health_full():
     except Exception:
         results["gladius_snmp"] = {"status": "error", "detail": "Container unreachable"}
 
-    # ── 7. Gladius Automation Factory ────────────────────────────────────────
+    # ── 10. Gladius Automation Factory ───────────────────────────────────────
     try:
         t0 = time.monotonic()
         r  = http_requests.get(f"{AUTOMATION_URL}/health", timeout=3)
@@ -960,7 +960,7 @@ def health_full():
     except Exception:
         results["gladius_ping"] = {"status": "error", "detail": "Container unreachable"}
 
-    # ── 7. Cisco PSIRT API ────────────────────────────────────────────────────
+    # ── 11. Cisco PSIRT API ───────────────────────────────────────────────────
     if not PSIRT_CLIENT_KEY:
         results["psirt"] = {"status": "warn", "detail": "Credentials not configured"}
     else:
@@ -972,7 +972,7 @@ def health_full():
         except Exception as e:
             results["psirt"] = {"status": "error", "detail": str(e)}
 
-    # ── 7. Cisco EOX API ──────────────────────────────────────────────────────
+    # ── 12. Cisco EOX API ─────────────────────────────────────────────────────
     if not EOX_CLIENT_KEY:
         results["eox"] = {"status": "warn", "detail": "Credentials not configured"}
     else:
@@ -992,10 +992,7 @@ def health_full():
         if r.status_code == 200:
             d = r.json()
             if d.get("configured"):
-                # Try a real auth check
-                import base64 as _b64
-                jira_url   = d.get("url", "")
-                # Hit the myself endpoint through the pyats proxy
+                # Real auth check: hit the issues endpoint through the pyats proxy
                 r2 = http_requests.get(f"{AUTOMATION_URL}/api/jira/issues?status=Done", headers=_internal_headers(), timeout=10)
                 ms2 = int((time.monotonic() - t0) * 1000)
                 if r2.status_code == 200:
@@ -1410,7 +1407,6 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
     use_model = request.model or MODEL
-    source = request.headers.get("X-Gladius-Source", "web") if hasattr(request, "headers") else "web"
     src = request.source or "web"
     tid = _task_start("Audit Agent", _last_user_msg(messages), source=src, model=use_model)
     return StreamingResponse(
@@ -1923,7 +1919,7 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
 
                 if tool_name == "save_audit_results" and not is_error:
                     audit_data = dict(tool_input)
-                    audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+                    audit_data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
                     for finding in audit_data.get("findings", []):
                         slim = {
                             "title":    finding.get("title", ""),
@@ -2166,7 +2162,7 @@ When the engagement is complete (no new probes warranted, OR the operator says s
 
 
 def _new_engagement_id() -> str:
-    return "pt-" + datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    return "pt-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
 async def stream_pentest(messages: list, model: str | None = None) -> AsyncIterator[str]:
@@ -2325,7 +2321,7 @@ async def stream_pentest(messages: list, model: str | None = None) -> AsyncItera
                 if tool_name == "save_pentest_results" and not is_error:
                     eng = dict(tool_input)
                     eng.setdefault("engagement_id", _new_engagement_id())
-                    eng["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+                    eng["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
                     # Stream individual findings to the chat for inline cards
                     for f in eng.get("findings", []):
                         slim = {
@@ -3449,7 +3445,7 @@ async def investigate_snmp_alert(alert: dict) -> None:
 async def snmp_alert(alert: SnmpAlertRequest):
     """Receive a status-change alert from gladius-snmp and kick off a background investigation."""
     log.info("SNMP alert received: %s (%s) %s→%s", alert.name, alert.host, alert.old_status, alert.new_status)
-    asyncio.create_task(investigate_snmp_alert(alert.dict()))
+    asyncio.create_task(investigate_snmp_alert(alert.model_dump()))
     return {"status": "investigating", "device": alert.name, "host": alert.host}
 
 
@@ -3891,7 +3887,7 @@ async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asy
             if display and display != device_ip:
                 audit_data.setdefault("device", display)
             audit_data["ip"] = device_ip
-            audit_data["timestamp"] = datetime.datetime.utcnow().isoformat() + "Z"
+            audit_data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
             for finding in audit_data.get("findings", []):
                 slim = {
                     "title":    finding.get("title", ""),
