@@ -16,7 +16,32 @@ TRACES_DIR = DATA_DIR / "traces"
 
 _TRACE_ROW_LIMIT = 3000  # ~100 runs at 30 hops each
 
-_lock = threading.Lock()
+# Re-entrant so read-modify-write helpers can hold it across load + save.
+_lock = threading.RLock()
+
+
+def set_data_dir(path):
+    """Point every data file at `path` (used by tests; default is ./data)."""
+    global DATA_DIR, DEVICES_FILE, RESULTS_DIR, TRACES_DIR, GROUPS_FILE, MAINTENANCE_FILE
+    global SPEEDTEST_FILE, ALERT_LOG, SETTINGS_FILE, EVENTS_FILE
+    DATA_DIR = Path(path)
+    DEVICES_FILE = DATA_DIR / "devices.json"
+    RESULTS_DIR = DATA_DIR / "results"
+    TRACES_DIR = DATA_DIR / "traces"
+    GROUPS_FILE = DATA_DIR / "groups.json"
+    MAINTENANCE_FILE = DATA_DIR / "maintenance.json"
+    SPEEDTEST_FILE = DATA_DIR / "speedtest.csv"
+    ALERT_LOG = DATA_DIR / "alerts.csv"
+    SETTINGS_FILE = DATA_DIR / "settings.json"
+    EVENTS_FILE = DATA_DIR / "events.json"
+
+
+def _write_json_atomic(path: Path, data):
+    """Write JSON via temp file + os.replace so readers never see a partial file."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
 
 
 def init_storage():
@@ -38,34 +63,36 @@ def load_devices() -> list[dict]:
 
 def save_devices(devices: list[dict]):
     with _lock:
-        with open(DEVICES_FILE, "w") as f:
-            json.dump(devices, f, indent=2)
+        _write_json_atomic(DEVICES_FILE, devices)
 
 
 def add_device(device: dict) -> dict:
-    devices = load_devices()
-    # Assign a simple ID
-    existing_ids = {d["id"] for d in devices}
-    new_id = 1
-    while new_id in existing_ids:
-        new_id += 1
-    device["id"] = new_id
-    devices.append(device)
-    save_devices(devices)
+    with _lock:
+        devices = load_devices()
+        # Assign a simple ID
+        existing_ids = {d["id"] for d in devices}
+        new_id = 1
+        while new_id in existing_ids:
+            new_id += 1
+        device["id"] = new_id
+        devices.append(device)
+        save_devices(devices)
     return device
 
 
 def remove_device(device_id: int):
-    devices = [d for d in load_devices() if d["id"] != device_id]
-    save_devices(devices)
+    with _lock:
+        devices = [d for d in load_devices() if d["id"] != device_id]
+        save_devices(devices)
 
 
 def update_device(device_id: int, updates: dict):
-    devices = load_devices()
-    for d in devices:
-        if d["id"] == device_id:
-            d.update(updates)
-    save_devices(devices)
+    with _lock:
+        devices = load_devices()
+        for d in devices:
+            if d["id"] == device_id:
+                d.update(updates)
+        save_devices(devices)
 
 
 GROUPS_FILE = DATA_DIR / "groups.json"
@@ -78,8 +105,7 @@ def load_groups() -> list[dict]:
 
 def save_groups(groups: list[dict]):
     with _lock:
-        with open(GROUPS_FILE, "w") as f:
-            json.dump(groups, f, indent=2)
+        _write_json_atomic(GROUPS_FILE, groups)
 
 def add_group(name: str) -> dict:
     groups = load_groups()
@@ -113,8 +139,7 @@ def load_maintenance() -> list[dict]:
 
 def save_maintenance(windows: list[dict]):
     with _lock:
-        with open(MAINTENANCE_FILE, "w") as f:
-            json.dump(windows, f, indent=2)
+        _write_json_atomic(MAINTENANCE_FILE, windows)
 
 def add_maintenance(window: dict) -> dict:
     windows = load_maintenance()
@@ -480,11 +505,10 @@ def load_settings() -> dict:
 
 
 def save_settings(updates: dict):
-    current = load_settings()
-    current.update(updates)
     with _lock:
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump(current, f, indent=2)
+        current = load_settings()
+        current.update(updates)
+        _write_json_atomic(SETTINGS_FILE, current)
     return current
 
 
@@ -611,24 +635,23 @@ EVENTS_FILE = DATA_DIR / "events.json"
 _EVENTS_MAX = 200
 
 def log_network_event(alert_type: str, device_ids: list[int], device_names: list[str]):
-    events = []
-    if EVENTS_FILE.exists():
-        with open(EVENTS_FILE) as f:
-            try:
-                events = json.load(f)
-            except Exception:
-                events = []
-    events.append({
-        "ts": datetime.utcnow().isoformat(),
-        "type": alert_type,
-        "device_ids": device_ids,
-        "device_names": device_names,
-        "count": len(device_ids),
-    })
-    events = events[-_EVENTS_MAX:]
     with _lock:
-        with open(EVENTS_FILE, "w") as f:
-            json.dump(events, f, indent=2)
+        events = []
+        if EVENTS_FILE.exists():
+            with open(EVENTS_FILE) as f:
+                try:
+                    events = json.load(f)
+                except Exception:
+                    events = []
+        events.append({
+            "ts": datetime.utcnow().isoformat(),
+            "type": alert_type,
+            "device_ids": device_ids,
+            "device_names": device_names,
+            "count": len(device_ids),
+        })
+        events = events[-_EVENTS_MAX:]
+        _write_json_atomic(EVENTS_FILE, events)
 
 def load_network_events(limit: int = 50) -> list[dict]:
     if not EVENTS_FILE.exists():
