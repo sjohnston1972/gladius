@@ -43,8 +43,17 @@ test('jsArg survives HTML-attribute decoding and JS parsing', () => {
   // Simulate the browser: decode entities in the attribute, then parse as JS.
   const decoded = attr.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
   assert.equal(JSON.parse(decoded), nasty);
-  assert.equal(h.jsArg(42), '42');
-  assert.equal(h.jsArg(undefined), 'null');
+  assert.equal(h.jsArg(42), '&quot;42&quot;');
+  assert.equal(h.jsArg(undefined), '&quot;&quot;');
+});
+
+test('no inline handler wraps an HTML-escaped value in JS quotes', () => {
+  // '${escHtml(x)}' inside on*="..." is broken: the browser decodes &#39; back
+  // to ' before the JS is parsed. Use ${jsArg(x)} instead.
+  const bad = readIndex().split('\n')
+    .map((l, i) => [i + 1, l])
+    .filter(([, l]) => /on[a-z]+="[^"]*'\$\{(escHtml|jsStr\d?)\(/.test(l));
+  assert.deepEqual(bad.map(([n]) => n), []);
 });
 
 test('safeHtml escapes interpolations by default, rawHtml opts out', () => {
