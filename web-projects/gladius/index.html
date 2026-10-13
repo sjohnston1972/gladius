@@ -6433,7 +6433,8 @@
       const response = await fetch('/api/audit/parallel', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ messages: [...conversationHistory, { role: 'user', content: text }] }),
+        // sendMessage() has already pushed this user turn into conversationHistory
+        body:    JSON.stringify({ messages: conversationHistory }),
       });
       if (!response.ok) throw new Error(`API error ${response.status}`);
       typingEl.remove();
