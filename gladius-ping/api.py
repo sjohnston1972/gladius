@@ -2,18 +2,49 @@
 api.py - FastAPI REST endpoints
 """
 import asyncio
+import hmac
 import json
 import os
 import urllib.request
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional
 import collector
 import storage
 
-app = FastAPI(title="PingPlotter API", version="1.0")
+# ── Auth ───────────────────────────────────────────────────────────────────────
+# Same scheme as gladius-snmp / gladius-pyats: 'Authorization: Bearer
+# <GLADIUS_API_TOKEN>', shared with gladius-api, whose /api/ping/* proxy
+# forwards it. If the token is unset the API stays open (with a loud warning)
+# so deploy order can't lock the dashboard out.
+_AUTH_EXEMPT_PATHS = {"/api/health"}   # gladius-api's health probe sends no token
+
+
+def _api_token() -> str:
+    return os.getenv("GLADIUS_API_TOKEN", "")
+
+
+if not _api_token():
+    print("[Auth] WARNING: GLADIUS_API_TOKEN is not set - the gladius-ping API is "
+          "UNAUTHENTICATED. Set it to the gladius-api token to require bearer auth.",
+          flush=True)
+
+
+async def require_token(request: Request, authorization: str = Header(default="")) -> None:
+    """App-wide dependency: requires 'Authorization: Bearer <GLADIUS_API_TOKEN>'."""
+    if request.url.path in _AUTH_EXEMPT_PATHS:
+        return
+    expected = _api_token()
+    if not expected:
+        return
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+app = FastAPI(title="PingPlotter API", version="1.0", dependencies=[Depends(require_token)])
 _geo_cache: dict = {}  # ip -> {country, org, city, region}
 
 

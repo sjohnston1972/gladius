@@ -15,7 +15,41 @@ SLACK = "https://hooks.slack.com/services/T000/B000/abcdefSECRET"
 @pytest.fixture
 def client(data_dir, monkeypatch):
     monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("GLADIUS_API_TOKEN", raising=False)
     return TestClient(api.app)
+
+
+# ── Bearer auth (#92) ──────────────────────────────────────────────────────────
+
+def test_token_unset_keeps_api_open(client):
+    assert client.get("/api/devices").status_code == 200
+    assert client.post("/api/groups", json={"name": "g"}).status_code == 201
+
+
+def test_token_required_when_configured(client, monkeypatch):
+    monkeypatch.setenv("GLADIUS_API_TOKEN", "s3cret-token")
+    assert client.get("/api/devices").status_code == 401
+    assert client.get("/api/settings").status_code == 401
+    assert client.post("/api/groups", json={"name": "g"}).status_code == 401
+    assert client.get("/api/devices", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/api/devices", headers={"Authorization": "Basic s3cret-token"}).status_code == 401
+    ok = {"Authorization": "Bearer s3cret-token"}
+    assert client.get("/api/devices", headers=ok).status_code == 200
+    assert client.post("/api/groups", json={"name": "g"}, headers=ok).status_code == 201
+
+
+def test_health_is_exempt(client, monkeypatch):
+    monkeypatch.setenv("GLADIUS_API_TOKEN", "s3cret-token")
+    r = client.get("/api/health")
+    assert r.status_code == 200 and "last_purge" in r.json()
+
+
+def test_every_route_has_the_auth_dependency():
+    from fastapi.routing import APIRoute
+    for route in api.app.routes:
+        if isinstance(route, APIRoute):
+            calls = [d.call for d in route.dependant.dependencies]
+            assert api.require_token in calls, route.path
 
 
 def test_get_settings_is_redacted(client):

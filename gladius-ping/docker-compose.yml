@@ -17,8 +17,13 @@ services:
       - ./speedtest_runner.py:/app/speedtest_runner.py
       - ./main.py:/app/main.py
       - ./data:/app/data
-    ports:
-      - "8100:8000"
+    # Bearer token shared with gladius-api (same value as GLADIUS_API_TOKEN in
+    # gladius-api/.env); set it in gladius-ping/.env (see .env.example).
+    # gladius-api's /api/ping/* proxy forwards it. Unset = API open + warning.
+    environment:
+      - GLADIUS_API_TOKEN=${GLADIUS_API_TOKEN:-}
+    # No published ports: only gladius-api talks to this service, over net_core
+    # (http://gladius-ping:8000). The old 8100:8000 mapping bypassed auth.
 
 networks:
   net_core:
