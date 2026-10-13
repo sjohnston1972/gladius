@@ -17,12 +17,15 @@ import sys
 import ast
 import re
 import smtplib
+import time
 from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, NamedTuple, Optional, Union
+from zoneinfo import ZoneInfo
 
 try:
     import pwd  # POSIX-only; used to resolve the sandbox OS user
@@ -35,7 +38,7 @@ import yaml
 from fastapi import FastAPI, HTTPException, Request, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -1169,6 +1172,11 @@ class ScheduleCreate(BaseModel):
     jira_auto_ticket: Optional[str] = ""     # "", "all", "medium_plus", "high_only"
     enabled:          bool = True
 
+    @field_validator("cron_expr")
+    @classmethod
+    def _check_cron(cls, v: str) -> str:
+        return _validate_cron(v)
+
 class ScheduleUpdate(BaseModel):
     name:             Optional[str] = None
     device_ids:       Optional[list[str]] = None
@@ -1178,6 +1186,11 @@ class ScheduleUpdate(BaseModel):
     notify_email:     Optional[str] = None
     jira_auto_ticket: Optional[str] = None
     enabled:          Optional[bool] = None
+
+    @field_validator("cron_expr")
+    @classmethod
+    def _check_cron(cls, v: Optional[str]) -> Optional[str]:
+        return None if v is None else _validate_cron(v)
 
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
@@ -1212,6 +1225,7 @@ async def lifespan(_app: FastAPI):
     log.info("Automation Factory started — Ollama: %s  model: %s", OLLAMA_URL, OLLAMA_MODEL)
     log.info("Dev switch: %s (%s)", DEV_SWITCH_HN, DEV_SWITCH_IP)
     _spawn_background(_scheduler_loop(), name="scheduler")
+    _spawn_background(_ollama_monitor(), name="ollama-monitor")
     yield
     # Shutdown: cancel the scheduler and any in-flight schedule runs (their
     # pyATS subprocesses are killed as the cancellation unwinds).
@@ -1343,14 +1357,44 @@ async def kill_task(task_id: str):
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
-@app.get("/health")
-async def health():
-    ollama_ok = False
+# Ollama reachability is probed in the background and cached, so /health and
+# the LLM endpoints never wait on a dead host's TCP connect.
+OLLAMA_PROBE_INTERVAL = 30
+_ollama_status = {"ok": False, "checked_at": float("-inf"), "models": []}
+
+
+async def _probe_ollama() -> bool:
+    ok, models = False, []
     try:
-        r = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=3)
-        ollama_ok = r.status_code == 200
+        async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0)) as client:
+            r = await client.get(f"{OLLAMA_URL}/api/tags")
+        if r.status_code == 200:
+            ok = True
+            models = [m["name"] for m in r.json().get("models", []) if m.get("name")]
     except Exception:
         pass
+    if ok != _ollama_status["ok"]:
+        log.info("Ollama at %s is now %s", OLLAMA_URL, "reachable" if ok else "UNREACHABLE")
+    _ollama_status.update(ok=ok, checked_at=time.monotonic(), models=models)
+    return ok
+
+
+async def _ollama_available() -> bool:
+    """Cached Ollama reachability; re-probed (with a 1s connect timeout) when stale."""
+    if time.monotonic() - _ollama_status["checked_at"] > OLLAMA_PROBE_INTERVAL:
+        return await _probe_ollama()
+    return _ollama_status["ok"]
+
+
+async def _ollama_monitor():
+    while True:
+        await _probe_ollama()
+        await asyncio.sleep(OLLAMA_PROBE_INTERVAL)
+
+
+@app.get("/health")
+async def health():
+    ollama_ok = _ollama_status["ok"]   # cached by _ollama_monitor — never blocks
     with get_db() as conn:
         script_count = conn.execute("SELECT COUNT(*) FROM scripts").fetchone()[0]
     return {
@@ -2668,7 +2712,8 @@ async def set_dev_switch(device_id: str):
 @app.post("/api/devices/sync_snmp", dependencies=[Depends(require_token)])
 async def sync_snmp_devices():
     try:
-        r = httpx.get(f"{SNMP_URL}/devices", headers=_gladius_api_headers(), timeout=10)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{SNMP_URL}/devices", headers=_gladius_api_headers())
         r.raise_for_status()
         snmp_devices = r.json().get("devices", [])
     except Exception as e:
@@ -3317,59 +3362,142 @@ async def _create_jira_ticket(
 
 
 # ── CRON PARSER & SCHEDULER ──────────────────────────────────────────────────
+# Small validated 5-field cron parser (no external dependency). Semantics follow
+# Vixie cron: steps count from the field's minimum (so */10 in day-of-month is
+# 1,11,21,31), 7 is an alias for Sunday, month/day names are accepted, and when
+# both day-of-month and day-of-week are restricted a day matching EITHER fires.
+# Schedules are evaluated in SCHEDULE_TZ (default UTC).
+
+def _resolve_schedule_tz():
+    name = os.getenv("SCHEDULE_TZ", "UTC").strip() or "UTC"
+    try:
+        return ZoneInfo(name)
+    except Exception:
+        log.warning("Unknown SCHEDULE_TZ '%s' — schedules will run in UTC", name)
+        return timezone.utc
+
+
+SCHEDULE_TZ = _resolve_schedule_tz()
+
+_CRON_FIELDS = (            # (name, min, max)
+    ("minute",       0, 59),
+    ("hour",         0, 23),
+    ("day-of-month", 1, 31),
+    ("month",        1, 12),
+    ("day-of-week",  0, 7),
+)
+_CRON_NAMES = {
+    3: {m: i for i, m in enumerate(
+        ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), start=1)},
+    4: {d: i for i, d in enumerate(("sun", "mon", "tue", "wed", "thu", "fri", "sat"))},
+}
+
+
+class CronSpec(NamedTuple):
+    minutes:  frozenset
+    hours:    frozenset
+    days:     frozenset
+    months:   frozenset
+    weekdays: frozenset     # 0=Sun … 6=Sat
+    dom_star: bool          # day-of-month field starts with '*'
+    dow_star: bool          # day-of-week field starts with '*'
+
+
+def _cron_value(text: str, idx: int) -> int:
+    name, lo, hi = _CRON_FIELDS[idx]
+    names = _CRON_NAMES.get(idx, {})
+    if text.lower() in names:
+        return names[text.lower()]
+    if not text.isdigit():
+        raise ValueError(f"invalid {name} value '{text}'")
+    value = int(text)
+    if not lo <= value <= hi:
+        raise ValueError(f"{name} value {value} out of range {lo}-{hi}")
+    return value
+
+
+def _parse_cron_field(text: str, idx: int) -> frozenset:
+    name, lo, hi = _CRON_FIELDS[idx]
+    values: set[int] = set()
+    for part in text.split(","):
+        rng, sep, step_s = part.partition("/")
+        if sep:
+            if not step_s.isdigit() or int(step_s) < 1:
+                raise ValueError(f"invalid {name} step in '{part}'")
+            step = int(step_s)
+        else:
+            step = 1
+        if rng == "*":
+            start, end = lo, hi
+        elif "-" in rng:
+            a, _, b = rng.partition("-")
+            start, end = _cron_value(a, idx), _cron_value(b, idx)
+            if start > end:
+                raise ValueError(f"invalid {name} range '{rng}'")
+        else:
+            start = _cron_value(rng, idx)
+            end = hi if sep else start          # 'N/S' means N..max every S
+        values.update(range(start, end + 1, step))
+    if idx == 4 and 7 in values:                # 7 is Sunday too
+        values.discard(7)
+        values.add(0)
+    return frozenset(values)
+
+
+@lru_cache(maxsize=256)
+def _parse_cron(cron_expr: str) -> CronSpec:
+    """Parse a 5-field cron expression; raises ValueError if it is malformed."""
+    parts = (cron_expr or "").split()
+    if len(parts) != 5:
+        raise ValueError("cron expression must have 5 fields: minute hour day-of-month month day-of-week")
+    fields = [_parse_cron_field(p, i) for i, p in enumerate(parts)]
+    return CronSpec(*fields, dom_star=parts[2].startswith("*"), dow_star=parts[4].startswith("*"))
+
+
+def _cron_day_matches(spec: CronSpec, d) -> bool:
+    if d.month not in spec.months:
+        return False
+    dom = d.day in spec.days
+    dow = (d.isoweekday() % 7) in spec.weekdays
+    if spec.dom_star or spec.dow_star:
+        return dom and dow
+    return dom or dow
+
 
 def _cron_matches(cron_expr: str, dt: datetime) -> bool:
-    """Check if a cron expression matches a given datetime (minute granularity).
-    Supports: minute hour day-of-month month day-of-week
-    Fields: number, *, */N, comma-separated, ranges (N-M).
-    """
-    parts = cron_expr.strip().split()
-    if len(parts) != 5:
-        return False
-    fields = [dt.minute, dt.hour, dt.day, dt.month, dt.isoweekday() % 7]  # 0=Sun
-
-    for field_val, pattern in zip(fields, parts):
-        if not _cron_field_matches(pattern, field_val):
-            return False
-    return True
-
-
-def _cron_field_matches(pattern: str, value: int) -> bool:
-    if pattern == "*":
-        return True
-    for part in pattern.split(","):
-        if "/" in part:
-            base, step = part.split("/", 1)
-            step = int(step)
-            if base == "*":
-                if value % step == 0:
-                    return True
-            else:
-                start = int(base)
-                if value >= start and (value - start) % step == 0:
-                    return True
-        elif "-" in part:
-            lo, hi = part.split("-", 1)
-            if int(lo) <= value <= int(hi):
-                return True
-        else:
-            if int(part) == value:
-                return True
-    return False
+    """True if *cron_expr* fires at *dt* (minute granularity, dt in SCHEDULE_TZ).
+    Raises ValueError for a malformed expression."""
+    spec = _parse_cron(cron_expr)
+    return dt.minute in spec.minutes and dt.hour in spec.hours and _cron_day_matches(spec, dt)
 
 
 def _cron_next_run(cron_expr: str, after: datetime | None = None) -> str | None:
-    """Return ISO timestamp of the next minute that matches *cron_expr*."""
+    """Return ISO timestamp of the next minute that matches *cron_expr*, or None
+    if it is malformed or never fires within ~5 years (e.g. 31 February)."""
     try:
-        dt = (after or datetime.now(timezone.utc)).replace(second=0, microsecond=0) + timedelta(minutes=1)
-        for _ in range(60 * 24 * 400):          # scan up to ~400 days
-            if _cron_matches(cron_expr, dt):
-                return dt.isoformat()
-            dt += timedelta(minutes=1)
-    except Exception:
-        pass
+        spec = _parse_cron(cron_expr)
+    except ValueError:
+        return None
+    start = (after or datetime.now(SCHEDULE_TZ)).replace(second=0, microsecond=0) + timedelta(minutes=1)
+    day = start.date()
+    for _ in range(366 * 5):                    # day-by-day, not minute-by-minute
+        if _cron_day_matches(spec, day):
+            for h in sorted(spec.hours):
+                for m in sorted(spec.minutes):
+                    cand = datetime(day.year, day.month, day.day, h, m, tzinfo=start.tzinfo)
+                    if cand >= start:
+                        return cand.isoformat()
+        day += timedelta(days=1)
     return None
 
+
+def _validate_cron(cron_expr: str) -> str:
+    """Normalise and validate a cron expression for storage (ValueError if bad)."""
+    expr = " ".join((cron_expr or "").split())
+    _parse_cron(expr)
+    if _cron_next_run(expr) is None:
+        raise ValueError("cron expression never fires")
+    return expr
 
 async def _execute_schedule(sched: dict):
     """Execute a learn (and optionally diff) schedule."""
@@ -3655,7 +3783,7 @@ async def _scheduler_loop():
     last_check_minute = -1
     while True:
         await asyncio.sleep(30)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(SCHEDULE_TZ)
         current_minute = now.hour * 60 + now.minute
         if current_minute == last_check_minute:
             continue
@@ -3664,12 +3792,21 @@ async def _scheduler_loop():
         try:
             with get_db() as conn:
                 rows = conn.execute("SELECT * FROM schedules WHERE enabled=1").fetchall()
-            for row in rows:
-                sched = dict(row)
-                if _cron_matches(sched["cron_expr"], now):
-                    _start_schedule(sched)
         except Exception as e:
             log.error("Scheduler loop error: %s", e)
+            continue
+        _dispatch_due_schedules([dict(r) for r in rows], now)
+
+
+def _dispatch_due_schedules(schedules: list[dict], now: datetime) -> None:
+    """Start every schedule due at *now*. Each is evaluated on its own, so one
+    malformed schedule can't stop the others from running."""
+    for sched in schedules:
+        try:
+            if _cron_matches(sched["cron_expr"], now):
+                _start_schedule(sched)
+        except Exception as e:
+            log.error("Schedule '%s' skipped: %s", sched.get("name", sched.get("id")), e)
 
 
 if __name__ == "__main__":

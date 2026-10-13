@@ -1,5 +1,6 @@
 """Background task tracking, schedule overlap guard and pyATS concurrency cap (#123)."""
 import asyncio
+import time
 
 
 def test_overlapping_schedule_run_is_skipped(app, monkeypatch):
@@ -69,3 +70,16 @@ def test_pyats_subprocess_concurrency_is_capped(app, monkeypatch):
 
     asyncio.run(scenario())
     assert peak == 2
+
+
+def test_lifespan_starts_and_cancels_background_loops(app):
+    from fastapi.testclient import TestClient
+
+    with TestClient(app.app) as client:
+        names = {t.get_name() for t in app._background_tasks}
+        assert {"scheduler", "ollama-monitor"} <= names
+        start = time.monotonic()
+        r = client.get("/health")
+        assert r.status_code == 200
+        assert time.monotonic() - start < 1.0
+    assert app._background_tasks == set()
