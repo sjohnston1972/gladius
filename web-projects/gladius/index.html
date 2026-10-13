@@ -7983,16 +7983,6 @@ ${cves.length ? `<!-- CVE TAB -->
     document.getElementById('detail-panel').classList.add('active');
   }
 
-  // Restore detail panel footer when opened for a single finding
-  const _origOpenDetail = openDetail;
-  function openDetail(index) {
-    const footer = document.querySelector('#detail-panel .detail-footer');
-    if (footer) footer.style.display = '';
-    const badge = document.getElementById('detail-severity');
-    if (badge) badge.style.cssText = '';
-    _origOpenDetail(index);
-  }
-
   // ══════════════════════════════════════════════════════════════════════════
   // AGENT CONTEXT — inject last 3 audit summaries into conversation
   // ══════════════════════════════════════════════════════════════════════════
@@ -11509,8 +11499,12 @@ ${cves.length ? `<!-- CVE TAB -->
     const isCve = f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
     const cls = sevBadgeClass(f);
     const label = sevBadgeLabel(f);
+    // Undo what openReportPanelData() does to the shared panel: it hides the
+    // "Investigate in Agent" footer and overrides the badge's inline style.
+    const footer = document.querySelector('#detail-panel .detail-footer');
+    if (footer) footer.style.display = '';
     const badge = document.getElementById('detail-severity');
-    if (badge) { badge.textContent = label; badge.className = `severity-badge ${cls}`; }
+    if (badge) { badge.style.cssText = ''; badge.textContent = label; badge.className = `severity-badge ${cls}`; }
     setEl('detail-title', f.title || 'Finding');
 
     // Build body dynamically from audit schema fields

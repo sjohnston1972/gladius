@@ -8,6 +8,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readIndex, inlineScripts } from './_extract.mjs';
 
+test('no top-level function is declared twice (later one silently wins)', () => {
+  const names = [...readIndex().matchAll(/^  (?:async )?function ([A-Za-z0-9_$]+)\s*\(/gm)].map(m => m[1]);
+  const dupes = [...new Set(names.filter((n, i) => names.indexOf(n) !== i))];
+  assert.deepEqual(dupes, []);
+});
+
 test('index.html inline scripts parse', () => {
   const blocks = inlineScripts(readIndex());
   assert.ok(blocks.length >= 1, 'expected at least one inline script');
