@@ -494,19 +494,42 @@ class MCPManager:
                 self._connected = False
         return []
 
+    # Tools that depend on an SSH session already established inside the MCP
+    # subprocess. A reconnect respawns that subprocess and loses the session, so
+    # retrying one of these blindly would run against a device-less session and
+    # produce a run of confusing "not connected" errors. Instead we surface one
+    # explicit, actionable error telling the agent to reconnect.
+    _SESSION_DEPENDENT_TOOLS = {"run_show_command", "push_config", "disconnect_device"}
+
     async def call_tool(self, name: str, arguments: dict):
-        """Call a tool, reconnecting once on failure."""
-        for attempt in range(2):
-            if not self._connected:
-                if not await self._reconnect():
-                    raise RuntimeError("MCP session unavailable")
+        """Call a tool. On a transport failure, reconnect the subprocess; retry
+        stateless tools once, but for session-dependent tools raise a clear
+        'device session was reset' error so the agent reconnects rather than
+        silently failing against a fresh subprocess."""
+        if not self._connected:
+            if not await self._reconnect():
+                raise RuntimeError("MCP session unavailable")
+        try:
+            async with self._lock:
+                return await self._session.call_tool(name, arguments)
+        except Exception as e:
+            log.warning(f"MCP call_tool {name} failed (transport): {e}")
+            self._connected = False
+            # Restore the transport for future requests.
+            reconnected = await self._reconnect()
+            if name in self._SESSION_DEPENDENT_TOOLS:
+                raise RuntimeError(
+                    f"Device session was reset during {name} (MCP transport error). "
+                    f"Reconnect with connect_to_device before retrying."
+                ) from e
+            if not reconnected:
+                raise RuntimeError(f"MCP tool {name} failed: {e}") from e
             try:
                 async with self._lock:
                     return await self._session.call_tool(name, arguments)
-            except Exception as e:
-                log.warning(f"MCP call_tool {name} attempt {attempt+1} failed: {e}")
+            except Exception as e2:
                 self._connected = False
-        raise RuntimeError(f"MCP tool {name} failed after reconnect")
+                raise RuntimeError(f"MCP tool {name} failed after reconnect: {e2}") from e2
 
 
 mcp_manager = MCPManager(MCP_COMMAND, MCP_ARGS, label="audit")
