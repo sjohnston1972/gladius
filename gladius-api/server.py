@@ -3402,6 +3402,11 @@ async def automation_proxy(path: str, request: Request):
     ct   = request.headers.get("Content-Type", "application/json")
     url  = f"{AUTOMATION_URL}/api/{path}"
 
+    # Forward the query string so filters/limits reach gladius-pyats (as ping_proxy does).
+    qs = str(request.query_params)
+    if qs:
+        url = f"{url}?{qs}"
+
     if path in ("chat", "coder", "review", "itsm"):
         import httpx as _hx
         async def _stream():
