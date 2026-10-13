@@ -13,6 +13,7 @@ os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
 import re
 import time
+import asyncio
 import logging
 import requests
 import paramiko
@@ -22,6 +23,8 @@ from mcp.server.stdio import stdio_server
 from mcp import types
 import chromadb
 from sentence_transformers import SentenceTransformer
+
+import guards
 
 load_dotenv()
 
@@ -55,6 +58,15 @@ SSH_KNOWN_HOSTS_PATH = os.getenv("SSH_KNOWN_HOSTS_PATH", "/app/known_hosts/known
 # to SSH_KNOWN_HOSTS_PATH instead of being rejected. Off by default — enable
 # only for the deliberate enrolment step, then disable it again.
 SSH_TOFU_ENROLL      = os.getenv("SSH_TOFU_ENROLL", "false").strip().lower() in ("1", "true", "yes")
+
+# Out-of-band approval for config-changing tools (push_config, device_copy_file,
+# sftp_put_file). Off by default so existing deployments keep working while
+# gladius-api is updated in parallel to mint tokens. When enabled, those tools
+# refuse to run unless given an approval_token that verifies as an HMAC over the
+# exact host + operation (see guards.verify_approval_token and the Integration
+# notes). GLADIUS_APPROVAL_SECRET must be shared with the token minter.
+REQUIRE_APPROVAL_TOKEN = os.getenv("GLADIUS_REQUIRE_APPROVAL_TOKEN", "false").strip().lower() in ("1", "true", "yes")
+APPROVAL_SECRET        = os.getenv("GLADIUS_APPROVAL_SECRET", "")
 
 # sessions keyed by host: { host: {"client": SSHClient, "channel": channel} }
 _sessions: dict = {}
@@ -145,13 +157,14 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="push_config",
-            description="Push configuration commands to a connected Cisco device. Only use after explicit user approval.",
+            description="Push configuration commands to a connected Cisco device. Set confirmed=true only after the operator approved this exact command list in an earlier message; your own request for approval is not approval.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "commands": {"type": "array", "items": {"type": "string"}, "description": "List of configuration commands to push"},
-                    "confirmed": {"type": "boolean", "description": "Must be true - confirms user has approved these changes"},
-                    "host": {"type": "string", "description": "IP/hostname of the device session to use. Required when multiple sessions are open."}
+                    "confirmed": {"type": "boolean", "description": "Must be true — confirms the operator approved this exact command list in an earlier message"},
+                    "host": {"type": "string", "description": "IP/hostname of the device session to use. Required when multiple sessions are open."},
+                    "approval_token": {"type": "string", "description": "Operator approval token minted by gladius-api. Required only when GLADIUS_REQUIRE_APPROVAL_TOKEN is enabled."}
                 },
                 "required": ["commands", "confirmed"]
             }
@@ -174,7 +187,7 @@ async def list_tools() -> list[types.Tool]:
                 "properties": {
                     "subject": {"type": "string", "description": "Email subject line"},
                     "body": {"type": "string", "description": "Email body - plain text or HTML"},
-                    "recipient": {"type": "string", "description": "Recipient email address - optional, defaults to configured default"},
+                    "recipient": {"type": "string", "description": "Recipient email address. Optional. If the user did not name a recipient, confirm before sending to the configured default."},
                     "is_html": {"type": "boolean", "description": "Set to true if body contains HTML", "default": False},
                     "attachment_html": {"type": "string", "description": "Full HTML content to attach as a file"},
                     "attachment_filename": {"type": "string", "description": "Filename for the HTML attachment e.g. audit-report.html"}
@@ -302,22 +315,15 @@ async def list_tools() -> list[types.Tool]:
             name="run_scapy",
             description=(
                 "Run a Scapy-based packet analysis or network probe. "
-                "Modes: ping (ICMP echo), traceroute (UDP/ICMP hop trace), "
-                "tcp_syn (SYN probe), tcp_full (full 3-way handshake), "
-                "arp_scan (LAN ARP discovery), banner_grab (TCP banner), "
-                "udp_probe (UDP port probe), "
-                "sip_invite (SIP INVITE over UDP to VoIP target), "
-                "http_get (raw HTTP GET request via TCP), "
-                "dns_query (raw DNS A query via UDP), "
-                "syn_flood_test (SYN flood test — sends count SYN packets with randomised source ports), "
-                "xmas_scan (FIN+PSH+URG TCP scan), "
-                "null_scan (no-flag TCP scan), "
-                "fin_scan (FIN-only TCP scan), "
-                "rst_probe (send TCP RST to test stateful firewall), "
-                "frag_ping (fragmented ICMP to test fragment reassembly), "
-                "ttl_probe (ICMP with custom TTL to map firewall distance), "
-                "os_fingerprint (send mixed TCP/ICMP probes for passive OS hints), "
-                "vlan_hop (802.1Q double-tag VLAN hopping frame — lab/pen-test only). "
+                "Pick one mode (see the enum for the full list), grouped by purpose:\n"
+                "  reachability: ping (ICMP echo), traceroute (UDP/ICMP hop trace), "
+                "frag_ping (fragmented ICMP, fragment-reassembly test), ttl_probe (ICMP with custom TTL to map firewall distance)\n"
+                "  port state: tcp_syn (SYN probe), tcp_full (full 3-way handshake), udp_probe (UDP port probe), "
+                "xmas_scan (FIN+PSH+URG), null_scan (no flags), fin_scan (FIN only), rst_probe (TCP RST to test a stateful firewall)\n"
+                "  discovery: arp_scan (LAN ARP discovery), banner_grab (TCP banner), os_fingerprint (mixed TCP/ICMP probes for passive OS hints)\n"
+                "  application: http_get (raw HTTP GET via TCP), dns_query (raw DNS A query via UDP), sip_invite (SIP INVITE over UDP to a VoIP target)\n"
+                "  stress/VLAN: syn_flood_test (sends count SYN packets with randomised source ports), "
+                "vlan_hop (802.1Q double-tag VLAN hopping frame — lab/pen-test only)\n"
                 "All operations use a timeout to avoid hanging."
             ),
             inputSchema={
@@ -388,15 +394,42 @@ async def list_tools() -> list[types.Tool]:
                     "ip":        {"type": "string",  "description": "Device IP address"},
                     "ios":       {"type": "string",  "description": "IOS version string"},
                     "timestamp": {"type": "string",  "description": "ISO timestamp of audit"},
-                    "findings":  {"type": "array",   "description": "Array of ALL finding objects — include every control checked. Use severity=PASS for controls that passed, CRITICAL/HIGH/MEDIUM/LOW for failures.", "items": {"type": "object"}},
-                    "score":     {"type": "object",  "description": "Compliance scores: {overall, nist, cis}"}
+                    "findings":  {
+                        "type": "array",
+                        "description": "Array of ALL finding objects — include every control checked. Use severity=PASS for controls that passed, CRITICAL/HIGH/MEDIUM/LOW for failures.",
+                        "items": {
+                            "type": "object",
+                            "required": ["title", "severity", "type", "category", "impact", "fix", "commands", "ref"],
+                            "properties": {
+                                "title":    {"type": "string", "description": "Finding title or CVE ID"},
+                                "severity": {"type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "PASS"], "description": "Severity; PASS for a control that passed"},
+                                "type":     {"type": "string", "enum": ["hardening", "cve"], "description": "Finding type"},
+                                "category": {"type": "string", "description": "Control category e.g. 'Access Security'"},
+                                "impact":   {"type": "string", "description": "Why this matters / what the risk is"},
+                                "fix":      {"type": "string", "description": "How to remediate"},
+                                "commands": {"type": "string", "description": "Remediation CLI commands (comma or newline separated)"},
+                                "ref":      {"type": "string", "description": "Reference URL (NIST/CIS/NVD)"},
+                                "cve_id":   {"type": "string", "description": "CVE ID — only for type=cve findings"}
+                            }
+                        }
+                    },
+                    "score":     {
+                        "type": "object",
+                        "description": "Compliance scores, integers 0-100",
+                        "required": ["overall", "nist", "cis"],
+                        "properties": {
+                            "overall": {"type": "integer", "minimum": 0, "maximum": 100},
+                            "nist":    {"type": "integer", "minimum": 0, "maximum": 100},
+                            "cis":     {"type": "integer", "minimum": 0, "maximum": 100}
+                        }
+                    }
                 },
                 "required": ["device", "ip", "findings", "score"]
             }
         ),
         types.Tool(
             name="stream_finding",
-            description="Stream a single finding title to the live chat card. Only 3 fields needed — keep it minimal. Call once per finding in Phase 3, batched alongside save_audit_results.",
+            description="Stream a single finding title to the live chat card. Only 3 fields needed — keep it minimal. Call once per finding, in the same response as save_audit_results.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -412,7 +445,7 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Query the Cisco PSIRT openVuln API for security advisories. "
                 "Use search_term for product search e.g. 'ios-xe', 'ios', 'nx-os'. "
-                "Use severity to filter by CRITICAL/HIGH/MEDIUM/LOW. "
+                "Use severity to filter — one of critical, high, medium, low, informational (lowercase, matching the schema enum). "
                 "Use advisory_id for a specific advisory e.g. 'cisco-sa-20240327-ios'. "
                 "Returns advisory ID, title, CVSS score, severity, associated CVEs, and publication URL."
             ),
@@ -514,7 +547,7 @@ async def list_tools() -> list[types.Tool]:
                 "push a file OFF the device (e.g. archive running-config to a TFTP server). "
                 "local_file is the on-device path/target — for example 'flash:image.bin', 'bootflash:foo', "
                 "'running-config', or 'startup-config'. remote_file is the path on the remote server. "
-                "Requires confirmed=true because this writes to device storage."
+                "Set confirmed=true only after the operator approved this exact file transfer in an earlier message."
             ),
             inputSchema={
                 "type": "object",
@@ -528,7 +561,8 @@ async def list_tools() -> list[types.Tool]:
                     "password":    {"type": "string", "description": "Password for ftp/sftp/scp (optional)"},
                     "vrf":         {"type": "string", "description": "Optional VRF to source the copy from (uses 'copy /vrf <name> ...')"},
                     "host":        {"type": "string", "description": "Target device host (omit if only one session is open)"},
-                    "confirmed":   {"type": "boolean", "description": "Must be true to proceed — this writes to device storage"}
+                    "confirmed":   {"type": "boolean", "description": "Must be true — confirms the operator approved this exact file transfer in an earlier message"},
+                    "approval_token": {"type": "string", "description": "Operator approval token minted by gladius-api. Required only when GLADIUS_REQUIRE_APPROVAL_TOKEN is enabled."}
                 },
                 "required": ["protocol", "server", "remote_file", "local_file", "confirmed"]
             }
@@ -540,7 +574,7 @@ async def list_tools() -> list[types.Tool]:
                 "(paramiko transport — does NOT use the device's copy command). The device must have "
                 "its SCP/SFTP server enabled (e.g. 'ip scp server enable' or 'ip ssh server enable'). "
                 "Opens its own short-lived SSH transport — does not require connect_to_device first. "
-                "Requires confirmed=true."
+                "Set confirmed=true only after the operator approved this exact file in an earlier message."
             ),
             inputSchema={
                 "type": "object",
@@ -550,7 +584,8 @@ async def list_tools() -> list[types.Tool]:
                     "remote_path": {"type": "string", "description": "Destination path on the device (e.g. /flash/foo.txt or flash:foo.txt — colon form is normalised)"},
                     "username":    {"type": "string", "description": "SSH username (defaults to lab credentials)"},
                     "password":    {"type": "string", "description": "SSH password (defaults to lab credentials)"},
-                    "confirmed":   {"type": "boolean", "description": "Must be true to proceed"}
+                    "confirmed":   {"type": "boolean", "description": "Must be true — confirms the operator approved this exact file in an earlier message"},
+                    "approval_token": {"type": "string", "description": "Operator approval token minted by gladius-api. Required only when GLADIUS_REQUIRE_APPROVAL_TOKEN is enabled."}
                 },
                 "required": ["host", "local_path", "remote_path", "confirmed"]
             }
@@ -580,50 +615,61 @@ async def list_tools() -> list[types.Tool]:
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    if name == "query_knowledge_base":
-        return await _query_knowledge_base(**arguments)
-    elif name == "query_design_kb":
-        return await _query_design_kb(**arguments)
-    elif name == "connect_to_device":
-        return await _connect_to_device(**arguments)
-    elif name == "run_show_command":
-        return await _run_show_command(**arguments)
-    elif name == "push_config":
-        return await _push_config(**arguments)
-    elif name == "disconnect_device":
-        return await _disconnect_device()
-    elif name == "query_nvd":
-        return await _query_nvd(**arguments)
-    elif name == "get_cve_details":
-        return await _get_cve_details(**arguments)
-    elif name == "send_email":
-        return await _send_email(**arguments)
-    elif name == "run_nmap_scan":
-        return await _run_nmap_scan(**arguments)
-    elif name == "run_dig":
-        return await _run_dig(**arguments)
-    elif name == "run_scapy":
-        return await _run_scapy(**arguments)
-    elif name == "stream_finding":
-        return [types.TextContent(type="text", text="ok")]
-    elif name == "save_audit_results":
-        return await _save_audit_results(**arguments)
-    elif name == "query_psirt":
-        return await _query_psirt(**arguments)
-    elif name == "query_eox":
-        return await _query_eox(**arguments)
-    elif name == "snmp_get_devices":
-        return await _snmp_get_devices()
-    elif name == "snmp_poll":
-        return await _snmp_poll(**arguments)
-    elif name == "device_copy_file":
-        return await _device_copy_file(**arguments)
-    elif name == "sftp_put_file":
-        return await _sftp_put_file(**arguments)
-    elif name == "sftp_get_file":
-        return await _sftp_get_file(**arguments)
-    else:
-        return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+    # Guard the dispatch: a bad/missing argument key raises TypeError out of the
+    # handler otherwise, which the SDK surfaces as an opaque failure instead of
+    # a tool error the agent can read and recover from.
+    arguments = arguments or {}
+    try:
+        if name == "query_knowledge_base":
+            return await _query_knowledge_base(**arguments)
+        elif name == "query_design_kb":
+            return await _query_design_kb(**arguments)
+        elif name == "connect_to_device":
+            return await _connect_to_device(**arguments)
+        elif name == "run_show_command":
+            return await _run_show_command(**arguments)
+        elif name == "push_config":
+            return await _push_config(**arguments)
+        elif name == "disconnect_device":
+            return await _disconnect_device(**arguments)
+        elif name == "query_nvd":
+            return await _query_nvd(**arguments)
+        elif name == "get_cve_details":
+            return await _get_cve_details(**arguments)
+        elif name == "send_email":
+            return await _send_email(**arguments)
+        elif name == "run_nmap_scan":
+            return await _run_nmap_scan(**arguments)
+        elif name == "run_dig":
+            return await _run_dig(**arguments)
+        elif name == "run_scapy":
+            return await _run_scapy(**arguments)
+        elif name == "stream_finding":
+            return [types.TextContent(type="text", text="ok")]
+        elif name == "save_audit_results":
+            return await _save_audit_results(**arguments)
+        elif name == "query_psirt":
+            return await _query_psirt(**arguments)
+        elif name == "query_eox":
+            return await _query_eox(**arguments)
+        elif name == "snmp_get_devices":
+            return await _snmp_get_devices()
+        elif name == "snmp_poll":
+            return await _snmp_poll(**arguments)
+        elif name == "device_copy_file":
+            return await _device_copy_file(**arguments)
+        elif name == "sftp_put_file":
+            return await _sftp_put_file(**arguments)
+        elif name == "sftp_get_file":
+            return await _sftp_get_file(**arguments)
+        else:
+            return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+    except TypeError as e:
+        log.error(f"Tool '{name}' called with bad arguments {sorted(arguments.keys())}: {e}")
+        return [types.TextContent(type="text", text=f"ERROR: invalid arguments for {name}: {e}")]
+    except Exception as e:
+        log.error(f"Tool '{name}' failed: {e}", exc_info=True)
+        return [types.TextContent(type="text", text=f"ERROR: {name} failed: {e}")]
 
 
 async def _query_knowledge_base(query: str, num_results: int = 5) -> list[types.TextContent]:
@@ -642,7 +688,7 @@ async def _query_knowledge_base(query: str, num_results: int = 5) -> list[types.
             results["documents"][0], results["metadatas"][0], results["distances"][0]
         ), 1):
             relevance = round((1 - dist) * 100, 1)
-            output += f"Result {i} - Source: {meta['source']} (Relevance: {relevance}%)\n"
+            output += f"Result {i} - Source: {meta.get('source', 'unknown')} (Relevance: {relevance}%)\n"
             output += "-" * 40 + "\n"
             output += doc + "\n\n"
         return [types.TextContent(type="text", text=output)]
@@ -703,8 +749,11 @@ async def _connect_to_device(host: str, username: str = None, password: str = No
         _clear_buffer(channel)
         channel.send("terminal length 0\n")
         time.sleep(0.5)
-        _clear_buffer(channel)
-        _sessions[host] = {"client": client, "channel": channel}
+        buf = _clear_buffer(channel)
+        # Capture the exact prompt (e.g. 'SW1#') so later reads stop on it
+        # rather than on any banner/config line that ends in '#' or '>'.
+        prompt = _extract_prompt(buf)
+        _sessions[host] = {"client": client, "channel": channel, "prompt": prompt}
         log.info(f"Connected to {host} ({len(_sessions)} session(s) open)")
         return [types.TextContent(type="text", text=f"Successfully connected to {host} as {username}")]
     except paramiko.BadHostKeyException as e:
@@ -741,22 +790,44 @@ async def _run_show_command(command: str, host: str = None) -> list[types.TextCo
     if not channel:
         hint = f" (open sessions: {list(_sessions.keys())})" if _sessions else ""
         return [types.TextContent(type="text", text=f"ERROR: No active session{' for ' + host if host else ''}{hint}. Call connect_to_device first.")]
-    blocked = ["conf", "write", "copy", "delete", "reload", "no ", "shutdown"]
-    if any(command.strip().lower().startswith(b) for b in blocked):
-        return [types.TextContent(type="text", text=f"ERROR: '{command}' not permitted in read-only mode.")]
+    ok, reason = guards.is_allowed_show_command(command)
+    if not ok:
+        return [types.TextContent(type="text", text=f"ERROR: '{command}' not permitted in read-only mode — {reason}.")]
     log.info(f"Running on {h}: {command}")
     try:
+        prompt = _sessions.get(h, {}).get("prompt")
         channel.send(command + "\n")
         time.sleep(0.5)
-        output = _clear_buffer(channel, timeout=30)
+        output = _clear_buffer(channel, timeout=30, prompt=prompt)
         return [types.TextContent(type="text", text=_sanitize_output(output))]
     except Exception as e:
         return [types.TextContent(type="text", text=f"ERROR: Command failed: {e}")]
 
 
-async def _push_config(commands: list, confirmed: bool, host: str = None) -> list[types.TextContent]:
+def _check_approval(operation: list, host: str, approval_token: str) -> str | None:
+    """Return an error string if an approval token is required but missing or
+    invalid, else None. Backward-compatible: when GLADIUS_REQUIRE_APPROVAL_TOKEN
+    is off (the default) this always passes and the confirmed flag is the only
+    gate, preserving existing behaviour."""
+    if not REQUIRE_APPROVAL_TOKEN:
+        return None
+    if not APPROVAL_SECRET:
+        return ("ERROR: GLADIUS_REQUIRE_APPROVAL_TOKEN is on but GLADIUS_APPROVAL_SECRET "
+                "is not configured — cannot verify operator approval.")
+    ok, reason = guards.verify_approval_token(approval_token, operation, host or "", APPROVAL_SECRET)
+    if not ok:
+        log.warning(f"Approval token rejected for host={host!r}: {reason}")
+        return f"ERROR: operator approval required — {reason}. gladius-api must mint an approval_token for this exact change."
+    return None
+
+
+async def _push_config(commands: list, confirmed: bool, host: str = None,
+                       approval_token: str = None) -> list[types.TextContent]:
     if not confirmed:
         return [types.TextContent(type="text", text="ERROR: Set confirmed=true to proceed.")]
+    approval_err = _check_approval(list(commands or []), host, approval_token)
+    if approval_err:
+        return [types.TextContent(type="text", text=approval_err)]
     h, channel = _resolve_session(host)
     if not channel:
         hint = f" (open sessions: {list(_sessions.keys())})" if _sessions else ""
@@ -848,6 +919,7 @@ async def _device_copy_file(
     password: str = None,
     vrf: str = None,
     host: str = None,
+    approval_token: str = None,
 ) -> list[types.TextContent]:
     if not confirmed:
         return [types.TextContent(type="text", text="ERROR: Set confirmed=true to proceed (this writes to device storage).")]
@@ -859,6 +931,12 @@ async def _device_copy_file(
     direction = direction.lower().strip()
     if direction not in ("to_device", "from_device"):
         return [types.TextContent(type="text", text="ERROR: direction must be 'to_device' or 'from_device'.")]
+
+    # Approval binds to the non-secret transfer description (credentials excluded).
+    approval_err = _check_approval(
+        [f"device_copy_file {direction} {proto} {server} {remote_file} {local_file}"], host, approval_token)
+    if approval_err:
+        return [types.TextContent(type="text", text=approval_err)]
     if direction == "from_device" and proto == "http":
         return [types.TextContent(type="text", text="ERROR: HTTP is download-only on most Cisco devices — use tftp/ftp/sftp/scp for from_device.")]
 
@@ -915,7 +993,8 @@ async def _device_copy_file(
             if not chunk:
                 time.sleep(0.5)
 
-        clean = _sanitize_output(output)
+        # Redact any inline URL credentials the device echoed before returning.
+        clean = guards.redact_credentials(_sanitize_output(output))
         err_markers = ("%Error", "Error opening", "Timed out", "%FTP:", "%SCP:", "%SSH:")
         if any(m in clean for m in err_markers):
             return [types.TextContent(type="text", text=f"Copy reported errors on {h}:\n{clean}")]
@@ -948,9 +1027,13 @@ async def _sftp_put_file(
     confirmed: bool,
     username: str = None,
     password: str = None,
+    approval_token: str = None,
 ) -> list[types.TextContent]:
     if not confirmed:
         return [types.TextContent(type="text", text="ERROR: Set confirmed=true to proceed (this writes to device storage).")]
+    approval_err = _check_approval([f"sftp_put_file {host} {local_path} {remote_path}"], host, approval_token)
+    if approval_err:
+        return [types.TextContent(type="text", text=approval_err)]
     if not os.path.isfile(local_path):
         return [types.TextContent(type="text", text=f"ERROR: Local file not found: {local_path}")]
 
@@ -1059,7 +1142,8 @@ async def _query_nvd(
         params["cvssV3Severity"] = severity.upper()
 
     try:
-        response = requests.get(
+        response = await asyncio.to_thread(
+            requests.get,
             "https://services.nvd.nist.gov/rest/json/cves/2.0",
             headers=headers, params=params, timeout=30
         )
@@ -1127,7 +1211,8 @@ async def _get_cve_details(cve_id: str) -> list[types.TextContent]:
     if NIST_API_KEY:
         headers["apiKey"] = NIST_API_KEY
     try:
-        response = requests.get(
+        response = await asyncio.to_thread(
+            requests.get,
             "https://services.nvd.nist.gov/rest/json/cves/2.0",
             headers=headers, params={"cveId": cve_id}, timeout=30
         )
@@ -1223,6 +1308,9 @@ async def _run_nmap_scan(
     # Whitelist target characters — IPs, hostnames, CIDR, IPv6 brackets
     if not re.match(r'^[a-zA-Z0-9.\-_/\[\]:]+$', target):
         return [types.TextContent(type="text", text="ERROR: Invalid target — only IPs, hostnames, and CIDR ranges are accepted.")]
+    # A leading '-' would be parsed by nmap as an option (argument injection).
+    if target.startswith("-"):
+        return [types.TextContent(type="text", text="ERROR: Invalid target — must not start with '-'.")]
 
     profile_flags: dict[str, list[str]] = {
         "quick":        ["-T4", "-F"],
@@ -1245,12 +1333,13 @@ async def _run_nmap_scan(
     if profile == "custom" and args:
         try:
             extra = shlex.split(args)
-            safe  = [t for t in extra if re.match(r'^[-a-zA-Z0-9.,_/]+$', t)]
-            flags.extend(safe)
+            # Allow only scan-tuning flags — no output/-script/-iL/datadir/resume.
+            flags.extend(guards.filter_nmap_args(extra))
         except Exception:
             pass
 
-    cmd = ["nmap"] + flags + [target]
+    # "--" ends option parsing so a target can never be reinterpreted as a flag.
+    cmd = ["nmap"] + flags + ["--", target]
     log.info(f"nmap: {' '.join(cmd)}")
 
     # Run in a thread executor — avoids asyncio subprocess conflicts with the
@@ -1298,6 +1387,9 @@ async def _run_dig(
     # Validate target — domains, IPs, IPv6, in-addr.arpa
     if not re.match(r'^[a-zA-Z0-9.\-_:/\[\]@]+$', target):
         return [types.TextContent(type="text", text="ERROR: Invalid target — only domain names and IP addresses are accepted.")]
+    # dig does not honor '--'; reject a leading '-' so a target cannot become a flag.
+    if target.startswith("-"):
+        return [types.TextContent(type="text", text="ERROR: Invalid target — must not start with '-'.")]
 
     # Validate record type
     allowed_types = {"A","AAAA","MX","NS","TXT","SOA","CNAME","PTR","SRV","CAA","DNSKEY","DS","AXFR","ANY"}
@@ -1980,9 +2072,10 @@ except Exception as e:
 async def _save_audit_results(device: str, ip: str, findings: list, score: dict,
                                ios: str = "", timestamp: str = "") -> list[types.TextContent]:
     """POST audit results to the Gladius API so the dashboard can display them."""
-    import datetime
+    from datetime import datetime, timezone
     gladius_api = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
-    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    # Honour a caller-supplied timestamp; otherwise stamp now (tz-aware UTC).
+    timestamp = timestamp or (datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     payload = {
         "device":    device,
         "ip":        ip,
@@ -1992,7 +2085,7 @@ async def _save_audit_results(device: str, ip: str, findings: list, score: dict,
         "score":     score,
     }
     try:
-        resp = requests.post(f"{gladius_api}/api/audit/save", json=payload, timeout=10)
+        resp = await asyncio.to_thread(requests.post, f"{gladius_api}/api/audit/save", json=payload, timeout=10)
         if resp.status_code == 200:
             log.info(f"Audit saved to dashboard: {device} ({ip}), {len(findings)} findings")
             return [types.TextContent(type="text", text=f"Audit saved: {len(findings)} findings recorded for {device}.")]
@@ -2018,7 +2111,8 @@ async def _query_psirt(
 
     # Get OAuth token
     try:
-        token_resp = requests.post(
+        token_resp = await asyncio.to_thread(
+            requests.post,
             PSIRT_TOKEN_URL,
             data={
                 "grant_type":    "client_credentials",
@@ -2052,7 +2146,7 @@ async def _query_psirt(
             url = f"{PSIRT_API_BASE}/latest/{min(max_results, 100)}"
             params = {}
 
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp = await asyncio.to_thread(requests.get, url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -2117,7 +2211,8 @@ async def _query_eox(
 
     # Get OAuth token (same Cisco OAuth endpoint as PSIRT)
     try:
-        token_resp = requests.post(
+        token_resp = await asyncio.to_thread(
+            requests.post,
             PSIRT_TOKEN_URL,
             data={
                 "grant_type":    "client_credentials",
@@ -2142,7 +2237,7 @@ async def _query_eox(
             url = f"{EOX_API_BASE}/EOXByProductID/1/{pid_str}"
         else:
             url = f"{EOX_API_BASE}/EOXByDates/1/{start_date}/{end_date}"
-        resp = requests.get(url, headers=headers, timeout=30)
+        resp = await asyncio.to_thread(requests.get, url, headers=headers, timeout=30)
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
@@ -2230,7 +2325,19 @@ def _sanitize_output(text: str) -> str:
     return '\n'.join(cleaned)
 
 
-def _clear_buffer(channel, timeout: int = 5) -> str:
+def _extract_prompt(buf: str) -> str:
+    """Return the device prompt (e.g. 'hostname#') captured at connect time, or
+    '' if the trailing line does not look like a prompt."""
+    stripped = (buf or "").rstrip()
+    if not stripped:
+        return ""
+    last_line = stripped.split('\n')[-1].strip()
+    if (last_line.endswith('#') or last_line.endswith('>')) and len(last_line) < 80:
+        return last_line
+    return ""
+
+
+def _clear_buffer(channel, timeout: int = 5, prompt: str = None) -> str:
     output = ""
     start  = time.time()
     idle   = 0
@@ -2239,11 +2346,17 @@ def _clear_buffer(channel, timeout: int = 5) -> str:
             chunk   = channel.recv(65536).decode("utf-8", errors="ignore")
             output += chunk
             idle    = 0
-            # Only break on a trailing CLI prompt (hostname# or hostname>)
             stripped = output.rstrip()
-            if stripped and (stripped[-1] == '#' or stripped.endswith('>')):
-                # Verify it looks like a prompt line (not mid-output '>')
-                last_line = stripped.split('\n')[-1].strip()
+            if not stripped:
+                continue
+            last_line = stripped.split('\n')[-1].strip()
+            # Prefer the exact prompt captured at connect time — avoids stopping
+            # early on a banner or config line that happens to end in #/>.
+            if prompt:
+                if last_line == prompt:
+                    break
+            elif stripped[-1] == '#' or stripped.endswith('>'):
+                # Fallback heuristic when no prompt was captured.
                 if last_line.endswith('#') or (last_line.endswith('>') and len(last_line) < 80):
                     break
         else:
@@ -2258,7 +2371,7 @@ def _clear_buffer(channel, timeout: int = 5) -> str:
 async def _snmp_get_devices() -> list[types.TextContent]:
     """Return all SNMP-monitored devices and their current status."""
     try:
-        resp = requests.get(f"{SNMP_SERVICE_URL}/devices", timeout=5)
+        resp = await asyncio.to_thread(requests.get, f"{SNMP_SERVICE_URL}/devices", timeout=5)
         resp.raise_for_status()
         devices = resp.json().get("devices", [])
     except Exception as e:
@@ -2301,7 +2414,8 @@ async def _snmp_poll(
     """Ad-hoc SNMP poll of any device using a named profile."""
     log.info(f"SNMP poll: {host} profile={profile}")
     try:
-        resp = requests.post(
+        resp = await asyncio.to_thread(
+            requests.post,
             f"{SNMP_SERVICE_URL}/poll",
             json={"host": host, "port": port, "version": version,
                   "community": community, "profile": profile},
