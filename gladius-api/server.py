@@ -3285,12 +3285,25 @@ def _slack_dm(text: str) -> None:
         log.error("Slack DM error: %s", e)
 
 
+# Read-only tool allowlist for background alert investigations — no push_config,
+# no save_audit_results, no email. The prompts agent added an INVESTIGATION_TOOLS
+# set in its merge; if that lands, this local fallback should be reconciled to it.
+try:
+    INVESTIGATION_TOOLS  # noqa: F821 — defined by the prompts-agent merge if present
+except NameError:
+    INVESTIGATION_TOOLS = {
+        "connect_to_device", "run_show_command", "disconnect_device",
+        "query_knowledge_base", "query_nvd", "get_cve_details",
+        "query_psirt", "query_eox", "snmp_get_devices", "snmp_poll", "run_dig",
+    }
+
+
 async def run_agent_investigation(messages: list) -> tuple[str, dict | None]:
     """
     Run the agentic MCP loop without streaming. Collects full response text and audit.
-    Used for background alert investigations.
+    Used for background alert investigations. Restricted to a read-only tool set.
     """
-    tools = cached_tools
+    tools = [t for t in cached_tools if t["name"] in INVESTIGATION_TOOLS]
     if not tools:
         return "No tools available — cannot investigate.", None
 
