@@ -9,7 +9,7 @@ import urllib.request
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional
 import collector
 import storage
@@ -63,6 +63,11 @@ class DeviceCreate(BaseModel):
     tag_color: Optional[str] = None
     group_id: Optional[int] = None
 
+    @model_validator(mode="after")
+    def _check_host(self):
+        self.host = collector.validate_host(self.host, self.probe_type)
+        return self
+
 
 class DeviceUpdate(BaseModel):
     name: Optional[str] = None
@@ -108,6 +113,14 @@ def delete_device(device_id: int):
 @app.patch("/api/devices/{device_id}")
 def update_device(device_id: int, payload: DeviceUpdate):
     updates = payload.model_dump(exclude_unset=True)
+    if "host" in updates or "probe_type" in updates:
+        current = next((d for d in storage.load_devices() if d["id"] == device_id), {})
+        try:
+            updates["host"] = collector.validate_host(
+                updates.get("host", current.get("host")),
+                updates.get("probe_type") or current.get("probe_type", "icmp"))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
     storage.update_device(device_id, updates)
     collector.restart_device(device_id)
     return {"ok": True}
@@ -395,7 +408,7 @@ def get_sparklines(minutes: int = 10):
     result = {}
     for d in devices:
         rows = storage.load_results(d["id"], hours=1)
-        cutoff = datetime.utcnow() - timedelta(minutes=minutes)
+        cutoff = storage.utcnow() - timedelta(minutes=minutes)
         recent = [r["latency_ms"] for r in rows
                   if r["latency_ms"] is not None
                   and datetime.fromisoformat(r["timestamp"]) >= cutoff]

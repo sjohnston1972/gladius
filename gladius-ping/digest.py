@@ -3,7 +3,6 @@ digest.py - Generate periodic summary digests and send via email/webhook
 """
 import threading
 import time
-from datetime import datetime
 import storage
 
 
@@ -28,7 +27,7 @@ def build_digest(hours: int = 24) -> dict:
         })
     alerts = storage.load_alerts(50)
     return {
-        "generated_at": datetime.utcnow().isoformat(),
+        "generated_at": storage.utcnow().isoformat(),
         "period_hours": hours,
         "devices": rows,
         "recent_alerts": alerts[:10],
@@ -61,23 +60,43 @@ _digest_thread = None
 _digest_stop = threading.Event()
 
 
-def _digest_loop(interval_hours: int, stop: threading.Event):
-    while True:
-        try:
-            from alerts import _send_email, _send_slack
-            digest = build_digest(interval_hours)
-            text = format_digest_text(digest)
-            subject = f"PingPlotter {interval_hours}h Digest — {datetime.utcnow().strftime('%Y-%m-%d')}"
-            _send_email(subject, text)
-            _send_slack(f"```{text[:2900]}```")  # Slack 3k char limit
-        except Exception as e:
-            print(f"[Digest] Failed: {e}")
-        if stop.wait(interval_hours * 3600):
-            break
+_TICK_SEC = 60  # how often the scheduler re-reads digest_interval_hours
 
 
-def start(interval_hours: int = 24):
+def _interval_hours() -> int:
+    try:
+        return max(0, int(storage.load_settings().get("digest_interval_hours", 0) or 0))
+    except (TypeError, ValueError, OSError):
+        return 0
+
+
+def send_digest(interval_hours: int):
+    from alerts import _send_email, _send_slack
+    digest = build_digest(interval_hours)
+    text = format_digest_text(digest)
+    subject = f"PingPlotter {interval_hours}h Digest — {storage.utcnow().strftime('%Y-%m-%d')}"
+    _send_email(subject, text)
+    _send_slack(f"```{text[:2900]}```")  # Slack 3k char limit
+
+
+def _digest_loop(stop: threading.Event):
+    """Send a digest every digest_interval_hours, re-reading the setting each
+    tick so changes apply without a restart (0 disables)."""
+    from speedtest_runner import is_due
+    last_run = None
+    while not stop.is_set():
+        hours = _interval_hours()
+        if is_due(hours * 3600, last_run, time.monotonic()):
+            last_run = time.monotonic()
+            try:
+                send_digest(hours)
+            except Exception as e:
+                print(f"[Digest] Failed: {e}")
+        stop.wait(_TICK_SEC)
+
+
+def start():
     global _digest_thread, _digest_stop
     _digest_stop = threading.Event()
-    _digest_thread = threading.Thread(target=_digest_loop, args=(interval_hours, _digest_stop), daemon=True)
+    _digest_thread = threading.Thread(target=_digest_loop, args=(_digest_stop,), daemon=True, name="digest")
     _digest_thread.start()

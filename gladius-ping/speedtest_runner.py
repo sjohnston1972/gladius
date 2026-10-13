@@ -5,7 +5,8 @@ import subprocess
 import json
 import threading
 import time
-from datetime import datetime
+import storage
+from storage import utcnow
 
 _thread = None
 _stop_event = threading.Event()
@@ -19,15 +20,22 @@ def run_once() -> dict | None:
             ["speedtest-cli", "--json"],
             capture_output=True, text=True, timeout=120
         )
+        if result.returncode != 0:
+            print(f"[Speedtest] speedtest-cli exited {result.returncode}: {result.stderr.strip()[:200]}")
+            return None
         data = json.loads(result.stdout)
-        return {
-            "timestamp": datetime.utcnow().isoformat(),
+        out = {
+            "timestamp": utcnow().isoformat(),
             "download_mbps": round(data["download"] / 1_000_000, 2),
             "upload_mbps": round(data["upload"] / 1_000_000, 2),
             "ping_ms": round(data["ping"], 2),
             "server": data.get("server", {}).get("name", ""),
             "isp": data.get("client", {}).get("isp", ""),
         }
+        if not storage.valid_speedtest(out):
+            print(f"[Speedtest] Discarding implausible result: {out}")
+            return None
+        return out
     except Exception as e:
         print(f"[Speedtest] Failed: {e}")
         return None
@@ -146,13 +154,17 @@ def run_once_streaming(emit) -> dict | None:
         isp = (s.results.client or {}).get("isp", "")
 
         result = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": utcnow().isoformat(),
             "download_mbps": dl_mbps,
             "upload_mbps": ul_mbps,
             "ping_ms": ping,
             "server": server,
             "isp": isp,
         }
+        if not storage.valid_speedtest(result):
+            print(f"[Speedtest streaming] Discarding implausible result: {result}")
+            emit("error", {"message": "Speedtest returned an implausible result"})
+            return None
         emit("complete", result)
         return result
     except Exception as e:
@@ -161,20 +173,42 @@ def run_once_streaming(emit) -> dict | None:
         return None
 
 
-def _loop(interval_minutes: int, stop: threading.Event):
+_TICK_SEC = 60  # how often the scheduler re-reads speedtest_interval_minutes
+
+
+def _interval_minutes() -> int:
+    try:
+        return max(0, int(storage.load_settings().get("speedtest_interval_minutes", 60) or 0))
+    except (TypeError, ValueError, OSError):
+        return 0
+
+
+def is_due(interval_sec: float, last_run: float | None, now: float) -> bool:
+    """True when a periodic job with this interval (0 = disabled) should run now."""
+    return interval_sec > 0 and (last_run is None or now - last_run >= interval_sec)
+
+
+def _loop(stop: threading.Event):
+    """Run speedtests every speedtest_interval_minutes, re-reading the setting
+    each tick so changes apply without a restart (0 disables)."""
+    last_run = None
     while not stop.is_set():
-        import storage
-        result = run_once()
-        if result:
-            storage.save_speedtest(result)
-            print(f"[Speedtest] ↓{result['download_mbps']} ↑{result['upload_mbps']} ping:{result['ping_ms']}ms")
-        stop.wait(interval_minutes * 60)
+        try:
+            if is_due(_interval_minutes() * 60, last_run, time.monotonic()):
+                last_run = time.monotonic()
+                result = run_once()
+                if result:
+                    storage.save_speedtest(result)
+                    print(f"[Speedtest] ↓{result['download_mbps']} ↑{result['upload_mbps']} ping:{result['ping_ms']}ms")
+        except Exception as e:
+            print(f"[Speedtest] Scheduler error: {e!r}")
+        stop.wait(_TICK_SEC)
 
 
-def start(interval_minutes: int = 60):
+def start():
     global _thread, _stop_event
     _stop_event = threading.Event()
-    _thread = threading.Thread(target=_loop, args=(interval_minutes, _stop_event), daemon=True)
+    _thread = threading.Thread(target=_loop, args=(_stop_event,), daemon=True, name="speedtest")
     _thread.start()
 
 

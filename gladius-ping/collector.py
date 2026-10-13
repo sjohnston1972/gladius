@@ -9,8 +9,7 @@ import socket
 import re
 import traceback
 import urllib.request
-from datetime import datetime
-from storage import save_result, save_trace_run, load_devices, load_results, log_alert
+from storage import save_result, save_trace_run, load_devices, load_results, log_alert, utcnow
 from alerts import check_and_alert
 
 _threads: dict[int, threading.Thread] = {}
@@ -62,16 +61,76 @@ def _dest_latency(hops: list[dict]) -> float | None:
     return None
 
 
+_HOST_RE = re.compile(r"^[A-Za-z0-9._:%\[\]-]{1,253}$")
+
+
+def validate_host(host: str, probe_type: str = "icmp") -> str:
+    """Validate a device host for its probe type; raises ValueError.
+
+    Hosts end up in ping/traceroute argv, so anything that could be read as
+    an option (leading '-') or isn't a plain hostname/IP (or URL for http
+    probes) is rejected.
+    """
+    host = (host or "").strip()
+    if not host:
+        raise ValueError("host is required")
+    if host.startswith("-"):
+        raise ValueError("host must not start with '-'")
+    if probe_type == "http":
+        from urllib.parse import urlsplit
+        if len(host) > 2048 or any(c.isspace() or ord(c) < 32 for c in host):
+            raise ValueError("invalid URL")
+        url = host if host.startswith(("http://", "https://")) else "http://" + host
+        try:
+            hostname = urlsplit(url).hostname
+        except ValueError:
+            hostname = None
+        if not hostname or hostname.startswith("-"):
+            raise ValueError("URL must include a valid host")
+        return host
+    if not _HOST_RE.match(host):
+        raise ValueError("host must be a hostname or IP address"
+                         + (" with :port" if probe_type == "tcp" else ""))
+    return host
+
+
+def _traceroute_cmd(host: str, packet_size: int | None, system: str) -> list[str] | None:
+    """argv for traceroute; None if host could be parsed as an option."""
+    if host.startswith("-"):
+        return None
+    if system == "windows":
+        return ["tracert", "-d", "-h", "30", "-w", "1000", host]
+    cmd = ["traceroute", "-n", "-m", "30", "-w", "2", "--", host]
+    if packet_size is not None:
+        cmd.append(str(int(packet_size)))
+    return cmd
+
+
+def _ping_cmd(host: str, packet_size: int | None, df_bit: bool, system: str) -> list[str] | None:
+    """argv for a single ping; None if host could be parsed as an option."""
+    if host.startswith("-"):
+        return None
+    if system == "windows":
+        cmd = ["ping", "-n", "1", "-w", "1000"]
+        if packet_size is not None:
+            cmd += ["-l", str(int(packet_size))]
+        if df_bit:
+            cmd += ["-f"]
+        return cmd + [host]
+    cmd = ["ping", "-c", "1", "-W", "1"]
+    if packet_size is not None:
+        cmd += ["-s", str(int(packet_size))]
+    if df_bit:
+        cmd += ["-M", "do"]
+    return cmd + ["--", host]
+
+
 def _run_traceroute(host: str, packet_size: int | None = None) -> tuple[bool, list[dict], float | None]:
     system = platform.system().lower()
-    if system == "windows":
-        cmd = ["tracert", "-d", "-h", "30", "-w", "1000", host]
-        parse_fn = _parse_hop_windows
-    else:
-        cmd = ["traceroute", "-n", "-m", "30", "-w", "2", host]
-        if packet_size is not None:
-            cmd.append(str(packet_size))
-        parse_fn = _parse_hop_linux
+    cmd = _traceroute_cmd(host, packet_size, system)
+    if cmd is None:
+        return False, [], None
+    parse_fn = _parse_hop_windows if system == "windows" else _parse_hop_linux
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
     except (subprocess.TimeoutExpired, FileNotFoundError):
@@ -132,20 +191,9 @@ def _probe_dns(host: str, timeout: int = 3) -> tuple[bool, float | None]:
 def _ping_once(host: str, packet_size: int | None = None, df_bit: bool = False) -> tuple[bool, float | None]:
     """Send a single ping. Returns (success, latency_ms)."""
     system = platform.system().lower()
-    if system == "windows":
-        cmd = ["ping", "-n", "1", "-w", "1000"]
-        if packet_size is not None:
-            cmd += ["-l", str(packet_size)]
-        if df_bit:
-            cmd += ["-f"]
-        cmd.append(host)
-    else:
-        cmd = ["ping", "-c", "1", "-W", "1"]
-        if packet_size is not None:
-            cmd += ["-s", str(packet_size)]
-        if df_bit:
-            cmd += ["-M", "do"]
-        cmd.append(host)
+    cmd = _ping_cmd(host, packet_size, df_bit, system)
+    if cmd is None:
+        return False, None
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
         output = result.stdout
@@ -174,7 +222,7 @@ def _probe_iteration(device: dict, last_latency: float | None,
     probe_type = device.get("probe_type", "icmp")
     packet_size = device.get("packet_size") or None
     df_bit = bool(device.get("df_bit", False))
-    ts = datetime.utcnow().isoformat()
+    ts = utcnow().isoformat()
     route_changed = False
     if probe_type == "http":
         success, latency = _probe_http(host)
@@ -217,7 +265,7 @@ def _probe_iteration(device: dict, last_latency: float | None,
             "device_id": device_id,
             "name": device["name"],
             "host": host,
-            "last_ping": datetime.utcnow().isoformat(),
+            "last_ping": utcnow().isoformat(),
             "last_latency": latency,
             "last_success": success,
             "last_jitter": jitter,
@@ -332,5 +380,5 @@ def discover_mtu(host: str) -> dict:
     return {
         "mtu_bytes": found,
         "payload_size": found - 28,
-        "tested_at": datetime.utcnow().isoformat(),
+        "tested_at": utcnow().isoformat(),
     }

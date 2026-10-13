@@ -1,5 +1,5 @@
 """Alert state machine: N failures -> down, recovery, cooldown setting, anomaly persistence (#108)."""
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 
@@ -78,7 +78,7 @@ def test_cooldown_comes_from_settings(fired):
 
 def test_maintenance_defers_down_and_swallows_recovery(fired):
     storage.save_settings({"down_after_failures": 2})
-    now = datetime.utcnow()
+    now = storage.utcnow()
     win = storage.add_maintenance({"label": "mw", "start": (now - timedelta(hours=1)).isoformat(),
                                    "end": (now + timedelta(hours=1)).isoformat(), "device_id": None})
     for _ in range(3):

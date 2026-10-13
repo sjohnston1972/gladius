@@ -7,7 +7,7 @@ import json
 import math
 import os
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DATA_DIR = Path("data")
@@ -16,6 +16,16 @@ RESULTS_DIR = DATA_DIR / "results"
 TRACES_DIR = DATA_DIR / "traces"
 
 _TRACE_ROW_LIMIT = 3000  # ~100 runs at 30 hops each
+
+def utcnow() -> datetime:
+    """Current UTC time as a naive datetime.
+
+    Replaces the deprecated datetime.utcnow(). Stays naive on purpose: every
+    stored timestamp is naive UTC ISO text, and mixing aware and naive values
+    would break comparisons against existing data.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 # Re-entrant so read-modify-write helpers can hold it across load + save.
 _lock = threading.RLock()
@@ -159,7 +169,7 @@ def remove_maintenance(window_id: int):
 
 def is_in_maintenance(device_id: int) -> bool:
     """Return True if device_id (or all devices) is currently in a maintenance window."""
-    now = datetime.utcnow()
+    now = utcnow()
     for w in load_maintenance():
         try:
             # Strip trailing Z so fromisoformat works on Python < 3.11
@@ -193,7 +203,7 @@ def save_result(device_id: int, latency_ms: float | None, success: bool, jitter_
         with open(path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                datetime.utcnow().isoformat(),
+                utcnow().isoformat(),
                 round(latency_ms, 3) if latency_ms is not None else "",
                 int(success),
                 round(jitter_ms, 3) if jitter_ms is not None else ""
@@ -256,7 +266,7 @@ def load_results(device_id: int, hours: int = 1) -> list[dict]:
     path = _result_file(device_id)
     if not path.exists():
         return []
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = utcnow() - timedelta(hours=hours)
     rows = []
     for row in _iter_csv_since(path, cutoff):
         try:
@@ -334,7 +344,7 @@ def load_sla_report(device_id: int, days: int = 30) -> list[dict]:
     path = _result_file(device_id)
     if not path.exists():
         return []
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utcnow() - timedelta(days=days)
     day_buckets: dict = defaultdict(lambda: {"up": 0, "total": 0})
     for row in _iter_csv_since(path, cutoff):
         try:
@@ -349,7 +359,7 @@ def load_sla_report(device_id: int, days: int = 30) -> list[dict]:
             continue
     result = []
     for i in range(days):
-        key = (datetime.utcnow() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
+        key = (utcnow() - timedelta(days=days - 1 - i)).strftime("%Y-%m-%d")
         b = day_buckets.get(key, {"up": 0, "total": 0})
         result.append({
             "date": key,
@@ -499,7 +509,7 @@ def save_speedtest(result: dict):
 def load_speedtest(hours: int = 168) -> list[dict]:
     if not SPEEDTEST_FILE.exists():
         return []
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff = utcnow() - timedelta(hours=hours)
     rows = []
     with open(SPEEDTEST_FILE, newline="") as f:
         reader = csv.DictReader(f)
@@ -507,17 +517,37 @@ def load_speedtest(hours: int = 168) -> list[dict]:
             try:
                 ts = datetime.fromisoformat(row["timestamp"])
                 if ts >= cutoff:
-                    rows.append({
+                    r = {
                         "timestamp": row["timestamp"],
                         "download_mbps": float(row["download_mbps"]),
                         "upload_mbps": float(row["upload_mbps"]),
                         "ping_ms": float(row["ping_ms"]),
                         "server": row.get("server", ""),
                         "isp": row.get("isp", ""),
-                    })
-            except (ValueError, KeyError):
+                    }
+                    if valid_speedtest(r):   # hide failure sentinels stored by older versions
+                        rows.append(r)
+            except (ValueError, KeyError, TypeError):
                 continue
     return rows
+
+
+SPEEDTEST_MAX_PING_MS = 60_000   # speedtest-cli reports failures as huge pings (e.g. 1,800,000)
+
+
+def valid_speedtest(result: dict) -> bool:
+    """True if a speedtest result looks like a real measurement, not a failure sentinel."""
+    try:
+        ping = float(result["ping_ms"])
+        down = float(result["download_mbps"])
+        up = float(result["upload_mbps"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not all(math.isfinite(x) for x in (ping, down, up)):
+        return False
+    # A 0 Mbps upload alongside a real download is kept (speedtest-cli upload
+    # failures); both directions at 0 means the test itself failed.
+    return 0 < ping < SPEEDTEST_MAX_PING_MS and down >= 0 and up >= 0 and (down > 0 or up > 0)
 
 
 # ── Alert log ──────────────────────────────────────────────────────────────────
@@ -738,7 +768,7 @@ def _purge_csv(csv_path: Path, cutoff: datetime) -> int:
 
 def purge_old_data(retention_days: int) -> int:
     """Apply retention to every time-series file: results, traces, alerts, speedtests."""
-    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    cutoff = utcnow() - timedelta(days=retention_days)
     rows_purged = 0
     paths = list(RESULTS_DIR.glob("device_*.csv")) + list(TRACES_DIR.glob("device_*.csv"))
     paths += [p for p in (ALERT_LOG, SPEEDTEST_FILE) if p.exists()]
@@ -761,7 +791,7 @@ def run_retention() -> int:
         print(f"[Retention] Skipped: invalid retention_days={days!r}")
         return 0
     rows = purge_old_data(days)
-    _last_purge.update(at=datetime.utcnow().isoformat(), rows_purged=rows, retention_days=days)
+    _last_purge.update(at=utcnow().isoformat(), rows_purged=rows, retention_days=days)
     return rows
 
 
@@ -794,7 +824,7 @@ def log_alert(device_id: int, device_name: str, alert_type: str, value: float, t
             if not exists:
                 writer.writerow(["timestamp", "device_id", "device_name", "alert_type", "value", "threshold"])
             writer.writerow([
-                datetime.utcnow().isoformat(),
+                utcnow().isoformat(),
                 device_id, device_name, alert_type,
                 round(value, 2), round(threshold, 2)
             ])
@@ -824,7 +854,7 @@ def log_network_event(alert_type: str, device_ids: list[int], device_names: list
                 except Exception:
                     events = []
         events.append({
-            "ts": datetime.utcnow().isoformat(),
+            "ts": utcnow().isoformat(),
             "type": alert_type,
             "device_ids": device_ids,
             "device_names": device_names,

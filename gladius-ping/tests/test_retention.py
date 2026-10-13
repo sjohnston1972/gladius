@@ -2,7 +2,7 @@
 import builtins
 import csv
 import threading
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import storage
 
@@ -34,7 +34,7 @@ def _seed(now):
 
 
 def test_purge_covers_all_data_files(data_dir):
-    _seed(datetime.utcnow())
+    _seed(storage.utcnow())
     purged = storage.purge_old_data(30)
     assert purged == 5 + 4 + 6 + 2
     assert _count(storage.RESULTS_DIR / "device_1.csv") == 3
@@ -48,7 +48,7 @@ def test_purge_covers_all_data_files(data_dir):
 
 
 def test_purge_holds_lock_while_reading_and_writing(data_dir, monkeypatch):
-    _seed(datetime.utcnow())
+    _seed(storage.utcnow())
     unlocked = []
     real_open = builtins.open
 
@@ -63,7 +63,7 @@ def test_purge_holds_lock_while_reading_and_writing(data_dir, monkeypatch):
 
 
 def test_concurrent_appends_are_not_lost(data_dir):
-    now = datetime.utcnow()
+    now = storage.utcnow()
     rows = [[(now - timedelta(days=40)).isoformat(), 1.0, 1, ""]] * 20000
     _write(storage.RESULTS_DIR / "device_7.csv", ["timestamp", "latency_ms", "success", "jitter_ms"], rows)
     stop = threading.Event()
@@ -86,7 +86,7 @@ def test_concurrent_appends_are_not_lost(data_dir):
 
 
 def test_run_retention_uses_setting_and_records_last_purge(data_dir):
-    _seed(datetime.utcnow())
+    _seed(storage.utcnow())
     storage.save_settings({"retention_days": 60})
     assert storage.run_retention() == 0
     info = storage.last_purge_info()
@@ -96,7 +96,7 @@ def test_run_retention_uses_setting_and_records_last_purge(data_dir):
 
 
 def test_run_retention_skips_invalid_days(data_dir):
-    _seed(datetime.utcnow())
+    _seed(storage.utcnow())
     storage.save_settings({"retention_days": 0})
     assert storage.run_retention() == 0
     assert _count(storage.RESULTS_DIR / "device_1.csv") == 8
