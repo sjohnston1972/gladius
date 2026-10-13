@@ -2173,7 +2173,7 @@ async def itsm_chat(req: ItsmRequest):
                     "Flag these and recommend merging them."
                 )
         except Exception as e:
-            log.warning("Failed to fetch Jira context for ITSM: %s", e)
+            log.warning("Failed to fetch Jira context for ITSM — answering without live ticket data: %s", e)
 
     system = ITSM_SYSTEM_PROMPT
     if jira_context:
@@ -2185,8 +2185,27 @@ async def itsm_chat(req: ItsmRequest):
 
 # ── Jira Query & Ticket API ───────────────────────────────────────────────────
 
+_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]+-\d+$")
+
+
+def _check_issue_key(issue_key: Optional[str]) -> str:
+    """Normalise a Jira issue key and reject anything that isn't PROJ-123 shaped
+    (keys reach REST URL paths and can come from LLM tool calls)."""
+    key = (issue_key or "").strip().upper()
+    if not _ISSUE_KEY_RE.match(key):
+        raise HTTPException(400, "Invalid Jira issue key (expected e.g. GSR-12)")
+    return key
+
+
+def _jql_str(value: str) -> str:
+    """Quote a user-supplied value as a JQL string literal (escapes \\ and ")."""
+    value = re.sub(r"[\r\n\t]+", " ", value)
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
 async def _jira_search(jql: str, max_results: int = 50) -> list[dict]:
-    """Run a JQL query and return simplified issue list (paginated)."""
+    """Run a JQL query and return simplified issue list (paginated).
+    Raises HTTPException(502) if Jira errors, so outages aren't reported as 'no tickets'."""
     if not JIRA_CONFIGURED:
         return []
     url = f"{JIRA_URL.rstrip('/')}/rest/api/3/search/jql"
@@ -2202,10 +2221,14 @@ async def _jira_search(jql: str, max_results: int = 50) -> list[dict]:
             }
             if next_token:
                 params["nextPageToken"] = next_token
-            resp = await client.get(url, params=params, headers=_jira_headers())
+            try:
+                resp = await client.get(url, params=params, headers=_jira_headers())
+            except httpx.HTTPError as e:
+                log.error("Jira search request failed: %s", e)
+                raise HTTPException(502, f"Jira unreachable: {type(e).__name__}")
             if resp.status_code != 200:
                 log.error("Jira search failed: %s %s", resp.status_code, resp.text)
-                break
+                raise HTTPException(502, f"Jira search failed: HTTP {resp.status_code}")
             data = resp.json()
             batch = data.get("issues", [])
             all_raw.extend(batch)
@@ -2238,13 +2261,13 @@ async def jira_issues(status: str = "", assignee: str = "", label: str = "", q: 
         raise HTTPException(503, "Jira not configured")
     clauses = [f"project = {JIRA_PROJECT}"]
     if status:
-        clauses.append(f'status = "{status}"')
+        clauses.append(f"status = {_jql_str(status)}")
     if assignee:
-        clauses.append(f'assignee = "{assignee}"')
+        clauses.append(f"assignee = {_jql_str(assignee)}")
     if label:
-        clauses.append(f'labels = "{label}"')
+        clauses.append(f"labels = {_jql_str(label)}")
     if q:
-        clauses.append(f'text ~ "{q}"')
+        clauses.append(f"text ~ {_jql_str(q)}")
     jql = " AND ".join(clauses) + " ORDER BY updated DESC"
     issues = await _jira_search(jql)
     return {"issues": issues, "count": len(issues), "jql": jql}
@@ -2255,7 +2278,7 @@ async def jira_open_tickets():
     """Return all open (non-Done/Closed) tickets for the project."""
     if not JIRA_CONFIGURED:
         return {"issues": [], "count": 0, "configured": False}
-    jql = f'project = {JIRA_PROJECT} AND status = "In Progress" ORDER BY created DESC'
+    jql = f'project = {JIRA_PROJECT} AND statusCategory != Done ORDER BY created DESC'
     issues = await _jira_search(jql, max_results=1000)
     return {"issues": issues, "count": len(issues), "configured": True}
 
@@ -2265,6 +2288,7 @@ async def jira_issue_detail(issue_key: str):
     """Get full detail for a single Jira issue including description and comments."""
     if not JIRA_CONFIGURED:
         raise HTTPException(503, "Jira not configured")
+    issue_key = _check_issue_key(issue_key)
     url = f"{JIRA_URL.rstrip('/')}/rest/api/3/issue/{issue_key}"
     params = {"fields": "summary,status,priority,assignee,reporter,created,updated,labels,issuetype,description,comment"}
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -2348,15 +2372,30 @@ async def jira_create(req: JiraCreateRequest):
         raise HTTPException(500, str(e))
 
 
+class JiraCommentRequest(BaseModel):
+    issue_key: Optional[str] = ""
+    comment:   Optional[str] = ""
+
+
+class JiraCloseRequest(BaseModel):
+    issue_key: Optional[str] = ""
+    comment:   Optional[str] = ""
+
+
+class ParseTicketRequest(BaseModel):
+    text: Optional[str] = ""
+
+
 @app.post("/api/jira/comment", dependencies=[Depends(require_token)])
-async def jira_add_comment(body: dict):
+async def jira_add_comment(body: JiraCommentRequest):
     """Add a comment to an existing Jira issue."""
     if not JIRA_CONFIGURED:
         raise HTTPException(503, "Jira not configured")
-    issue_key = body.get("issue_key", "").strip()
-    comment   = body.get("comment", "").strip()
+    issue_key = (body.issue_key or "").strip()
+    comment   = (body.comment or "").strip()
     if not issue_key or not comment:
         raise HTTPException(400, "issue_key and comment required")
+    issue_key = _check_issue_key(issue_key)
     url = f"{JIRA_URL.rstrip('/')}/rest/api/3/issue/{issue_key}/comment"
     # Build ADF body for the comment
     adf_body = {
@@ -2376,14 +2415,15 @@ async def jira_add_comment(body: dict):
 
 
 @app.post("/api/jira/close", dependencies=[Depends(require_token)])
-async def jira_close_ticket(body: dict):
+async def jira_close_ticket(body: JiraCloseRequest):
     """Transition a Jira issue to Done/Closed status."""
     if not JIRA_CONFIGURED:
         raise HTTPException(503, "Jira not configured")
-    issue_key = body.get("issue_key", "").strip()
-    comment   = body.get("comment", "").strip()
+    issue_key = (body.issue_key or "").strip()
+    comment   = (body.comment or "").strip()
     if not issue_key:
         raise HTTPException(400, "issue_key required")
+    issue_key = _check_issue_key(issue_key)
 
     headers = _jira_headers()
     base = JIRA_URL.rstrip('/')
@@ -2431,9 +2471,9 @@ async def jira_close_ticket(body: dict):
 
 
 @app.post("/api/jira/parse-ticket", dependencies=[Depends(require_token)])
-async def jira_parse_ticket(body: dict):
+async def jira_parse_ticket(body: ParseTicketRequest):
     """Extract structured fields from ITSM agent markdown output."""
-    text = body.get("text", "")
+    text = body.text or ""
     summary = ""
     priority = "P3"
 
