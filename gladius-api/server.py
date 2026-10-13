@@ -1050,17 +1050,20 @@ def kb_stats():  # sync on purpose — blocking http call, runs in threadpool (s
 
 
 # ── Simple TTL cache ──────────────────────────────────────────────────────────
-_cache: dict = {}          # key → {"data": ..., "ts": float}
+_cache: dict = {}          # key → {"data": ..., "ts": float, "ttl": float}
 CACHE_TTL = 1800           # 30 minutes
 
 def _cache_get(key: str):
     entry = _cache.get(key)
-    if entry and (time.monotonic() - entry["ts"]) < CACHE_TTL:
+    if entry and (time.monotonic() - entry["ts"]) < entry.get("ttl", CACHE_TTL):
         return entry["data"]
     return None
 
-def _cache_set(key: str, data):
-    _cache[key] = {"data": data, "ts": time.monotonic()}
+def _cache_set(key: str, data, ttl: float | None = None):
+    _cache[key] = {"data": data, "ts": time.monotonic(), "ttl": ttl if ttl is not None else CACHE_TTL}
+
+def _cache_invalidate(key: str):
+    _cache.pop(key, None)
 
 def _nvd_headers() -> dict:
     return {"apiKey": NIST_API_KEY} if NIST_API_KEY else {}
@@ -1163,10 +1166,21 @@ def cve_search(q: str = "", severity: str = "", days_back: int = 30):  # sync �
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _psirt_token() -> str:
-    cached = _cache_get("psirt_token")
-    if cached:
-        return cached
+def _oauth_token_ttl(body: dict) -> float:
+    """Cache TTL from the token response's expires_in, with a 60s safety margin,
+    falling back to the default cache TTL when it's absent."""
+    try:
+        expires_in = float(body.get("expires_in", 0))
+    except (TypeError, ValueError):
+        expires_in = 0
+    return max(expires_in - 60, 60) if expires_in else CACHE_TTL
+
+
+def _psirt_token(force_refresh: bool = False) -> str:
+    if not force_refresh:
+        cached = _cache_get("psirt_token")
+        if cached:
+            return cached
     resp = http_requests.post(
         PSIRT_TOKEN_URL,
         data={
@@ -1178,14 +1192,27 @@ def _psirt_token() -> str:
         timeout=15,
     )
     resp.raise_for_status()
-    token = resp.json().get("access_token")
+    body  = resp.json()
+    token = body.get("access_token")
     if not token:
         raise ValueError("PSIRT token response contained no access_token")
-    _cache_set("psirt_token", token)
+    _cache_set("psirt_token", token, _oauth_token_ttl(body))
     return token
 
 def _psirt_headers() -> dict:
     return {"Authorization": f"Bearer {_psirt_token()}", "Accept": "application/json"}
+
+
+def _cisco_authed_get(url: str, token_cache_key: str, token_fn, headers_fn, **kwargs):
+    """GET a Cisco apix.cisco.com endpoint; on a 401 (token revoked/expired early),
+    drop the cached OAuth token, fetch a fresh one and retry exactly once."""
+    r = http_requests.get(url, headers=headers_fn(), **kwargs)
+    if r.status_code == 401:
+        log.info("Cisco API 401 — refreshing OAuth token and retrying once")
+        _cache_invalidate(token_cache_key)
+        token_fn(force_refresh=True)
+        r = http_requests.get(url, headers=headers_fn(), **kwargs)
+    return r
 
 def _psirt_parse(adv: dict) -> dict:
     cves = adv.get("cves", [])
@@ -1214,11 +1241,10 @@ def psirt_latest():  # sync — blocking PSIRT call, threadpool
         return cached
     try:
         advisories = []
-        hdrs = _psirt_headers()
         for sev in ("critical", "high"):
-            resp = http_requests.get(
+            resp = _cisco_authed_get(
                 f"{PSIRT_API_BASE}/severity/{sev}",
-                headers=hdrs,
+                "psirt_token", _psirt_token, _psirt_headers,
                 timeout=30,
             )
             resp.raise_for_status()
@@ -1237,13 +1263,12 @@ def psirt_search(q: str = "", severity: str = ""):  # sync — blocking PSIRT ca
     if not PSIRT_CLIENT_KEY:
         raise HTTPException(status_code=503, detail="PSIRT credentials not configured")
     try:
-        hdrs = _psirt_headers()
         if q:
-            resp = http_requests.get(f"{PSIRT_API_BASE}/product", headers=hdrs, params={"product": q}, timeout=30)
+            resp = _cisco_authed_get(f"{PSIRT_API_BASE}/product", "psirt_token", _psirt_token, _psirt_headers, params={"product": q}, timeout=30)
         elif severity:
-            resp = http_requests.get(f"{PSIRT_API_BASE}/severity/{severity.lower()}", headers=hdrs, timeout=30)
+            resp = _cisco_authed_get(f"{PSIRT_API_BASE}/severity/{severity.lower()}", "psirt_token", _psirt_token, _psirt_headers, timeout=30)
         else:
-            resp = http_requests.get(f"{PSIRT_API_BASE}/latest/50", headers=hdrs, timeout=30)
+            resp = _cisco_authed_get(f"{PSIRT_API_BASE}/latest/50", "psirt_token", _psirt_token, _psirt_headers, timeout=30)
         resp.raise_for_status()
         advisories = resp.json().get("advisories", [])
         advisories.sort(key=lambda a: a.get("firstPublished", ""), reverse=True)
@@ -1253,10 +1278,11 @@ def psirt_search(q: str = "", severity: str = ""):  # sync — blocking PSIRT ca
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _eox_token() -> str:
-    cached = _cache_get("eox_token")
-    if cached:
-        return cached
+def _eox_token(force_refresh: bool = False) -> str:
+    if not force_refresh:
+        cached = _cache_get("eox_token")
+        if cached:
+            return cached
     resp = http_requests.post(
         PSIRT_TOKEN_URL,
         data={
@@ -1268,10 +1294,11 @@ def _eox_token() -> str:
         timeout=15,
     )
     resp.raise_for_status()
-    token = resp.json().get("access_token")
+    body  = resp.json()
+    token = body.get("access_token")
     if not token:
         raise ValueError("EOX token response contained no access_token")
-    _cache_set("eox_token", token)
+    _cache_set("eox_token", token, _oauth_token_ttl(body))
     return token
 
 def _eox_headers() -> dict:
@@ -1316,13 +1343,12 @@ def eox_search(pids: str = "", start_date: str = "", end_date: str = ""):  # syn
         log.info(f"EOX search: cache hit")
         return cached
     try:
-        hdrs = _eox_headers()
         if pids:
             pid_str = pids.strip().rstrip(",")
             url = f"{EOX_API_BASE}/EOXByProductID/1/{pid_str}"
         else:
             url = f"{EOX_API_BASE}/EOXByDates/1/{start_date}/{end_date}"
-        resp = http_requests.get(url, headers=hdrs, timeout=30)
+        resp = _cisco_authed_get(url, "eox_token", _eox_token, _eox_headers, timeout=30)
         resp.raise_for_status()
         records = resp.json().get("EOXRecord", [])
         parsed = [_eox_parse(r) for r in records]
