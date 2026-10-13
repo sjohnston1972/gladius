@@ -6045,6 +6045,13 @@
     if (!a || typeof a !== 'object') return a;
     const out = Object.assign({}, a);
     out.findings = Array.isArray(a.findings) ? a.findings.map(normalizeFinding) : [];
+    // Scores are interpolated into markup and styles all over: force numbers.
+    if (a.score && typeof a.score === 'object') {
+      out.score = Object.assign({}, a.score);
+      for (const k of ['overall', 'nist', 'cis']) {
+        if (k in out.score) { const n = Number(out.score[k]); out.score[k] = Number.isFinite(n) ? n : 0; }
+      }
+    }
     return out;
   }
 
@@ -6409,15 +6416,10 @@
               onFindingStream(event.finding);
             } else if (event.type === 'audit_saved') {
               try {
-                localStorage.setItem('gladius-audit-latest', JSON.stringify(event.audit));
-                let hist = []; const raw = localStorage.getItem('gladius-audit-history');
-                if (raw) hist = JSON.parse(raw);
-                hist = hist.filter(h => h.timestamp !== (event.audit.timestamp||''));
-                hist.unshift(event.audit); if (hist.length > 10) hist.length = 10;
-                localStorage.setItem('gladius-audit-history', JSON.stringify(hist));
+                const audit = saveAudit(event.audit);
                 loadDashboard(); renderReports();
-                appendAuditCard(event.audit);
-                logActivity('Multi-device audit saved — ' + event.audit.device, event.audit.device);
+                appendAuditCard(audit);
+                logActivity('Multi-device audit saved — ' + audit.device, audit.device);
               } catch(e) { console.warn('audit_saved write failed', e); }
             } else if (event.type === 'done') {
               conversationHistory.push({ role: 'assistant', content: fullText });
@@ -6563,7 +6565,7 @@
             } else if (event.type === 'send_templated_email') {
               // Server intercepted Claude's send_email — generate templated HTML and send it
               (async () => {
-                const audit = (() => { try { return JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null'); } catch(e) { return null; } })();
+                const audit = loadLatestAudit();
                 if (!audit) { console.warn('[Gladius] send_templated_email: no audit in localStorage'); return; }
                 const html    = generateReportHTML(audit);
                 const device  = audit.device || audit.ip || 'device';
@@ -6590,25 +6592,11 @@
             } else if (event.type === 'audit_saved') {
               // Claude called save_audit_results — write to localStorage and refresh dashboard
               try {
-                localStorage.setItem('gladius-audit-latest', JSON.stringify(event.audit));
-                appendAuditCard(event.audit);
-                // Append to history (keep last 10, deduplicate by timestamp)
-                try {
-                  let hist = [];
-                  const raw = localStorage.getItem('gladius-audit-history');
-                  if (raw) hist = JSON.parse(raw);
-                  // Remove any existing entry with the same timestamp (prevent duplicates on re-save)
-                  const newTs = event.audit.timestamp || '';
-                  hist = hist.filter(h => h.timestamp !== newTs);
-                  hist.unshift(event.audit);
-                  if (hist.length > 10) hist.length = 10;
-                  localStorage.setItem('gladius-audit-history', JSON.stringify(hist));
-                  console.log('[Gladius] Audit history updated —', hist.length, 'records');
-                } catch(e) { console.error('[Gladius] History write failed:', e); }
+                const audit = saveAudit(event.audit);
+                appendAuditCard(audit);
                 loadDashboard();
                 renderReports();
-                logActivity('Audit saved — ' + event.audit.device + ' (' + (event.audit.findings?.length || 0) + ' findings)', event.audit.device);
-                console.log('Dashboard updated from audit_saved event');
+                logActivity('Audit saved — ' + audit.device + ' (' + (audit.findings?.length || 0) + ' findings)', audit.device);
               } catch(e) { console.warn('audit_saved write failed', e); }
             }
           } catch(e) { /* skip malformed lines */ }
@@ -7262,6 +7250,7 @@
   // REPORT HTML GENERATOR
   // ══════════════════════════════════════════════════════════════════════════
 
+  // @test-extract:begin report
   // Category inference from finding title keywords
   const CATEGORY_MAP = [
     { cat: 'Access Security',          keys: ['ssh','telnet','password','exec timeout','login','banner','privilege','enable secret','aaa authen'] },
@@ -7303,15 +7292,17 @@
   }
 
   function generateReportHTML(audit) {
+    audit = normalizeAudit(audit) || {};   // findings carry description/remediation from impact/fix/commands
     const findings  = audit.findings || [];
-    const isCveFn   = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    const isCveFn   = isCveFinding;
     const hardening = findings.filter(f => !isCveFn(f));
     const cves      = findings.filter(isCveFn);
+    const crits     = hardening.filter(f => f.severity === 'CRITICAL');
     const highs     = hardening.filter(f => f.severity === 'HIGH');
     const meds      = hardening.filter(f => f.severity === 'MEDIUM');
     const lows      = hardening.filter(f => f.severity === 'LOW');
     const passes    = hardening.filter(f => f.severity === 'PASS');
-    const failed    = highs.length + meds.length + lows.length;
+    const failed    = crits.length + highs.length + meds.length + lows.length;
     const total     = failed + passes.length;
     const score     = Math.round((audit.score || {}).overall || 0);
     const ts        = audit.timestamp ? new Date(audit.timestamp).toLocaleString('en-GB') : '';
@@ -7336,14 +7327,15 @@
     }).join('\n');
 
     // Action plan buckets
-    const actionImmediate = highs.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
+    const actionImmediate = crits.concat(highs).map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
     const actionShort     = meds.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
     const actionPlanned   = lows.map(f => `<li style="margin-bottom:4px;font-size:0.88rem;"><b>${escHtml(f.title)}</b> <span style="color:#94a3b8;">(${escHtml(inferCategory(f))})</span></li>`).join('');
 
     // Finding card (Summary tab)
+    const catBgFor = sev => sev === 'CRITICAL' ? '#991b1b' : sev === 'HIGH' ? '#dc2626' : sev === 'MEDIUM' ? '#ea580c' : '#ca8a04';
     function findingCard(f, borderCol, bgCol) {
       const cat    = inferCategory(f);
-      const catBg  = f.severity === 'HIGH' ? '#dc2626' : f.severity === 'MEDIUM' ? '#ea580c' : '#ca8a04';
+      const catBg  = catBgFor(f.severity);
       return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:10px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escHtml(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;white-space:nowrap;margin-left:8px;">${escHtml(cat)}</span></div><div style="font-size:0.85rem;color:#475569;margin-bottom:4px;"><b>Impact:</b> ${escHtml(f.description || '')}</div><div style="font-size:0.85rem;color:#475569;"><b>Fix:</b> <code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:3px;font-size:0.82rem;">${escHtml(f.remediation || '')}</code></div></div>`;
     }
 
@@ -7352,11 +7344,21 @@
     function remCard(f, borderCol, bgCol) {
       const id     = `cmd_rem_${remIdx++}`;
       const cat    = inferCategory(f);
-      const catBg  = f.severity === 'HIGH' ? '#dc2626' : f.severity === 'MEDIUM' ? '#ea580c' : '#ca8a04';
-      const rawCmd = (f.remediation || '').replace(/^Configure:\s*/i,'').trim();
+      const catBg  = catBgFor(f.severity);
+      // Config block comes from the agent's `commands`; a prose `fix` without
+      // commands is shown as text, not dressed up as IOS config. Legacy
+      // records only have `remediation`, which held the commands.
+      const cmdSrc = f.commands
+        ? (Array.isArray(f.commands) ? f.commands.join(', ') : String(f.commands))
+        : (f.fix ? '' : String(f.remediation || ''));
+      const rawCmd = cmdSrc.replace(/^Configure:\s*/i,'').trim();
       // Split comma-separated commands onto separate lines, each indented
-      const cmdLines = rawCmd.split(/,\s*(?=[a-z])/i).map(l => '  ' + l.trim()).join('\n');
-      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:16px 18px;margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escHtml(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;margin-left:8px;">${escHtml(cat)}</span></div></div><div style="font-size:0.82rem;color:#475569;margin-bottom:10px;"><b>Impact:</b> ${escHtml(f.description || '')}</div><div style="position:relative;margin-bottom:4px;"><pre id="${id}" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">configure terminal\n${escHtml(cmdLines)}\nend</pre><button onclick="copyCode(this,'${id}')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div></div>`;
+      const cmdLines = rawCmd.includes('\n')
+        ? rawCmd.split('\n').map(l => '  ' + l.trim()).join('\n')
+        : rawCmd.split(/,\s*(?=[a-z])/i).map(l => '  ' + l.trim()).join('\n');
+      const fixHtml = f.fix ? `<div style="font-size:0.82rem;color:#475569;margin-bottom:10px;"><b>Fix:</b> ${escHtml(f.fix)}</div>` : '';
+      const cmdHtml = rawCmd ? `<div style="position:relative;margin-bottom:4px;"><pre id="${id}" style="background:#0f172a;color:#e2e8f0;padding:14px 16px;border-radius:8px;font-size:0.8rem;overflow-x:auto;margin:0;line-height:1.6;">configure terminal\n${escHtml(cmdLines)}\nend</pre><button onclick="copyCode(this,'${id}')" style="position:absolute;top:8px;right:8px;background:#334155;color:#e2e8f0;border:none;border-radius:5px;padding:4px 10px;font-size:0.72rem;cursor:pointer;">Copy</button></div>` : '';
+      return `<div style="border-left:4px solid ${borderCol};background:${bgCol};border-radius:0 8px 8px 0;padding:16px 18px;margin-bottom:14px;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><div><span style="font-weight:700;color:#0f172a;font-size:0.95rem;">${escHtml(f.title)}</span><span style="background:${catBg};color:#fff;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:9999px;margin-left:8px;">${escHtml(cat)}</span></div></div><div style="font-size:0.82rem;color:#475569;margin-bottom:10px;"><b>Impact:</b> ${escHtml(f.description || '')}</div>${fixHtml}${cmdHtml}</div>`;
     }
 
     // Passed checks list
@@ -7366,6 +7368,7 @@
     const cveItems = cves.map(f => findingCard(f, '#a855f7', '#faf5ff')).join('');
 
     // Checklist items — dynamic, referencing actual finding titles
+    const critTitles = crits.map(f => f.title).join(', ');
     const highTitles = highs.map(f => f.title).join(', ');
     const medTitles  = meds.map(f => f.title).join(', ');
     const lowTitles  = lows.map(f => f.title).join(', ');
@@ -7398,7 +7401,8 @@
       ${chk('Out-of-band management path confirmed', '')}
       ${chk('Secondary admin account tested and working', '')}
       ${section('#059669', '5. Implementation')}
-      ${highs.length ? chk('HIGH priority findings addressed first', escHtml(highTitles)) : ''}
+      ${crits.length ? chk('CRITICAL findings addressed first', escHtml(critTitles)) : ''}
+      ${highs.length ? chk(crits.length ? 'HIGH priority findings addressed' : 'HIGH priority findings addressed first', escHtml(highTitles)) : ''}
       ${meds.length  ? chk('MEDIUM priority findings addressed', escHtml(medTitles))  : ''}
       ${lows.length  ? chk('LOW priority findings addressed', escHtml(lowTitles))   : ''}
       ${chk('Each command verified immediately after entry', '')}
@@ -7612,6 +7616,7 @@
   <div class="two-col" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
     <div class="card" style="margin-bottom:0;">
       <div class="card-title">Risk Distribution</div>
+      ${crits.length ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fee2e2;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#7f1d1d;">CRITICAL</span><span style="font-size:1.5rem;font-weight:700;color:#7f1d1d;">${crits.length}</span></div>` : ''}
       ${highs.length ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fef2f2;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#991b1b;">HIGH</span><span style="font-size:1.5rem;font-weight:700;color:#991b1b;">${highs.length}</span></div>` : ''}
       ${meds.length  ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fff7ed;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#9a3412;">MEDIUM</span><span style="font-size:1.5rem;font-weight:700;color:#9a3412;">${meds.length}</span></div>` : ''}
       ${lows.length  ? `<div style="display:flex;align-items:center;justify-content:space-between;background:#fefce8;border-radius:8px;padding:12px 20px;margin-bottom:8px;"><span style="font-weight:600;color:#854d0e;">LOW</span><span style="font-size:1.5rem;font-weight:700;color:#854d0e;">${lows.length}</span></div>` : ''}
@@ -7627,6 +7632,7 @@
 
   <div class="card">
     <div class="card-title">Detailed Findings &mdash; ${failed} Issue${failed !== 1 ? 's' : ''}</div>
+    ${crits.length ? `<h3 style="color:#991b1b;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">CRITICAL Risk &mdash; ${crits.length} issue${crits.length !== 1 ? 's' : ''}</h3>${crits.map(f => findingCard(f,'#b91c1c','#fef2f2')).join('')}` : ''}
     ${highs.length ? `<h3 style="color:#dc2626;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">HIGH Risk &mdash; ${highs.length} issue${highs.length !== 1 ? 's' : ''}</h3>${highs.map(f => findingCard(f,'#f87171','#fff1f2')).join('')}` : ''}
     ${meds.length  ? `<h3 style="color:#ea580c;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">MEDIUM Risk &mdash; ${meds.length} issue${meds.length !== 1 ? 's' : ''}</h3>${meds.map(f => findingCard(f,'#fb923c','#fff7ed')).join('')}` : ''}
     ${lows.length  ? `<h3 style="color:#ca8a04;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;">LOW Risk &mdash; ${lows.length} issue${lows.length !== 1 ? 's' : ''}</h3>${lows.map(f => findingCard(f,'#fbbf24','#fefce8')).join('')}` : ''}
@@ -7658,6 +7664,7 @@
     <div style="font-weight:700;color:#92400e;margin-bottom:4px;">&#9888; Important</div>
     <div style="font-size:0.87rem;color:#78350f;">Test all commands in a lab environment before applying to production. Complete the Pre-Deployment Checklist first. Always save configuration after each section.</div>
   </div>
+  ${crits.length ? `<h3 style="color:#991b1b;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#b91c1c;color:#fff;padding:2px 10px;border-radius:9999px;">CRITICAL</span> &mdash; ${crits.length} finding${crits.length !== 1 ? 's' : ''}</h3>${crits.map(f => remCard(f,'#b91c1c','#fef2f2')).join('')}` : ''}
   ${highs.length ? `<h3 style="color:#dc2626;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#f87171;color:#fff;padding:2px 10px;border-radius:9999px;">HIGH</span> &mdash; ${highs.length} finding${highs.length !== 1 ? 's' : ''}</h3>${highs.map(f => remCard(f,'#f87171','#fff1f2')).join('')}` : ''}
   ${meds.length  ? `<h3 style="color:#ea580c;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#fb923c;color:#fff;padding:2px 10px;border-radius:9999px;">MEDIUM</span> &mdash; ${meds.length} finding${meds.length !== 1 ? 's' : ''}</h3>${meds.map(f => remCard(f,'#fb923c','#fff7ed')).join('')}` : ''}
   ${lows.length  ? `<h3 style="color:#ca8a04;margin:28px 0 12px;font-size:0.85rem;text-transform:uppercase;letter-spacing:0.06em;display:flex;align-items:center;gap:10px;"><span style="background:#fbbf24;color:#fff;padding:2px 10px;border-radius:9999px;">LOW</span> &mdash; ${lows.length} finding${lows.length !== 1 ? 's' : ''}</h3>${lows.map(f => remCard(f,'#fbbf24','#fefce8')).join('')}` : ''}
@@ -7714,12 +7721,13 @@ ${cves.length ? `<!-- CVE TAB -->
 </body>
 </html>`;
   }
+  // @test-extract:end report
 
     function exportReport(idx) {
     const history = loadAuditHistory();
     let audit = history[idx];
     if (!audit) {
-      try { audit = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null'); } catch(e) {}
+      audit = loadLatestAudit();
     }
     if (!audit) return;
     const html = generateReportHTML(audit);
@@ -7738,7 +7746,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const history = loadAuditHistory();
     let audit = history[idx];
     if (!audit) {
-      try { audit = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null'); } catch(e) {}
+      audit = loadLatestAudit();
     }
     if (!audit) return;
 
@@ -7783,11 +7791,42 @@ ${cves.length ? `<!-- CVE TAB -->
 
   // ══════════════════════════════════════════════════════════════════════════
 
+  // @test-extract:begin audit-store
+  // Audits are normalised (normalizeAudit) on every read so records saved by
+  // older builds still get description/remediation and upper-case severity.
   function loadAuditHistory() {
     try {
-      return JSON.parse(localStorage.getItem('gladius-audit-history') || '[]');
+      const hist = JSON.parse(localStorage.getItem('gladius-audit-history') || '[]');
+      return Array.isArray(hist) ? hist.map(normalizeAudit) : [];
     } catch(e) { return []; }
   }
+
+  function loadLatestAudit() {
+    try {
+      const a = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+      return a ? normalizeAudit(a) : null;
+    } catch(e) { return null; }
+  }
+
+  // Single write path for audit_saved (audit chat and parallel audit).
+  // Normalises once, writes gladius-audit-latest and prepends to
+  // gladius-audit-history (dedup by timestamp, keep 10). Returns the
+  // normalised audit for the caller to render.
+  function saveAudit(audit) {
+    const a = normalizeAudit(audit);
+    try {
+      localStorage.setItem('gladius-audit-latest', JSON.stringify(a));
+    } catch(e) { console.error('[Gladius] Latest audit write failed:', e); }
+    try {
+      const newTs = a.timestamp || '';
+      const hist = loadAuditHistory().filter(h => h.timestamp !== newTs);
+      hist.unshift(a);
+      if (hist.length > 10) hist.length = 10;
+      localStorage.setItem('gladius-audit-history', JSON.stringify(hist));
+    } catch(e) { console.error('[Gladius] History write failed:', e); }
+    return a;
+  }
+  // @test-extract:end audit-store
 
   function renderReports() {
     const body = document.getElementById('reports-list-body');
@@ -7798,7 +7837,7 @@ ${cves.length ? `<!-- CVE TAB -->
     let history = loadAuditHistory();
     if (!history.length) {
       try {
-        const latest = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+        const latest = loadLatestAudit();
         if (latest) history = [latest];
       } catch(e) {}
     }
@@ -7816,15 +7855,16 @@ ${cves.length ? `<!-- CVE TAB -->
 
     history.forEach((audit, idx) => {
       const findings = audit.findings || [];
-      const isCveFn  = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+      const isCveFn  = isCveFinding;
+      const crits = findings.filter(f => f.severity === 'CRITICAL' && !isCveFn(f)).length;
       const highs = findings.filter(f => f.severity === 'HIGH'   && !isCveFn(f)).length;
       const meds  = findings.filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
       const cves  = findings.filter(isCveFn).length;
       const pass  = findings.filter(f => f.severity === 'PASS').length;
       const score = (audit.score || {}).overall || 0;
       const scoreCol = score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--warn)' : 'var(--danger)';
-      const iconCol  = highs > 0 ? 'high' : meds > 0 ? 'medium' : 'low';
-      const iconSvg  = highs > 0
+      const iconCol  = (crits + highs) > 0 ? 'high' : meds > 0 ? 'medium' : 'low';
+      const iconSvg  = (crits + highs) > 0
         ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff4444" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
         : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00ff88" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>';
 
@@ -7833,6 +7873,7 @@ ${cves.length ? `<!-- CVE TAB -->
         audit.ios || '',
         ts,
         `${findings.length} checks`,
+        crits ? `${crits} CRIT` : null,
         highs ? `${highs} HIGH` : null,
         meds  ? `${meds} MED`  : null,
         cves  ? `${cves} CVE`  : null,
@@ -7870,7 +7911,7 @@ ${cves.length ? `<!-- CVE TAB -->
     if (!history.length) {
       // Fall back to latest
       try {
-        const latest = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+        const latest = loadLatestAudit();
         if (latest) openReportPanelData(latest);
       } catch(e) {}
       return;
@@ -7958,29 +7999,32 @@ ${cves.length ? `<!-- CVE TAB -->
   // AGENT CONTEXT — inject last 3 audit summaries into conversation
   // ══════════════════════════════════════════════════════════════════════════
 
+  // @test-extract:begin audit-context
   function buildAuditContext() {
     const history = loadAuditHistory();
     if (!history.length) return null;
     const recent = history.slice(0, 3);
     const lines = recent.map((a, i) => {
-      const findings = a.findings || [];
-      const isCveFn  = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+      const findings = a.findings || [];   // normalised by loadAuditHistory()
+      const isCveFn  = isCveFinding;
+      const crits = findings.filter(f => f.severity === 'CRITICAL' && !isCveFn(f)).length;
       const highs = findings.filter(f => f.severity === 'HIGH'   && !isCveFn(f)).length;
       const meds  = findings.filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
       const cves  = findings.filter(isCveFn).length;
       const score = (a.score || {}).overall || 0;
-      const topFindings = findings
-        .filter(f => f.severity === 'HIGH' || f.severity === 'MEDIUM')
+      const topFindings = sortBySeverity(findings
+        .filter(f => f.severity === 'CRITICAL' || f.severity === 'HIGH' || f.severity === 'MEDIUM'))
         .slice(0, 5)
-        .map(f => `    - [${f.severity}] ${f.title}: ${(f.description||'').slice(0,100)}`)
+        .map(f => `    - [${f.severity}] ${f.title}: ${String(f.description || f.impact || '').slice(0,100)}`)
         .join('\n');
       return `Audit ${i+1}: ${a.device||'?'} (${a.ip||''}) · ${a.ios||''} · ${a.timestamp||''}
   Overall compliance: ${score}% | NIST: ${(a.score||{}).nist||0}% | CIS: ${(a.score||{}).cis||0}%
-  Findings: ${highs} HIGH, ${meds} MEDIUM, ${cves} CVE
+  Findings: ${crits} CRITICAL, ${highs} HIGH, ${meds} MEDIUM, ${cves} CVE
   Top findings:\n${topFindings||'    (none)'}`;
     }).join('\n\n');
     return `[AUDIT HISTORY — last ${recent.length} audits]\n${lines}\n[END AUDIT HISTORY]`;
   }
+  // @test-extract:end audit-context
 
   // ── NMAP ──
 
@@ -10581,9 +10625,10 @@ ${cves.length ? `<!-- CVE TAB -->
     setEl('dash-device', audit.device || '—');
     setEl('dash-device-sub', `${audit.ip || ''} · ${audit.ios || ''}`);
 
-    const isCveFn = f => f.type === 'cve' || /^CVE-\d{4}-\d+/i.test(f.title || '');
+    const isCveFn = isCveFinding;
     const cves  = (audit.findings || []).filter(isCveFn).length;
-    const highs = (audit.findings || []).filter(f => f.severity === 'HIGH'   && !isCveFn(f)).length;
+    // The HIGH tile (and its filter) covers CRITICAL too — there is no CRITICAL tile.
+    const highs = (audit.findings || []).filter(f => (f.severity === 'HIGH' || f.severity === 'CRITICAL') && !isCveFn(f)).length;
     const meds  = (audit.findings || []).filter(f => f.severity === 'MEDIUM' && !isCveFn(f)).length;
     const pass  = (audit.findings || []).filter(f => f.severity === 'PASS').length;
     setEl('dash-high', highs);
@@ -10608,11 +10653,11 @@ ${cves.length ? `<!-- CVE TAB -->
 
   function loadDashboard() {
     // ── Audit data ─────────────────────────────────────────────────────────
-    const raw = localStorage.getItem('gladius-audit-latest');
-    if (raw) {
+    const latestAudit = loadLatestAudit();
+    if (latestAudit) {
       try {
-        _renderAuditOnDash(JSON.parse(raw));
-      } catch(e) { console.warn('Audit parse error', e); }
+        _renderAuditOnDash(latestAudit);
+      } catch(e) { console.warn('Audit render error', e); }
     }
 
     // ── Device inventory (SNMP) + Active Alerts ────────────────────────────
@@ -10653,7 +10698,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
     // Re-render findings with the current filter applied
     const findings = _dashCurrentAudit?.findings
-      || (() => { try { return JSON.parse(localStorage.getItem('gladius-audit-latest') || '{}').findings || []; } catch(e) { return []; } })();
+      || (loadLatestAudit() || {}).findings || [];
     renderFindings(findings);
   }
 
@@ -10672,7 +10717,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const visible = _activeFilter === 'CVE'
       ? sorted.filter(isCveFinding)
       : _activeFilter
-        ? sorted.filter(f => f.severity === _activeFilter && !isCveFinding(f))
+        ? sorted.filter(f => (f.severity === _activeFilter || (_activeFilter === 'HIGH' && f.severity === 'CRITICAL')) && !isCveFinding(f))
         : sorted;
     if (!visible.length) {
       const emptyLabel = _activeFilter === 'CVE' ? 'CVE vulnerabilities' : `${_activeFilter} findings`;
@@ -11537,7 +11582,7 @@ ${cves.length ? `<!-- CVE TAB -->
     // Pull device context from most recent audit
     let deviceCtx = '';
     try {
-      const latest = JSON.parse(localStorage.getItem('gladius-audit-latest') || 'null');
+      const latest = loadLatestAudit();
       if (latest) deviceCtx = ` on ${latest.device} (${latest.ip}, ${latest.ios})`;
     } catch(e) {}
     let prompt;
@@ -11678,8 +11723,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const isOpen = drop.style.display !== 'none';
     if (isOpen) { drop.style.display = 'none'; return; }
 
-    let hist = [];
-    try { hist = JSON.parse(localStorage.getItem('gladius-audit-history') || '[]'); } catch(e) {}
+    const hist = loadAuditHistory();
     if (!hist.length) { drop.style.display = 'none'; return; }
 
     // Position using fixed coords so overflow:hidden on ancestors doesn't clip it
@@ -11692,7 +11736,7 @@ ${cves.length ? `<!-- CVE TAB -->
       const ts   = a.timestamp ? new Date(a.timestamp).toLocaleString('en-GB', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
       const score = (a.score || {}).overall;
       const scoreHtml = score != null
-        ? `<span style="font-family:var(--font-mono);font-size:10px;color:${score>=70?'var(--success)':score>=40?'var(--warn,#f59e0b)':'var(--danger)'};margin-left:auto">${score}%</span>`
+        ? `<span style="font-family:var(--font-mono);font-size:10px;color:${score>=70?'var(--success)':score>=40?'var(--warn,#f59e0b)':'var(--danger)'};margin-left:auto">${escHtml(score)}%</span>`
         : '';
       const isCurrent = _dashCurrentAudit && _dashCurrentAudit.timestamp === a.timestamp;
       return `<div onclick="selectDashAudit(${i})" style="display:flex;align-items:center;gap:8px;padding:8px 14px;cursor:pointer;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;${isCurrent?'background:var(--accent-dim);color:var(--accent)':'color:var(--text-secondary)'}">
@@ -11720,8 +11764,7 @@ ${cves.length ? `<!-- CVE TAB -->
 
   function selectDashAudit(idx) {
     document.getElementById('audit-selector-drop').style.display = 'none';
-    let hist = [];
-    try { hist = JSON.parse(localStorage.getItem('gladius-audit-history') || '[]'); } catch(e) {}
+    const hist = loadAuditHistory();
     const audit = hist[idx];
     if (!audit) return;
     _activeFilter = null;
