@@ -59,7 +59,6 @@ SYSTEM_OIDS = {
 _devices:          dict[str, dict] = {}   # id → device config
 _status:           dict[str, dict] = {}   # id → latest poll result
 _last_alerted:     dict[str, str] = {}   # id → last status we alerted on (to avoid repeat alerts)
-_iface_miss_count: dict[str, int] = {}   # "devid::iface::miss" → consecutive miss count
 
 # ── Device persistence ─────────────────────────────────────────────────────────
 # Set when devices.json exists but neither it nor its .bak could be parsed.
@@ -232,7 +231,7 @@ def _poll_device_sync(dev: dict) -> dict:
 
 
 # ── Protocol state tracking ───────────────────────────────────────────────────
-_proto_state: dict[str, dict] = {}   # dev_id → {"interfaces": {...}, "bgp": {...}, "ospf": {...}}
+_proto_state: dict[str, dict] = {}   # dev_id → confirmed {"interfaces": {...}, "bgp": {...}, "ospf": {...}} (None = never walked)
 _events: list[dict] = []             # recent events (capped at 200)
 _MAX_EVENTS = 200
 
@@ -356,194 +355,241 @@ def _ospf_nbr_key(oid_str: str) -> str:
     return ip if parts[-1] == "0" else f"{ip}/{parts[-1]}"
 
 
+# Value types an agent returns in place of data (end of a v1 walk, endOfMibView
+# padding at the end of a GETBULK, missing objects). Matched by class name so
+# this works across pysnmp versions.
+_SNMP_NON_VALUES = {"Null", "NoSuchObject", "NoSuchInstance", "EndOfMibView"}
+
+
+def _collect_walk(base: str, responses, max_rows: int):
+    """Consume an hlapi walk iterator of (errInd, errStatus, errIdx, varBinds).
+
+    Returns [(oid_str, value), ...] for rows inside `base`, or None if the walk
+    hit an error — a failed walk must never look like an empty table.
+    """
+    rows = []
+    prefix = base + "."
+    for ei, es, _, var_binds in responses:
+        if ei or es:
+            return None
+        for name, val in var_binds:
+            oid_str = str(name)
+            if not oid_str.startswith(prefix) or type(val).__name__ in _SNMP_NON_VALUES:
+                continue
+            rows.append((oid_str, val))
+        if len(rows) >= max_rows:
+            break
+    return rows
+
+
+_IF_DESCR, _IF_ADMIN, _IF_OPER = "1.3.6.1.2.1.2.2.1.2", "1.3.6.1.2.1.2.2.1.7", "1.3.6.1.2.1.2.2.1.8"
+_BGP_PEER_STATE = "1.3.6.1.2.1.15.3.1.2"
+_OSPF_NBR_STATE = "1.3.6.1.2.1.14.10.1.6"
+
+
+def _build_interfaces(descr_rows, admin_rows, oper_rows) -> dict:
+    """ifDescr/ifAdminStatus/ifOperStatus walk rows → {descr: {oper, admin, idx}}."""
+    def by_idx(rows):
+        return {oid.split(".")[-1]: val.prettyPrint() for oid, val in rows}
+    if_admin, if_oper = by_idx(admin_rows), by_idx(oper_rows)
+    # Track all interfaces (including admin-down) so we detect recovery
+    # when admin-down → admin-up transitions occur
+    return {descr: {"oper": if_oper.get(idx, "1"), "admin": if_admin.get(idx, "1"), "idx": idx}
+            for idx, descr in by_idx(descr_rows).items()}
+
+
 def _poll_protocol_state_sync(dev: dict) -> dict:
-    """Walk interface oper status, BGP peer state, OSPF neighbor state. Returns parsed state dict."""
+    """Walk interface oper status, BGP peer state, OSPF neighbor state. Returns parsed state dict.
+
+    A table whose walk failed is None (state unknown), never an empty dict, so
+    a dropped packet is not mistaken for "every peer disappeared".
+    """
     host = dev["host"]
     port = dev.get("port", 161)
-    state = {"interfaces": {}, "bgp": {}, "ospf": {}}
+    state = {"interfaces": None, "bgp": None, "ospf": None}
     try:
         from pysnmp.hlapi import nextCmd
         auth = _auth_data(dev)
-        transport = UdpTransportTarget((host, port), timeout=3, retries=0)
 
-        # Interface oper status: walk ifDescr + ifOperStatus + ifAdminStatus
-        if_descr = {}
-        if_oper = {}
-        if_admin = {}
-        for oid_base, store, max_rows in [
-            ("1.3.6.1.2.1.2.2.1.2", if_descr, 200),   # ifDescr
-            ("1.3.6.1.2.1.2.2.1.7", if_admin, 200),    # ifAdminStatus
-            ("1.3.6.1.2.1.2.2.1.8", if_oper, 200),     # ifOperStatus
-        ]:
-            count = 0
-            for ei, es, _, varBinds in nextCmd(SnmpEngine(), auth,
-                UdpTransportTarget((host, port), timeout=3, retries=0),
-                ContextData(), ObjectType(ObjectIdentity(oid_base)), lexicographicMode=False):
-                if ei or es:
-                    break
-                for var in varBinds:
-                    idx = str(var[0]).split(".")[-1]
-                    store[idx] = var[1].prettyPrint()
-                count += 1
-                if count >= max_rows:
-                    break
+        def walk(oid_base: str, max_rows: int):
+            return _collect_walk(oid_base, nextCmd(SnmpEngine(), auth,
+                UdpTransportTarget((host, port), timeout=3, retries=1),
+                ContextData(), ObjectType(ObjectIdentity(oid_base)), lexicographicMode=False), max_rows)
 
-        for idx, descr in if_descr.items():
-            admin = if_admin.get(idx, "1")
-            oper = if_oper.get(idx, "1")
-            # Track all interfaces (including admin-down) so we detect recovery
-            # when admin-down → admin-up transitions occur
-            state["interfaces"][descr] = {"oper": oper, "admin": admin, "idx": idx}
+        # Interface oper status: walk ifDescr + ifAdminStatus + ifOperStatus.
+        # Stop at the first failed walk — the device has stopped answering.
+        cols = []
+        for oid_base in (_IF_DESCR, _IF_ADMIN, _IF_OPER):
+            rows = walk(oid_base, 200)
+            if rows is None:
+                return state
+            cols.append(rows)
+        state["interfaces"] = _build_interfaces(*cols)
 
         # BGP peer state
-        for ei, es, _, varBinds in nextCmd(SnmpEngine(), auth,
-            UdpTransportTarget((host, port), timeout=3, retries=0),
-            ContextData(), ObjectType(ObjectIdentity("1.3.6.1.2.1.15.3.1.2")), lexicographicMode=False):
-            if ei or es:
-                break
-            for var in varBinds:
-                peer_ip = ".".join(str(var[0]).split(".")[-4:])
-                bgp_state = var[1].prettyPrint()
-                state["bgp"][peer_ip] = bgp_state
-            if len(state["bgp"]) >= 50:
-                break
+        rows = walk(_BGP_PEER_STATE, 50)
+        if rows is None:
+            return state
+        state["bgp"] = {".".join(oid.split(".")[-4:]): val.prettyPrint() for oid, val in rows}
 
         # OSPF neighbor state
-        for ei, es, _, varBinds in nextCmd(SnmpEngine(), auth,
-            UdpTransportTarget((host, port), timeout=3, retries=0),
-            ContextData(), ObjectType(ObjectIdentity("1.3.6.1.2.1.14.10.1.6")), lexicographicMode=False):
-            if ei or es:
-                break
-            for var in varBinds:
-                nbr_ip = _ospf_nbr_key(str(var[0]))
-                ospf_state = var[1].prettyPrint()
-                state["ospf"][nbr_ip] = ospf_state
-            if len(state["ospf"]) >= 50:
-                break
+        rows = walk(_OSPF_NBR_STATE, 50)
+        if rows is None:
+            return state
+        state["ospf"] = {_ospf_nbr_key(oid): val.prettyPrint() for oid, val in rows}
 
     except Exception as e:
         log.debug("Protocol poll failed for %s: %s", host, e)
     return state
 
 
-def _detect_events(dev: dict, old_state: dict, new_state: dict) -> list[dict]:
-    """Compare old and new protocol state, return list of events."""
-    events = []
-    dev_id = dev["id"]
+# ── Protocol state diffing ────────────────────────────────────────────────────
+# A down transition must be seen on this many consecutive polls before it is
+# reported (and ticketed). Recoveries are reported immediately.
+HOLD_DOWN_POLLS = max(1, int(os.getenv("SNMP_HOLD_DOWN_POLLS", "2")))
 
-    # Interface changes
-    # Track ALL interfaces (including admin-down) so we detect recovery when
-    # an interface transitions admin-down → admin-up → oper-up.
-    old_ifs = old_state.get("interfaces", {})
-    new_ifs = new_state.get("interfaces", {})
-    for iface, info in new_ifs.items():
-        old_info = old_ifs.get(iface)
-        if old_info:
-            old_oper = old_info["oper"]
-            new_oper = info["oper"]
-            if old_oper != new_oper:
-                if new_oper == "2":  # went down
-                    events.append(_add_event(dev, "interface_down", "critical",
-                        f"{iface} went DOWN", {"interface": iface}))
-                elif new_oper == "1" and old_oper == "2":  # came up
-                    events.append(_add_event(dev, "interface_up", "info",
-                        f"{iface} came UP", {"interface": iface}))
-            # Admin status changed (admin-down → admin-up with oper up = recovery)
-            old_admin = old_info.get("admin", "1")
-            new_admin = info.get("admin", "1")
-            if old_admin == "2" and new_admin == "1" and new_oper == "1" and old_oper != "1":
-                events.append(_add_event(dev, "interface_up", "info",
-                    f"{iface} came UP", {"interface": iface}))
-        else:
-            # Interface appeared (wasn't tracked before)
-            # Only alert for admin-up interfaces that are oper-down — skip if admin-down
-            # (admin-down interfaces being oper-down is expected, not an event)
-            if info["oper"] == "2" and info.get("admin") == "1":
-                events.append(_add_event(dev, "interface_down", "critical",
-                    f"{iface} went DOWN", {"interface": iface}))
+# ifOperStatus (RFC 2863). Any of these with admin up counts as down.
+_IF_OPER_STATES = {"1": "up", "2": "down", "3": "testing", "4": "unknown",
+                   "5": "dormant", "6": "notPresent", "7": "lowerLayerDown"}
+_IF_OPER_DOWN = {"2", "5", "6", "7"}
 
-    # Interfaces that disappeared (were in old, not in new)
-    # SKIP virtual/internal interfaces — SNMP walks are inconsistent for these
-    _IGNORE_DISAPPEAR = {"Null", "Loopback", "SR", "NVI", "VoIP-", "Vlan", "ucse", "BVI", "LISP"}
-    for iface in old_ifs:
-        if iface not in new_ifs and old_ifs[iface]["oper"] == "1":
-            if any(iface.startswith(pfx) for pfx in _IGNORE_DISAPPEAR):
-                continue
-            # Track disappearance count — only alert after 2 consecutive misses
-            miss_key = f"{dev_id}::{iface}::miss"
-            _iface_miss_count[miss_key] = _iface_miss_count.get(miss_key, 0) + 1
-            if _iface_miss_count[miss_key] < 2:
-                continue
-            events.append(_add_event(dev, "interface_down", "warning",
-                f"{iface} no longer present", {"interface": iface}))
+# SKIP virtual/internal interfaces when they vanish — SNMP walks are inconsistent for these
+_IGNORE_DISAPPEAR = ("Null", "Loopback", "SR", "NVI", "VoIP-", "Vlan", "ucse", "BVI", "LISP")
 
-    # Clear miss counters for interfaces that are present
-    for iface in new_ifs:
-        miss_key = f"{dev_id}::{iface}::miss"
-        _iface_miss_count.pop(miss_key, None)
+_hold_counts: dict[str, dict[str, int]] = {}   # dev_id → {"table|key": consecutive down observations}
 
-    # BGP peer changes
-    old_bgp = old_state.get("bgp", {})
-    new_bgp = new_state.get("bgp", {})
-    for peer, state_val in new_bgp.items():
-        old_val = old_bgp.get(peer)
-        if old_val and old_val != state_val:
-            state_name = _BGP_STATES.get(state_val, state_val)
-            old_name = _BGP_STATES.get(old_val, old_val)
-            if state_val == "6":  # established
-                events.append(_add_event(dev, "bgp_up", "info",
-                    f"BGP peer {peer} → established (was {old_name})", {"peer": peer, "state": state_name}))
-            elif old_val == "6":  # was established, now isn't
-                events.append(_add_event(dev, "bgp_down", "critical",
-                    f"BGP peer {peer} → {state_name} (was established)", {"peer": peer, "state": state_name}))
-            else:
-                # Suppress noise from non-established state transitions (idle↔active↔connect etc.)
-                # These are just the BGP FSM negotiating — only log if neither state is established
-                # and the transition is to a meaningfully worse state (idle=1 or down)
-                # Suppress all non-established state transitions entirely
-                # idle↔active↔connect cycling is normal BGP FSM negotiation noise
-                pass
-    # BGP peers that vanished
-    for peer in old_bgp:
-        if peer not in new_bgp and old_bgp[peer] == "6":
-            events.append(_add_event(dev, "bgp_down", "critical",
-                f"BGP peer {peer} disappeared (was established)", {"peer": peer}))
-    # New BGP peers
-    for peer in new_bgp:
-        if peer not in old_bgp and new_bgp[peer] == "6":
-            events.append(_add_event(dev, "bgp_up", "info",
-                f"BGP peer {peer} newly established", {"peer": peer, "state": "established"}))
 
-    # OSPF neighbor changes
-    old_ospf = old_state.get("ospf", {})
-    new_ospf = new_state.get("ospf", {})
-    for nbr, state_val in new_ospf.items():
-        old_val = old_ospf.get(nbr)
-        if old_val and old_val != state_val:
-            state_name = _OSPF_STATES.get(state_val, state_val)
-            old_name = _OSPF_STATES.get(old_val, old_val)
-            if state_val == "8":  # full
-                events.append(_add_event(dev, "ospf_up", "info",
-                    f"OSPF neighbor {nbr} → full (was {old_name})", {"neighbor": nbr, "state": state_name}))
-            elif old_val == "8":  # was full
-                events.append(_add_event(dev, "ospf_down", "critical",
-                    f"OSPF neighbor {nbr} → {state_name} (was full)", {"neighbor": nbr, "state": state_name}))
-            else:
-                # Suppress all non-full state transitions entirely
-                # OSPF FSM negotiation noise (init↔twoway↔exchange etc.)
-                pass
-    # OSPF neighbors that vanished
-    for nbr in old_ospf:
-        if nbr not in new_ospf and old_ospf[nbr] == "8":
-            events.append(_add_event(dev, "ospf_down", "critical",
-                f"OSPF neighbor {nbr} disappeared (was full)", {"neighbor": nbr}))
-    # New OSPF neighbors
-    for nbr in new_ospf:
-        if nbr not in old_ospf and new_ospf[nbr] == "8":
-            events.append(_add_event(dev, "ospf_up", "info",
-                f"OSPF neighbor {nbr} newly full", {"neighbor": nbr, "state": "full"}))
+def _iface_health(info: dict | None) -> str:
+    """Classify an interface row: up / down / other (admin-down, testing, unknown) / gone."""
+    if info is None:
+        return "gone"
+    oper = info.get("oper")
+    if oper == "1":
+        return "up"
+    if info.get("admin", "1") == "1" and oper in _IF_OPER_DOWN:
+        return "down"
+    return "other"
 
-    return [e for e in events if e is not None]
+
+def _peer_health(val: str | None, up_value: str) -> str:
+    if val is None:
+        return "gone"
+    return "up" if val == up_value else "down"
+
+
+def _iface_transition(name: str, o: dict | None, n: dict | None, ho: str, hn: str):
+    """→ (is_down_transition, event_spec | None) for one interface."""
+    if (ho in ("up", "gone") and hn == "down") or \
+       (ho == "up" and hn == "gone" and not name.startswith(_IGNORE_DISAPPEAR)):
+        if hn == "gone":
+            return True, ("interface_down", "warning", f"{name} no longer present", {"interface": name})
+        oper = n["oper"]
+        suffix = "" if oper == "2" else f" ({_IF_OPER_STATES.get(oper, oper)})"
+        return True, ("interface_down", "critical", f"{name} went DOWN{suffix}", {"interface": name})
+    # Recovery: from any down state, or from admin-down (admin-down → admin-up with oper up)
+    if hn == "up" and (ho == "down" or (ho == "other" and o.get("admin") == "2")):
+        return False, ("interface_up", "info", f"{name} came UP", {"interface": name})
+    return False, None
+
+
+def _bgp_transition(peer: str, o: str | None, n: str | None, ho: str, hn: str):
+    if ho == "up" and hn == "down":
+        state_name = _BGP_STATES.get(n, n)
+        return True, ("bgp_down", "critical", f"BGP peer {peer} → {state_name} (was established)",
+                      {"peer": peer, "state": state_name})
+    if ho == "up" and hn == "gone":
+        return True, ("bgp_down", "critical", f"BGP peer {peer} disappeared (was established)", {"peer": peer})
+    if ho == "down" and hn == "up":
+        return False, ("bgp_up", "info", f"BGP peer {peer} → established (was {_BGP_STATES.get(o, o)})",
+                       {"peer": peer, "state": "established"})
+    if ho == "gone" and hn == "up":
+        return False, ("bgp_up", "info", f"BGP peer {peer} newly established", {"peer": peer, "state": "established"})
+    # Non-established transitions (idle↔active↔connect etc.) are normal BGP FSM
+    # negotiation noise and are suppressed entirely
+    return False, None
+
+
+def _ospf_transition(nbr: str, o: str | None, n: str | None, ho: str, hn: str):
+    if ho == "up" and hn == "down":
+        state_name = _OSPF_STATES.get(n, n)
+        return True, ("ospf_down", "critical", f"OSPF neighbor {nbr} → {state_name} (was full)",
+                      {"neighbor": nbr, "state": state_name})
+    if ho == "up" and hn == "gone":
+        return True, ("ospf_down", "critical", f"OSPF neighbor {nbr} disappeared (was full)", {"neighbor": nbr})
+    if ho == "down" and hn == "up":
+        return False, ("ospf_up", "info", f"OSPF neighbor {nbr} → full (was {_OSPF_STATES.get(o, o)})",
+                       {"neighbor": nbr, "state": "full"})
+    if ho == "gone" and hn == "up":
+        return False, ("ospf_up", "info", f"OSPF neighbor {nbr} newly full", {"neighbor": nbr, "state": "full"})
+    # Non-full transitions (init↔twoway↔exchange etc.) are FSM noise — suppressed
+    return False, None
+
+
+_PROTO_TABLES = {
+    "interfaces": (_iface_health, _iface_transition),
+    "bgp":        (lambda v: _peer_health(v, "6"), _bgp_transition),
+    "ospf":       (lambda v: _peer_health(v, "8"), _ospf_transition),
+}
+
+
+def _diff_protocol_state(old: dict | None, new: dict, pending: dict[str, int],
+                         hold: int = HOLD_DOWN_POLLS) -> tuple[dict, list[tuple]]:
+    """Pure diff of confirmed protocol state against a new observation.
+
+    `old` is the last *confirmed* state (what events have been reported
+    against), `new` the latest walk (a table may be None if its walk failed),
+    `pending` the per-device hold-down counters (mutated in place).
+
+    Returns (new confirmed state, [(event_type, severity, detail, extra), ...]).
+    - A table whose walk failed keeps its confirmed state and raises nothing.
+    - A table seen for the first time is a baseline and raises nothing.
+    - A down transition is only reported after `hold` consecutive polls;
+      until then the entry keeps its last confirmed value.
+    """
+    old = old or {}
+    confirmed, specs = {}, []
+    for table, (health, transition) in _PROTO_TABLES.items():
+        old_t, new_t = old.get(table), new.get(table)
+        if new_t is None:                 # walk failed — no information
+            confirmed[table] = old_t
+            continue
+        prefix = f"{table}|"
+        if old_t is None:                 # first successful walk — baseline
+            for k in [k for k in pending if k.startswith(prefix)]:
+                pending.pop(k)
+            confirmed[table] = dict(new_t)
+            continue
+        out = {}
+        for key in sorted(set(old_t) | set(new_t)):
+            o, n = old_t.get(key), new_t.get(key)
+            is_down, spec = transition(key, o, n, health(o), health(n))
+            pkey = prefix + key
+            if is_down:
+                count = pending.get(pkey, 0) + 1
+                if count < hold:
+                    pending[pkey] = count
+                    if o is not None:
+                        out[key] = o      # not confirmed yet — keep last confirmed value
+                    continue
+            pending.pop(pkey, None)
+            if spec:
+                specs.append(spec)
+            if n is not None:
+                out[key] = n
+        seen = set(old_t) | set(new_t)
+        for k in [k for k in pending if k.startswith(prefix) and k[len(prefix):] not in seen]:
+            pending.pop(k)
+        confirmed[table] = out
+    return confirmed, specs
+
+
+def _detect_events(dev: dict, old_state: dict | None, new_state: dict) -> tuple[dict, list[dict]]:
+    """Diff protocol state for one device and emit the resulting events.
+    Returns (new confirmed state, emitted events)."""
+    pending = _hold_counts.setdefault(dev["id"], {})
+    confirmed, specs = _diff_protocol_state(old_state, new_state, pending)
+    events = [_add_event(dev, *spec) for spec in specs]
+    return confirmed, [e for e in events if e is not None]
 
 
 # ── Alert helpers ──────────────────────────────────────────────────────────────
@@ -612,10 +658,8 @@ async def _poll_all():
                     # Enrich dev with sysName for event labels
                     enriched = {**dev, "sysName": result.get("sysName", "")}
                     proto_state = await asyncio.to_thread(_poll_protocol_state_sync, enriched)
-                    old_proto = _proto_state.get(dev_id)
-                    if old_proto:
-                        _detect_events(enriched, old_proto, proto_state)
-                    _proto_state[dev_id] = proto_state
+                    confirmed, _ = _detect_events(enriched, _proto_state.get(dev_id), proto_state)
+                    _proto_state[dev_id] = confirmed
                 except Exception as e:
                     log.debug("Protocol poll error for %s: %s", dev["host"], e)
 
