@@ -11,7 +11,7 @@ import sqlite3
 import asyncio
 import base64
 import logging
-import subprocess
+import signal
 import tempfile
 import sys
 import ast
@@ -180,6 +180,9 @@ async def _spawn_pyats_subprocess(script_path: str, testbed_path: str, tmpdir: s
             "for full process isolation.",
             PYATS_SANDBOX_USER, PYATS_SANDBOX_USER,
         )
+    if hasattr(os, "killpg"):
+        # Own process group, so a kill also reaches helpers Unicon spawns.
+        kwargs["start_new_session"] = True
     return await asyncio.create_subprocess_exec(
         sys.executable, script_path, testbed_path,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -187,6 +190,34 @@ async def _spawn_pyats_subprocess(script_path: str, testbed_path: str, tmpdir: s
         env=_sandbox_env(tmpdir),
         **kwargs,
     )
+
+
+def _signal_proc(proc: "asyncio.subprocess.Process") -> None:
+    """SIGKILL a running pyATS subprocess and its process group (no-op once it has exited)."""
+    if proc.returncode is not None:
+        return
+    try:
+        if hasattr(os, "killpg"):
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except ProcessLookupError:
+        pass
+    except Exception as e:
+        log.warning("Process-group kill failed for pid %s (%s) — killing pid only", proc.pid, e)
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+async def _kill_proc(proc: "asyncio.subprocess.Process") -> None:
+    """Kill a pyATS subprocess (and its group) and reap it."""
+    _signal_proc(proc)
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        log.warning("pyATS subprocess pid %s did not exit after SIGKILL", proc.pid)
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -1195,6 +1226,7 @@ async def startup():
 
 _active_procs: dict[str, asyncio.subprocess.Process] = {}  # task_id → subprocess
 _cancelled_tasks: set[str] = set()                          # task_ids that have been killed
+_live_tasks: set[str] = set()                               # task_ids whose owning job is still running
 
 async def _register_task(agent: str, description: str) -> str | None:
     """Register a task with gladius-api. Returns task_id or None on failure."""
@@ -1211,11 +1243,11 @@ async def _register_task(agent: str, description: str) -> str | None:
 
 
 async def _complete_task(task_id: str | None):
-    """Mark a task as completed in gladius-api."""
+    """Mark a task as completed in gladius-api. Leaves the cancel flag alone —
+    that belongs to the owning job and is cleared by _end_task when it unwinds."""
     if not task_id:
         return
     _active_procs.pop(task_id, None)
-    _cancelled_tasks.discard(task_id)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(f"{GLADIUS_API_URL}/api/tasks/{task_id}/complete", headers=_gladius_api_headers())
@@ -1223,17 +1255,36 @@ async def _complete_task(task_id: str | None):
         log.warning("Failed to complete task %s: %s", task_id, e)
 
 
+def _begin_task(task_id: str | None) -> None:
+    """Mark a registered task as owned by a running job (so Kill can cancel it)."""
+    if task_id:
+        _live_tasks.add(task_id)
+
+
+async def _end_task(task_id: str | None) -> None:
+    """Owning job finished (normally, failed or killed): clear its state and
+    report completion to gladius-api. Call from a finally block."""
+    if not task_id:
+        return
+    _live_tasks.discard(task_id)
+    _cancelled_tasks.discard(task_id)
+    await _complete_task(task_id)
+
+
+def _task_cancelled(task_id: str | None) -> bool:
+    return bool(task_id) and task_id in _cancelled_tasks
+
+
 @app.post("/api/tasks/{task_id}/kill", dependencies=[Depends(require_token)])
 async def kill_task(task_id: str):
-    """Kill a running task by terminating its subprocess."""
-    _cancelled_tasks.add(task_id)
+    """Kill a running task: flag its job as cancelled (so multi-device/feature
+    loops stop) and terminate its current subprocess."""
+    if task_id in _live_tasks:
+        _cancelled_tasks.add(task_id)
     proc = _active_procs.pop(task_id, None)
     if proc and proc.returncode is None:
-        try:
-            proc.kill()
-            log.info("Killed subprocess for task %s (pid=%s)", task_id, proc.pid)
-        except Exception as e:
-            log.warning("Failed to kill process for task %s: %s", task_id, e)
+        _signal_proc(proc)
+        log.info("Killed subprocess for task %s (pid=%s)", task_id, proc.pid)
     await _complete_task(task_id)
     return {"ok": True, "task_id": task_id}
 
@@ -2321,31 +2372,20 @@ async def validate_script(script_id: str, body: ValidateRequest):
 
     testbed_yaml = build_testbed_yaml([dev_info])
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        script_path  = os.path.join(tmpdir, "test_script.py")
-        testbed_path = os.path.join(tmpdir, "testbed.yaml")
-        with open(script_path,  "w") as f:
-            f.write(script_content)
-        with open(testbed_path, "w") as f:
-            f.write(testbed_yaml)
-        try:
-            proc = await _spawn_pyats_subprocess(script_path, testbed_path, tmpdir)
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-            output = stdout.decode() + stderr.decode()
-            passed = proc.returncode == 0 and _pyats_passed(output)
-            now    = datetime.now(timezone.utc).isoformat()
-            with get_db() as conn:
-                conn.execute(
-                    "UPDATE scripts SET last_run_at=?, last_run_status=?, last_run_output=? WHERE id=?",
-                    (now, "PASS" if passed else "FAIL", output, script_id)
-                )
-            return {"passed": passed, "stage": "dry_run", "output": output,
-                    "device": dev_info.get("ip", DEV_SWITCH_IP)}
-        except asyncio.TimeoutError:
-            proc.kill()
-            return {"passed": False, "stage": "dry_run", "error": "Timed out (120s)", "output": ""}
-        except Exception as e:
-            return {"passed": False, "stage": "dry_run", "error": str(e), "output": ""}
+    try:
+        passed, output = await _run_script_once(script_content, testbed_yaml, timeout=120)
+        now = datetime.now(timezone.utc).isoformat()
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE scripts SET last_run_at=?, last_run_status=?, last_run_output=? WHERE id=?",
+                (now, "PASS" if passed else "FAIL", output, script_id)
+            )
+        return {"passed": passed, "stage": "dry_run", "output": output,
+                "device": dev_info.get("ip", DEV_SWITCH_IP)}
+    except asyncio.TimeoutError:
+        return {"passed": False, "stage": "dry_run", "error": "Timed out (120s)", "output": ""}
+    except Exception as e:
+        return {"passed": False, "stage": "dry_run", "error": str(e), "output": ""}
 
 
 # ── Script Execution ──────────────────────────────────────────────────────────
@@ -2385,7 +2425,9 @@ async def _autofix_script(script: str, error: str, model: str | None = None) -> 
 
 
 async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int = 300, task_id: str | None = None):
-    """Run a pyATS script, return (passed, output). If task_id given, register proc for kill support."""
+    """Run a pyATS script, return (passed, output). If task_id given, register proc for kill support.
+    On timeout (or cancellation) the subprocess and its process group are killed and
+    reaped before the exception propagates, so no orphaned run keeps device sessions open."""
     with tempfile.TemporaryDirectory() as tmpdir:
         script_path  = os.path.join(tmpdir, "test_script.py")
         testbed_path = os.path.join(tmpdir, "testbed.yaml")
@@ -2396,14 +2438,19 @@ async def _run_script_once(script_content: str, testbed_yaml: str, timeout: int 
         proc = await _spawn_pyats_subprocess(script_path, testbed_path, tmpdir)
         if task_id:
             _active_procs[task_id] = proc
+            if task_id in _cancelled_tasks:   # killed while we were spawning
+                _signal_proc(proc)
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except BaseException:
+            await _kill_proc(proc)
+            raise
         finally:
-            if task_id:
+            if task_id and _active_procs.get(task_id) is proc:
                 _active_procs.pop(task_id, None)
         if task_id and task_id in _cancelled_tasks:
             return False, "⚠ Task killed by user."
-        output = stdout.decode() + stderr.decode()
+        output = stdout.decode(errors="replace") + stderr.decode(errors="replace")
         passed = proc.returncode == 0 and _pyats_passed(output)
         return passed, output
 
@@ -2730,28 +2777,43 @@ async def list_learn_features():
     return {"features": GENIE_LEARN_FEATURES}
 
 
-@app.post("/api/learn", dependencies=[Depends(require_token)])
-async def run_learn(body: LearnRequest, _skip_task: bool = False):
-    """Run Genie learn for selected features on selected devices."""
+def _learn_devices(device_ids: list[str]) -> list[dict]:
+    """Load the device rows for a learn job; 400 if none of them exist."""
     with get_db() as conn:
         dev_rows = []
-        for did in body.device_ids:
+        for did in device_ids:
             row = conn.execute("SELECT * FROM devices WHERE id=?", (did,)).fetchone()
             if row:
                 dev_rows.append(dict(row))
     if not dev_rows:
         raise HTTPException(400, "No valid devices selected")
+    return dev_rows
 
+
+@app.post("/api/learn", dependencies=[Depends(require_token)])
+async def run_learn(body: LearnRequest):
+    """Run Genie learn for selected features on selected devices."""
+    dev_rows = _learn_devices(body.device_ids)
     dev_names = ", ".join(d["hostname"] for d in dev_rows[:3])
     feat_names = ", ".join(body.features[:3])
-    task_id = None if _skip_task else await _register_task(
-        "Learn", f"Genie Learn — {dev_names} — {feat_names}"
-    )
+    task_id = await _register_task("Learn", f"Genie Learn — {dev_names} — {feat_names}")
+    _begin_task(task_id)
+    try:
+        return await _learn(dev_rows, body.features, task_id)
+    finally:
+        await _end_task(task_id)
 
+
+async def _learn(dev_rows: list[dict], features: list[str], task_id: str | None) -> dict:
+    """Genie learn loop shared by /api/learn and scheduled runs. Subprocesses are
+    registered under the caller-owned task_id, and a Kill on that task stops the
+    whole loop, not just the current subprocess."""
     results = []
     for dev_info in dev_rows:
         testbed_yaml = build_testbed_yaml([dev_info])
-        for feature in body.features:
+        for feature in features:
+            if _task_cancelled(task_id):
+                return {"results": results, "killed": True}
             if feature not in [f["id"] for f in GENIE_LEARN_FEATURES]:
                 results.append({"device": dev_info["hostname"], "feature": feature,
                                 "success": False, "error": f"Unknown feature: {feature}"})
@@ -2770,10 +2832,9 @@ async def run_learn(body: LearnRequest, _skip_task: bool = False):
                 continue
 
             # Check if task was killed
-            if task_id and task_id in _cancelled_tasks:
+            if _task_cancelled(task_id):
                 results.append({"device": dev_info["hostname"], "feature": feature,
                                 "success": False, "error": "Task killed by user"})
-                await _complete_task(task_id)
                 return {"results": results, "killed": True}
 
             data = _extract_learn_data(output)
@@ -2795,7 +2856,6 @@ async def run_learn(body: LearnRequest, _skip_task: bool = False):
             results.append({"device": dev_info["hostname"], "feature": feature,
                             "success": True, "snapshot_id": snap_id, "created_at": now})
 
-    await _complete_task(task_id)
     return {"results": results}
 
 
@@ -3255,7 +3315,6 @@ def _cron_next_run(cron_expr: str, after: datetime | None = None) -> str | None:
 
 async def _execute_schedule(sched: dict):
     """Execute a learn (and optionally diff) schedule."""
-    sched_id = sched["id"]
     sched_type = sched.get("type", "learn")
     device_ids = json.loads(sched["device_ids"]) if isinstance(sched["device_ids"], str) else sched["device_ids"]
     features = json.loads(sched["features"]) if isinstance(sched["features"], str) else sched["features"]
@@ -3265,16 +3324,36 @@ async def _execute_schedule(sched: dict):
 
     label = "Learn + Diff" if sched_type == "learn_diff" else "Learn"
     sched_task_id = await _register_task(label, f"Schedule: {sched['name']}")
+    _begin_task(sched_task_id)
+    try:
+        await _run_schedule_job(sched, sched_type, device_ids, features, sched_task_id)
+    finally:
+        await _end_task(sched_task_id)
 
+
+async def _run_schedule_job(sched: dict, sched_type: str, device_ids: list, features: list,
+                            sched_task_id: str | None):
+    sched_id = sched["id"]
     now_iso = datetime.now(timezone.utc).isoformat()
     status = "success"
     summary_parts = []
     diff_text = ""
 
-    # Step 1: Run learn
+    # Step 1: Run learn (subprocesses registered under the schedule's task id,
+    # so a Kill from the Running Tasks UI actually stops them)
     try:
-        learn_body = LearnRequest(device_ids=device_ids, features=features)
-        learn_result = await run_learn(learn_body, _skip_task=True)
+        learn_result = await _learn(_learn_devices(device_ids), features, sched_task_id)
+        if learn_result.get("killed"):
+            summary = "Killed by user before completion"
+            with get_db() as conn:
+                conn.execute(
+                    "INSERT INTO schedule_history (id,schedule_id,type,status,summary,diff_text,ran_at) VALUES (?,?,?,?,?,?,?)",
+                    (str(uuid.uuid4()), sched_id, sched_type, "killed", summary, "", now_iso)
+                )
+                conn.execute("UPDATE schedules SET last_run_at=?, last_status=? WHERE id=?",
+                             (now_iso, "killed", sched_id))
+            log.info("Schedule '%s' killed by user — skipping diff, notifications and Jira", sched["name"])
+            return
         results = learn_result.get("results", [])
         ok_count = sum(1 for r in results if r.get("success"))
         fail_count = sum(1 for r in results if not r.get("success"))
@@ -3406,7 +3485,6 @@ async def _execute_schedule(sched: dict):
             except Exception as e:
                 log.error("Jira auto-ticket failed for schedule '%s': %s", sched["name"], e)
 
-    await _complete_task(sched_task_id)
     log.info("Schedule '%s' completed: %s", sched["name"], summary)
 
 
