@@ -7,6 +7,7 @@ import json
 import time
 import hmac
 import shutil
+import hashlib
 import asyncio
 import logging
 import tempfile
@@ -22,7 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from pysnmp.hlapi import (
-    getCmd, SnmpEngine, CommunityData, UsmUserData,
+    getCmd, nextCmd, bulkCmd, SnmpEngine, CommunityData, UsmUserData,
     UdpTransportTarget, ContextData, ObjectType, ObjectIdentity,
     OctetString, TimeTicks,
     usmHMACMD5AuthProtocol, usmHMACSHAAuthProtocol,
@@ -177,6 +178,57 @@ def _auth_data(dev: dict):
     return UsmUserData(dev.get("username", ""))
 
 
+# SnmpEngine is not thread-safe, so engines are reused per worker thread rather
+# than built for every request. pysnmp's hlapi caches SNMPv3 users in an engine
+# by user name, so each distinct v3 credential set gets its own engine —
+# otherwise a changed key, or two devices sharing a user name with different
+# keys, would silently keep using the first keys seen. v1/v2c communities are
+# keyed by community already and share one engine.
+_engine_tls = threading.local()
+_MAX_ENGINES_PER_THREAD = 32
+_BULK_REPETITIONS = 25
+
+
+def _engine_key(dev: dict) -> str:
+    if dev.get("version", "2c") in ("1", "2c"):
+        return "community"
+    creds = [dev.get(k, "") for k in ("username", "auth_key", "priv_key", "auth_protocol", "priv_protocol")]
+    return hashlib.sha256(json.dumps(creds).encode()).hexdigest()
+
+
+def _snmp_engine(dev: dict) -> SnmpEngine:
+    engines = getattr(_engine_tls, "engines", None)
+    if engines is None:
+        engines = _engine_tls.engines = {}
+    key = _engine_key(dev)
+    engine = engines.get(key)
+    if engine is None:
+        if len(engines) >= _MAX_ENGINES_PER_THREAD:
+            for old in engines.values():
+                try:
+                    if old.transportDispatcher:
+                        old.transportDispatcher.closeDispatcher()
+                except Exception:
+                    pass
+            engines.clear()
+        engine = engines[key] = SnmpEngine()
+    return engine
+
+
+def _snmp_walk(dev: dict, oid_base: str, max_rows: int, timeout: int, retries: int, errors: list | None = None):
+    """Walk one subtree (GETBULK for v2c/v3, GETNEXT for v1). Blocking.
+    Returns [(oid_str, value), ...] or None if the walk failed."""
+    target = UdpTransportTarget((dev["host"], dev.get("port", 161)), timeout=timeout, retries=retries)
+    obj = ObjectType(ObjectIdentity(oid_base))
+    if dev.get("version", "2c") == "1":
+        responses = nextCmd(_snmp_engine(dev), _auth_data(dev), target, ContextData(), obj,
+                            lexicographicMode=False)
+    else:
+        responses = bulkCmd(_snmp_engine(dev), _auth_data(dev), target, ContextData(),
+                            0, min(_BULK_REPETITIONS, max_rows), obj, lexicographicMode=False)
+    return _collect_walk(oid_base, responses, max_rows, errors)
+
+
 def _fmt_timeticks(val) -> str:
     t = int(val)
     s = t // 100
@@ -195,7 +247,7 @@ def _poll_device_sync(dev: dict) -> dict:
         transport = UdpTransportTarget((host, port), timeout=5, retries=1)
         objects   = [ObjectType(ObjectIdentity(oid)) for oid in SYSTEM_OIDS]
         ei, es, _, varBinds = next(
-            getCmd(SnmpEngine(), _auth_data(dev), transport, ContextData(), *objects)
+            getCmd(_snmp_engine(dev), _auth_data(dev), transport, ContextData(), *objects)
         )
         if ei:
             raise RuntimeError(str(ei))
@@ -527,16 +579,19 @@ def _ospf_nbr_key(oid_str: str) -> str:
 _SNMP_NON_VALUES = {"Null", "NoSuchObject", "NoSuchInstance", "EndOfMibView"}
 
 
-def _collect_walk(base: str, responses, max_rows: int):
+def _collect_walk(base: str, responses, max_rows: int, errors: list | None = None):
     """Consume an hlapi walk iterator of (errInd, errStatus, errIdx, varBinds).
 
     Returns [(oid_str, value), ...] for rows inside `base`, or None if the walk
-    hit an error — a failed walk must never look like an empty table.
+    hit an error — a failed walk must never look like an empty table. The
+    error text is appended to `errors` if given.
     """
     rows = []
     prefix = base + "."
     for ei, es, _, var_binds in responses:
         if ei or es:
+            if errors is not None:
+                errors.append(str(ei) if ei else es.prettyPrint())
             return None
         for name, val in var_binds:
             oid_str = str(name)
@@ -571,16 +626,10 @@ def _poll_protocol_state_sync(dev: dict) -> dict:
     a dropped packet is not mistaken for "every peer disappeared".
     """
     host = dev["host"]
-    port = dev.get("port", 161)
     state = {"interfaces": None, "bgp": None, "ospf": None}
     try:
-        from pysnmp.hlapi import nextCmd
-        auth = _auth_data(dev)
-
         def walk(oid_base: str, max_rows: int):
-            return _collect_walk(oid_base, nextCmd(SnmpEngine(), auth,
-                UdpTransportTarget((host, port), timeout=3, retries=1),
-                ContextData(), ObjectType(ObjectIdentity(oid_base)), lexicographicMode=False), max_rows)
+            return _snmp_walk(dev, oid_base, max_rows, timeout=3, retries=1)
 
         # Interface oper status: walk ifDescr + ifAdminStatus + ifOperStatus.
         # Stop at the first failed walk — the device has stopped answering.
@@ -1176,7 +1225,7 @@ def _adhoc_poll_sync(host: str, port: int, version: str, community: str,
         if p["mode"] == "get":
             transport = UdpTransportTarget((host, port), timeout=5, retries=1)
             objects = [ObjectType(ObjectIdentity(o)) for o in p["oids"]]
-            ei, es, _, varBinds = next(getCmd(SnmpEngine(), _auth_data(dev), transport, ContextData(), *objects))
+            ei, es, _, varBinds = next(getCmd(_snmp_engine(dev), _auth_data(dev), transport, ContextData(), *objects))
             if ei: raise RuntimeError(str(ei))
             for var in varBinds:
                 oid_str = str(var[0])
@@ -1184,19 +1233,20 @@ def _adhoc_poll_sync(host: str, port: int, version: str, community: str,
                 results.append({"oid": oid_str, "label": _label(oid_str),
                                  "value": _fmt_timeticks(val) if isinstance(val, TimeTicks) else val.prettyPrint()})
         else:
-            from pysnmp.hlapi import nextCmd
+            errors = []
             for oid in p["oids"]:
-                transport = UdpTransportTarget((host, port), timeout=5, retries=1)
-                for ei, es, _, varBinds in nextCmd(SnmpEngine(), _auth_data(dev), transport,
-                                                    ContextData(), ObjectType(ObjectIdentity(oid)),
-                                                    lexicographicMode=False):
-                    if ei or es: break
-                    for var in varBinds:
-                        oid_str = str(var[0])
-                        val = var[1]
-                        results.append({"oid": oid_str, "label": _label(oid_str),
-                                         "value": _fmt_timeticks(val) if isinstance(val, TimeTicks) else val.prettyPrint()})
-                    if len(results) >= max_rows: break
+                remaining = max_rows - len(results)
+                if remaining <= 0:
+                    break
+                rows = _snmp_walk(dev, oid, remaining, timeout=5, retries=1, errors=errors)
+                if rows is None:
+                    # Keep what earlier walks returned; a failure with nothing at all is an error
+                    if not results:
+                        raise RuntimeError(errors[-1] if errors else "SNMP walk failed")
+                    break
+                for oid_str, val in rows:
+                    results.append({"oid": oid_str, "label": _label(oid_str),
+                                     "value": _fmt_timeticks(val) if isinstance(val, TimeTicks) else val.prettyPrint()})
     except Exception as e:
         return {"error": str(e), "elapsed_ms": int((time.monotonic() - t0) * 1000)}
     return {"host": host, "profile": profile, "results": results,
