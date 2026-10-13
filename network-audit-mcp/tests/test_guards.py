@@ -25,6 +25,10 @@ import guards  # noqa: E402
     "dir flash:",
     "more flash:config.txt",
     "  show clock  ",     # leading/trailing whitespace
+    "show run | include hostname",
+    "sh run | i ssh",
+    "show log | begin Oct",
+    "show ip route | section ospf",
 ])
 def test_allowed_show_commands(command):
     ok, _ = guards.is_allowed_show_command(command)
@@ -44,6 +48,12 @@ def test_allowed_show_commands(command):
     "reload",
     "no shutdown",
     "delete flash:foo",
+    # output modifiers that write to device storage
+    "show run | redirect flash:out.txt",
+    "show run | red flash:out.txt",
+    "show run | append flash:out.txt",
+    "show run | tee flash:out.txt",
+    "show run | include x | tee flash:out.txt",
     "",
     "   ",
 ])

@@ -21,6 +21,8 @@ import time
 # traceroute). Everything else — including erase/clear/format/boot/request and
 # any config/write verb — is rejected.
 READ_ONLY_VERBS = ("show", "ping", "traceroute", "dir", "more")
+# IOS output modifiers (after "|") that write the output to device storage.
+WRITING_PIPE_MODIFIERS = ("redirect", "append", "tee")
 
 
 def is_allowed_show_command(command: str) -> tuple[bool, str]:
@@ -40,11 +42,15 @@ def is_allowed_show_command(command: str) -> tuple[bool, str]:
     token = stripped.split()[0].lower()
     # Exact match, or an abbreviation that is a prefix of exactly one verb.
     matches = [v for v in READ_ONLY_VERBS if v == token or v.startswith(token)]
-    if token in READ_ONLY_VERBS:
-        return True, "ok"
-    if len(token) >= 2 and len(matches) == 1:
-        return True, "ok"
-    return False, f"'{token}' is not an allowed read-only verb"
+    if not (token in READ_ONLY_VERBS or (len(token) >= 2 and len(matches) == 1)):
+        return False, f"'{token}' is not an allowed read-only verb"
+    # "| redirect/append/tee <url>" writes output to flash/remote storage.
+    for segment in stripped.split("|")[1:]:
+        words = segment.split()
+        modifier = words[0].lower() if words else ""
+        if modifier and any(m.startswith(modifier) for m in WRITING_PIPE_MODIFIERS):
+            return False, f"output modifier '{modifier}' writes to device storage"
+    return True, "ok"
 
 
 # ---------------------------------------------------------------------------
