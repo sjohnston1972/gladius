@@ -3778,25 +3778,21 @@ async def run_device_audit(device_ip: str, full_instruction: str, sse_queue: asy
             )
         )
 
-        done_set: set = set()
-        while len(done_set) < 2:
-            await asyncio.sleep(0.5)
-            if device_task.done() and "device" not in done_set:
-                done_set.add("device")
-            if threat_task.done() and "threat" not in done_set:
-                done_set.add("threat")
+        device_res, threat_res = await asyncio.gather(
+            device_task, threat_task, return_exceptions=True
+        )
 
-        try:
-            device_text, device_tools = device_task.result()
-        except Exception as e:
-            device_text, device_tools = f"Device collection failed: {e}", []
-            log.error(f"[DeviceAudit-{display}] device agent failed: {e}")
+        if isinstance(device_res, BaseException):
+            device_text, device_tools = f"Device collection failed: {device_res}", []
+            log.error(f"[DeviceAudit-{display}] device agent failed: {device_res}")
+        else:
+            device_text, device_tools = device_res
 
-        try:
-            threat_text, threat_tools = threat_task.result()
-        except Exception as e:
-            threat_text, threat_tools = f"Threat intel failed: {e}", []
-            log.error(f"[DeviceAudit-{display}] threat agent failed: {e}")
+        if isinstance(threat_res, BaseException):
+            threat_text, threat_tools = f"Threat intel failed: {threat_res}", []
+            log.error(f"[DeviceAudit-{display}] threat agent failed: {threat_res}")
+        else:
+            threat_text, threat_tools = threat_res
 
         # Emit tool call events for the chat stream
         for r in device_tools:
@@ -3966,17 +3962,14 @@ async def run_parallel_audit(
     }
 
     results = {}
-    done_devices = set()
-    while len(done_devices) < len(devices):
-        await asyncio.sleep(0.5)
-        for ip, task in tasks.items():
-            if task.done() and ip not in done_devices:
-                done_devices.add(ip)
-                try:
-                    results[ip] = task.result()
-                except Exception as e:
-                    results[ip] = f"Audit failed: {e}"
-                    log.error(f"[Orchestrator] Device {ip} failed: {e}")
+    task_items = list(tasks.items())
+    gathered = await asyncio.gather(*(t for _, t in task_items), return_exceptions=True)
+    for (ip, _), res in zip(task_items, gathered):
+        if isinstance(res, BaseException):
+            results[ip] = f"Audit failed: {res}"
+            log.error(f"[Orchestrator] Device {ip} failed: {res}")
+        else:
+            results[ip] = res
 
     total_elapsed = round(time.monotonic() - t_total, 1)
     summary = "\n".join(f"- **{device_display.get(ip, ip)}**: audit complete" for ip in devices)
