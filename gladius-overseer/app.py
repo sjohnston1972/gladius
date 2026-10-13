@@ -30,6 +30,19 @@ def _env_int(name: str, default: int) -> int:
 BOT_TOKEN         = os.getenv("SLACK_BOT_TOKEN")
 APP_TOKEN         = os.getenv("SLACK_APP_TOKEN")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+OVERSEER_MODEL    = os.getenv("OVERSEER_MODEL", "claude-sonnet-4-6")
+
+# A single Slack request may not loop forever: stop after this many model
+# turns, this many cumulative input+output tokens, or this much wall-clock
+# time (time spent waiting for an approval click is not counted).
+MAX_TURNS       = _env_int("OVERSEER_MAX_TURNS", 25)
+MAX_RUN_TOKENS  = _env_int("OVERSEER_MAX_TOKENS", 500_000)
+MAX_RUN_SECONDS = _env_int("OVERSEER_MAX_SECONDS", 600)
+
+# Once newer tool results arrive, older ones are cut down to this size so a
+# long run doesn't re-send every file it has read on each turn.
+TOOL_RESULT_KEEP_RECENT = 3
+TOOL_RESULT_ELIDE_CHARS = 2000
 
 # write_file, docker_restart and `git push` pause until an allowlisted Slack
 # user clicks Approve on a message in the requesting thread. No click within
@@ -483,22 +496,46 @@ def _save_history(history: dict) -> None:
 _history: dict = _load_history()
 
 
+def _reply_thread_ts(event: dict) -> str | None:
+    """Thread to reply in: the event's thread, or for a top-level channel
+    message a new thread under it. Top-level DMs are answered inline."""
+    if event.get("thread_ts"):
+        return event["thread_ts"]
+    if event.get("channel_type") == "im":
+        return None
+    return event.get("ts")
+
+
 def _thread_key(channel: str, event: dict) -> tuple:
-    thread_ts    = event.get("thread_ts")
-    channel_type = event.get("channel_type", "")
-    if thread_ts:
-        return (channel, thread_ts)
-    if channel_type == "im":
-        return (channel, "dm")
-    return (channel, "main")
+    # Keyed by the same thread the reply is posted in, so follow-ups in that
+    # thread continue the same conversation.
+    return (channel, _reply_thread_ts(event) or "dm")
+
+
+def _trim_history(messages: list, limit: int = MAX_HISTORY) -> list:
+    """Keep the last `limit` messages, starting on a user turn."""
+    trimmed = messages[-limit:]
+    while trimmed and trimmed[0].get("role") != "user":
+        trimmed = trimmed[1:]
+    return trimmed
 
 
 def _append_history(key: tuple, role: str, content: str) -> None:
     with _history_lock:
         _history[key].append({"role": role, "content": content})
         if len(_history[key]) > MAX_HISTORY:
-            _history[key] = _history[key][-MAX_HISTORY:]
+            _history[key] = _trim_history(_history[key])
         _save_history(_history)
+
+
+# One request at a time per conversation, so turns are stored in order.
+_conversation_locks: dict = defaultdict(threading.Lock)
+_conversation_locks_guard = threading.Lock()
+
+
+def _conversation_lock(key: tuple) -> threading.Lock:
+    with _conversation_locks_guard:
+        return _conversation_locks[key]
 
 
 # ── Slack message chunking ─────────────────────────────────────────────────────
@@ -968,25 +1005,33 @@ def run_agent(history: list[dict], ctx: RunContext | None = None) -> str:
     Run the Claude agentic tool-use loop with full conversation history.
     Returns the final text response. Tool calls are logged only — never shown to user.
     `ctx` identifies the Slack request so gated tools can ask for approval.
+    Stops early (and says so) when a turn, token or time limit is hit.
     """
-    messages   = list(history)
-    final_text = ""
+    messages = list(history)
+    started  = time.monotonic()
+    tokens   = 0
+    actions: list[str] = []
+    turns    = 0
 
     while True:
         response = client_ai.messages.create(
-            model="claude-sonnet-4-6",
+            model=OVERSEER_MODEL,
             max_tokens=8192,
             system=SYSTEM_PROMPT,
             tools=TOOLS,
             messages=messages,
         )
+        turns += 1
+        usage = getattr(response, "usage", None)
+        if usage is not None:
+            tokens += (getattr(usage, "input_tokens", 0) or 0) + (getattr(usage, "output_tokens", 0) or 0)
 
-        for block in response.content:
-            if hasattr(block, "text"):
-                final_text += block.text
+        # Only the latest turn's text is the answer; text emitted alongside
+        # tool calls is intermediate narration.
+        turn_text = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
 
         if response.stop_reason != "tool_use":
-            break
+            return turn_text or "_No response._"
 
         tool_results = []
         for block in response.content:
@@ -996,6 +1041,7 @@ def run_agent(history: list[dict], ctx: RunContext | None = None) -> str:
             log.info("Tool: %s", label)
             result = exec_tool(block.name, block.input, ctx)
             log.info("Tool done: %s", label)
+            actions.append(label)
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
@@ -1004,8 +1050,56 @@ def run_agent(history: list[dict], ctx: RunContext | None = None) -> str:
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({"role": "user", "content": tool_results})
+        _elide_old_tool_results(messages)
 
-    return final_text.strip() or "_No response._"
+        elapsed = time.monotonic() - started - (ctx.approval_wait if ctx else 0.0)
+        limit = _run_limit_reason(turns, tokens, elapsed)
+        if limit:
+            log.warning("Agent run stopped: %s (turns=%d tokens=%d elapsed=%.0fs)", limit, turns, tokens, elapsed)
+            return _limit_reply(limit, turn_text, actions)
+
+
+def _run_limit_reason(turns: int, tokens: int, elapsed: float) -> str | None:
+    """Which run limit (if any) has been reached."""
+    if turns >= MAX_TURNS:
+        return f"{MAX_TURNS}-turn"
+    if tokens >= MAX_RUN_TOKENS:
+        return f"{MAX_RUN_TOKENS:,}-token"
+    if elapsed >= MAX_RUN_SECONDS:
+        return f"{MAX_RUN_SECONDS}s time"
+    return None
+
+
+def _limit_reply(limit: str, last_text: str, actions: list[str]) -> str:
+    done = "; ".join(actions[-10:]) or "nothing"
+    more = f" (last 10 of {len(actions)})" if len(actions) > 10 else ""
+    parts = [f"⚠️ Stopped early: hit the {limit} limit for one request."]
+    if last_text:
+        parts.append(last_text)
+    parts.append(f"Steps run{more}: {done}")
+    return "\n\n".join(parts)
+
+
+def _elide_old_tool_results(messages: list, keep_recent: int = TOOL_RESULT_KEEP_RECENT,
+                            max_chars: int = TOOL_RESULT_ELIDE_CHARS) -> None:
+    """Shorten tool results older than the `keep_recent` most recent tool
+    turns, in place, so each request doesn't re-send every file ever read."""
+    seen = 0
+    for msg in reversed(messages):
+        if not isinstance(msg, dict) or msg.get("role") != "user" or not isinstance(msg.get("content"), list):
+            continue
+        content = msg["content"]
+        results = [c for c in content if isinstance(c, dict) and c.get("type") == "tool_result"]
+        if not results:
+            continue
+        seen += 1
+        if seen <= keep_recent:
+            continue
+        for item in results:
+            text = item.get("content")
+            if isinstance(text, str) and len(text) > max_chars:
+                item["content"] = (text[:max_chars] + f"\n…(older tool output elided, {len(text) - max_chars} "
+                                   "chars dropped — run the tool again if you need the full output)")
 
 
 def handle_message(body: dict, client) -> None:
@@ -1034,6 +1128,14 @@ def handle_message(body: dict, client) -> None:
     log.info("Overseer received in %s: %.80s", channel, text)
 
     thread_key = _thread_key(channel, event)
+    reply_ts   = _reply_thread_ts(event)
+
+    with _conversation_lock(thread_key):
+        _process_request(client, channel, reply_ts, thread_key, event.get("user"), text)
+
+
+def _process_request(client, channel: str, reply_ts: str | None, thread_key: tuple,
+                     user: str | None, text: str) -> None:
     _append_history(thread_key, "user", text)
 
     with _history_lock:
@@ -1044,15 +1146,32 @@ def handle_message(body: dict, client) -> None:
     # Show a minimal "working" indicator — no tool detail, just a spinner
     placeholder_ts = None
     try:
-        placeholder = client.chat_postMessage(channel=channel, text="⚙️ On it...")
+        placeholder = client.chat_postMessage(channel=channel, thread_ts=reply_ts, text="⚙️ On it...")
         placeholder_ts = placeholder["ts"]
     except Exception as e:
         log.error("Failed to post placeholder: %s", e)
 
     # Run Claude agent — all tool calls happen silently in the background;
     # gated ones post an Approve/Deny prompt in this conversation.
-    ctx = RunContext(client, channel, event.get("thread_ts"), event.get("user"))
-    final_text = run_agent(current_history, ctx)
+    ctx = RunContext(client, channel, reply_ts, user)
+    try:
+        final_text = run_agent(current_history, ctx)
+    except Exception as e:
+        log.exception("Agent run failed")
+        error_text = f"❌ Overseer error: {type(e).__name__}: {str(e)[:300]}"
+        # Record the failure so the user turn isn't left without a reply.
+        _append_history(thread_key, "assistant", error_text)
+        if placeholder_ts:
+            try:
+                client.chat_update(channel=channel, ts=placeholder_ts, text=error_text)
+                return
+            except Exception as update_err:
+                log.warning("Could not update placeholder with error: %s", update_err)
+        try:
+            client.chat_postMessage(channel=channel, thread_ts=reply_ts, text=error_text)
+        except Exception as post_err:
+            log.error("Failed to post error reply: %s", post_err)
+        return
 
     # Persist assistant reply
     _append_history(thread_key, "assistant", final_text)
@@ -1070,6 +1189,7 @@ def handle_message(body: dict, client) -> None:
         try:
             client.chat_postMessage(
                 channel=channel,
+                thread_ts=reply_ts,
                 text=chunk,
                 blocks=[{"type": "section", "text": {"type": "mrkdwn", "text": chunk}}],
             )
