@@ -58,8 +58,10 @@ DEV_SWITCH_IP     = os.getenv("DEV_SWITCH_IP",     "192.168.20.22")
 DEV_SWITCH_HN     = os.getenv("DEV_SWITCH_HN",     "DEV")
 LAB_USERNAME      = os.getenv("LAB_USERNAME",      "")
 LAB_PASSWORD      = os.getenv("LAB_PASSWORD",      "")
+CODER_MODEL       = os.getenv("CODER_MODEL",       "qwen2.5-coder:14b")   # /api/coder default
+ITSM_MODEL        = os.getenv("ITSM_MODEL",        "qwen2.5:7b")          # /api/itsm default
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL",      "claude-sonnet-4-6")
+CLAUDE_MODEL      = os.getenv("CLAUDE_MODEL",      "claude-haiku-5-5")    # fallback when Ollama is down
 
 # Jira Cloud integration
 GLADIUS_API_URL = os.getenv("GLADIUS_API_URL", "http://gladius-api:8080")
@@ -1404,6 +1406,244 @@ async def health():
     }
 
 
+# ── LLM backends (Ollama / Claude) ────────────────────────────────────────────
+# Every Factory LLM call goes through _llm_sse (streaming) or _llm_complete.
+# Model ids starting with "claude-" go to the Anthropic Messages API; anything
+# else goes to Ollama. When Ollama is unreachable and ANTHROPIC_API_KEY is set,
+# requests fall back to CLAUDE_MODEL. Both backends produce the same SSE events:
+#   {"type": "text", "content": ...}  …  then {"type": "done"} or {"type": "error", "content": ...}
+
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+OLLAMA_NUM_CTX = 32768
+OLLAMA_TIMEOUT = httpx.Timeout(180.0, connect=3.0)
+CLAUDE_TIMEOUT = httpx.Timeout(180.0, connect=5.0)
+
+
+class LLMError(Exception):
+    """An LLM backend returned an error (HTTP status or in-stream error event)."""
+
+
+def _is_claude(model: str | None) -> bool:
+    return bool(model) and model.startswith("claude-")
+
+
+async def _pick_model(requested: str | None, default: str) -> str:
+    """The caller's model (or the endpoint default), switched to CLAUDE_MODEL when
+    it is an Ollama model, Ollama is unreachable and an Anthropic key is configured."""
+    model = requested or default
+    if not _is_claude(model) and ANTHROPIC_API_KEY and not await _ollama_available():
+        log.info("Ollama unreachable — using %s instead of %s", CLAUDE_MODEL, model)
+        return CLAUDE_MODEL
+    return model
+
+
+def _mark_ollama_down() -> None:
+    _ollama_status.update(ok=False, checked_at=time.monotonic())
+
+
+def _anthropic_payload(model: str, system: str, messages: list[dict], max_tokens: int, stream: bool) -> dict:
+    """Build an Anthropic Messages request from Ollama-style chat messages: system
+    turns join the top-level system prompt, empty turns are dropped, consecutive
+    same-role turns are merged, and leading assistant turns are skipped (the
+    conversation must start with a user turn)."""
+    system_parts = [system] if system else []
+    conv: list[dict] = []
+    for m in messages:
+        role, content = m.get("role"), (m.get("content") or "").strip()
+        if not content:
+            continue
+        if role == "system":
+            system_parts.append(content)
+        elif role in ("user", "assistant"):
+            if not conv and role == "assistant":
+                continue
+            if conv and conv[-1]["role"] == role:
+                conv[-1]["content"] += "\n\n" + content
+            else:
+                conv.append({"role": role, "content": content})
+    if not conv:
+        raise LLMError("No user message to send")
+    payload: dict[str, Any] = {"model": model, "max_tokens": max_tokens, "messages": conv}
+    if system_parts:
+        payload["system"] = "\n\n".join(system_parts)
+    if stream:
+        payload["stream"] = True
+    return payload
+
+
+def _anthropic_headers() -> dict:
+    return {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+
+
+def _anthropic_sse_event(line: str) -> tuple[str, str] | None:
+    """Interpret one line of an Anthropic Messages SSE stream as
+    ("text", chunk), ("error", message), ("stop", "") or None (ignore)."""
+    if not line.startswith("data:"):
+        return None
+    try:
+        evt = json.loads(line[5:].strip())
+    except json.JSONDecodeError:
+        return None
+    etype = evt.get("type")
+    if etype == "content_block_delta":
+        delta = evt.get("delta") or {}
+        if delta.get("type") == "text_delta" and delta.get("text"):
+            return ("text", delta["text"])
+    elif etype == "error":
+        err = evt.get("error") or {}
+        return ("error", f"Claude API error ({err.get('type', 'error')}): {err.get('message', '')}")
+    elif etype == "message_stop":
+        return ("stop", "")
+    return None
+
+
+def _ollama_stream_event(line: str) -> tuple[str, str] | None:
+    """Interpret one NDJSON line of an Ollama /api/chat stream (same shape as above)."""
+    if not line.strip():
+        return None
+    try:
+        chunk = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if chunk.get("error"):
+        return ("error", f"Ollama error: {chunk['error']}")
+    content = (chunk.get("message") or {}).get("content", "")
+    if content:
+        return ("text", content)
+    if chunk.get("done"):
+        return ("stop", "")
+    return None
+
+
+async def _http_error_text(response: httpx.Response) -> str:
+    return (await response.aread()).decode(errors="replace")[:500]
+
+
+async def _ollama_chunks(model: str, system: str, messages: list[dict]):
+    msgs = ([{"role": "system", "content": system}] if system else []) + list(messages)
+    async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+        async with client.stream(
+            "POST", f"{OLLAMA_URL}/api/chat",
+            json={"model": model, "messages": msgs, "stream": True, "options": {"num_ctx": OLLAMA_NUM_CTX}},
+        ) as response:
+            if response.status_code != 200:
+                raise LLMError(f"Ollama error {response.status_code}: {await _http_error_text(response)}")
+            async for line in response.aiter_lines():
+                ev = _ollama_stream_event(line)
+                if ev is None:
+                    continue
+                kind, value = ev
+                if kind == "error":
+                    raise LLMError(value)
+                if kind == "stop":
+                    return
+                yield value
+
+
+async def _claude_chunks(model: str, system: str, messages: list[dict], max_tokens: int):
+    if not ANTHROPIC_API_KEY:
+        raise LLMError("ANTHROPIC_API_KEY is not configured")
+    payload = _anthropic_payload(model, system, messages, max_tokens, stream=True)
+    async with httpx.AsyncClient(timeout=CLAUDE_TIMEOUT) as client:
+        async with client.stream("POST", ANTHROPIC_MESSAGES_URL, headers=_anthropic_headers(), json=payload) as response:
+            if response.status_code != 200:
+                raise LLMError(f"Claude API {response.status_code}: {await _http_error_text(response)}")
+            async for line in response.aiter_lines():
+                ev = _anthropic_sse_event(line)
+                if ev is None:
+                    continue
+                kind, value = ev
+                if kind == "error":
+                    raise LLMError(value)
+                if kind == "stop":
+                    return
+                yield value
+
+
+def _llm_error_text(model: str, e: Exception) -> str:
+    if isinstance(e, (httpx.ConnectError, httpx.ConnectTimeout)) and not _is_claude(model):
+        return f"Ollama is unreachable at {OLLAMA_URL} ({type(e).__name__})"
+    if isinstance(e, httpx.TimeoutException):
+        return f"{'Claude' if _is_claude(model) else 'Ollama'} request timed out"
+    return str(e) or type(e).__name__
+
+
+def _sse(event: dict) -> str:
+    return f"data: {json.dumps(event)}\n\n"
+
+
+async def _llm_sse(model: str, system: str, messages: list[dict], max_tokens: int = 8192):
+    """Stream a chat completion as Factory SSE events from Claude or Ollama.
+    If Ollama can't be reached before any output, retries once on CLAUDE_MODEL."""
+    got_output = False
+    try:
+        try:
+            chunks = (_claude_chunks(model, system, messages, max_tokens) if _is_claude(model)
+                      else _ollama_chunks(model, system, messages))
+            async for text in chunks:
+                got_output = True
+                yield _sse({"type": "text", "content": text})
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            if _is_claude(model) or got_output or not ANTHROPIC_API_KEY:
+                raise
+            _mark_ollama_down()
+            log.warning("Ollama unreachable — retrying request on %s", CLAUDE_MODEL)
+            model = CLAUDE_MODEL
+            async for text in _claude_chunks(model, system, messages, max_tokens):
+                yield _sse({"type": "text", "content": text})
+        yield _sse({"type": "done"})
+    except Exception as e:
+        log.warning("LLM stream failed (%s): %s", model, e)
+        yield _sse({"type": "error", "content": _llm_error_text(model, e)})
+
+
+async def _llm_complete(model: str, system: str, messages: list[dict],
+                        max_tokens: int = 8192, timeout: float = 120.0) -> str:
+    """Non-streaming completion from Claude or Ollama (same fallback as _llm_sse).
+    Raises LLMError / httpx errors on failure."""
+    if not _is_claude(model):
+        msgs = ([{"role": "system", "content": system}] if system else []) + list(messages)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=3.0)) as client:
+                r = await client.post(f"{OLLAMA_URL}/api/chat", json={
+                    "model": model, "messages": msgs, "stream": False,
+                    "options": {"num_ctx": OLLAMA_NUM_CTX},
+                })
+            if r.status_code != 200:
+                raise LLMError(f"Ollama error {r.status_code}: {r.text[:500]}")
+            data = r.json()
+            if data.get("error"):
+                raise LLMError(f"Ollama error: {data['error']}")
+            return (data.get("message") or {}).get("content", "")
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            if not ANTHROPIC_API_KEY:
+                raise
+            _mark_ollama_down()
+            log.warning("Ollama unreachable — retrying request on %s", CLAUDE_MODEL)
+            model = CLAUDE_MODEL
+    if not ANTHROPIC_API_KEY:
+        raise LLMError("ANTHROPIC_API_KEY is not configured")
+    payload = _anthropic_payload(model, system, messages, max_tokens, stream=False)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=5.0)) as client:
+        r = await client.post(ANTHROPIC_MESSAGES_URL, headers=_anthropic_headers(), json=payload)
+    if r.status_code != 200:
+        raise LLMError(f"Claude API {r.status_code}: {r.text[:500]}")
+    data = r.json()
+    return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+
+
+def _sse_response(gen) -> StreamingResponse:
+    return StreamingResponse(
+        gen,
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 # ── Ollama Streaming Chat ─────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are the Gladius Automation Factory agent, an expert in both Python and pyATS/Genie for network automation.
@@ -1762,7 +2002,7 @@ class ReviewRequest(BaseModel):
 
 @app.post("/api/review", dependencies=[Depends(require_token)])
 async def review_output(req: ReviewRequest):
-    model  = req.model or OLLAMA_MODEL
+    model  = await _pick_model(req.model, OLLAMA_MODEL)
     device = req.device or "unknown"
     prompt = (
         f"A pyATS health check ran against network device {device}. "
@@ -1770,78 +2010,7 @@ async def review_output(req: ReviewRequest):
         "Do not wrap in code fences. Keep it brief.\n\n"
         f"{req.output}"
     )
-
-    is_claude = model.startswith("claude-")
-
-    async def generate_ollama():
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": [{"role": "user", "content": prompt}], "stream": True, "options": {"num_ctx": 32768}}
-                ) as response:
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk   = json.loads(line)
-                            content = chunk.get("message", {}).get("content", "")
-                            if content:
-                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
-                            if chunk.get("done"):
-                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                                return
-                        except json.JSONDecodeError:
-                            continue
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-
-    async def generate_claude():
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST", "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "x-api-key": ANTHROPIC_API_KEY,
-                        "anthropic-version": "2023-06-01",
-                        "content-type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "max_tokens": 16384,
-                        "stream": True,
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                ) as response:
-                    if response.status_code != 200:
-                        body = await response.aread()
-                        yield f"data: {json.dumps({'type': 'error', 'content': f'Claude API {response.status_code}: {body.decode()}'})}\n\n"
-                        return
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        payload = line[6:]
-                        if payload == "[DONE]":
-                            break
-                        try:
-                            evt = json.loads(payload)
-                            if evt.get("type") == "content_block_delta":
-                                text = evt.get("delta", {}).get("text", "")
-                                if text:
-                                    yield f"data: {json.dumps({'type': 'text', 'content': text})}\n\n"
-                            elif evt.get("type") == "message_stop":
-                                break
-                        except json.JSONDecodeError:
-                            continue
-                    yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-
-    return StreamingResponse(
-        generate_claude() if is_claude else generate_ollama(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return _sse_response(_llm_sse(model, "", [{"role": "user", "content": prompt}], max_tokens=16384))
 
 
 APITEST_SYSTEM_PROMPT = """You are Gladius API, an API testing and validation agent specialising in REST API endpoint testing, schema validation, and API documentation analysis.
@@ -1861,27 +2030,28 @@ APITEST_SYSTEM_PROMPT = """You are Gladius API, an API testing and validation ag
 - Never fabricate API endpoints or response schemas — if unsure, say so"""
 
 
-CLAUDE_MODELS = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+CLAUDE_MODELS = list(dict.fromkeys(
+    [CLAUDE_MODEL] + [m.strip() for m in os.getenv(
+        "CLAUDE_MODELS", "claude-sonnet-4-6,claude-haiku-4-5-20251001").split(",") if m.strip()]
+))
 
 @app.get("/api/models", dependencies=[Depends(require_token)])
 async def list_models():
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(f"{OLLAMA_URL}/api/tags")
-            data = r.json()
-            names = [m["name"] for m in data.get("models", [])]
-    except Exception as e:
-        names = [OLLAMA_MODEL]
+    ollama_ok = await _ollama_available()      # cached probe, 1s connect timeout
+    names = list(_ollama_status["models"]) if ollama_ok else []
     # Append Claude models if API key is configured
     if ANTHROPIC_API_KEY:
         names = CLAUDE_MODELS + names
-    return {"models": names, "default": OLLAMA_MODEL}
+    # Don't point the UI at a model that can't answer: with Ollama down, default
+    # to Claude when it's configured.
+    default = CLAUDE_MODEL if (not ollama_ok and ANTHROPIC_API_KEY) else OLLAMA_MODEL
+    return {"models": names or [OLLAMA_MODEL], "default": default, "ollama_available": ollama_ok}
 
 
 @app.post("/api/chat", dependencies=[Depends(require_token)])
 async def chat(req: ChatRequest):
-    model = req.model or OLLAMA_MODEL
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    model = await _pick_model(req.model, OLLAMA_MODEL)
+    messages = []
 
     if req.script_context:
         ctx_lines = "\n".join(
@@ -1894,37 +2064,7 @@ async def chat(req: ChatRequest):
     for m in req.messages:
         messages.append({"role": m.role, "content": m.content})
 
-    async def generate():
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream(
-                    "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True, "options": {"num_ctx": 32768}}
-                ) as response:
-                    if response.status_code != 200:
-                        yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
-                        return
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk   = json.loads(line)
-                            content = chunk.get("message", {}).get("content", "")
-                            if content:
-                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
-                            if chunk.get("done"):
-                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                                return
-                        except json.JSONDecodeError:
-                            continue
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    return _sse_response(_llm_sse(model, SYSTEM_PROMPT, messages))
 
 
 # ── API Test Agent Chat ───────────────────────────────────────────────────────
@@ -1935,43 +2075,10 @@ class ApitestRequest(BaseModel):
 
 @app.post("/api/coder", dependencies=[Depends(require_token)])
 async def apitest_chat(req: ApitestRequest):
-    model = req.model or "qwen2.5-coder:14b"
-    messages = [{"role": "system", "content": APITEST_SYSTEM_PROMPT}]
-    for m in req.messages:
-        messages.append({"role": m.role, "content": m.content})
-
-    async def generate():
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream(
-                    "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True, "options": {"num_ctx": 32768}}
-                ) as response:
-                    if response.status_code != 200:
-                        yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
-                        return
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk   = json.loads(line)
-                            content = chunk.get("message", {}).get("content", "")
-                            if content:
-                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
-                            if chunk.get("done"):
-                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                                return
-                        except json.JSONDecodeError:
-                            continue
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
+    """API-testing agent chat (served at /api/coder for frontend compatibility)."""
+    model = await _pick_model(req.model, CODER_MODEL)
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+    return _sse_response(_llm_sse(model, APITEST_SYSTEM_PROMPT, messages))
 
 # ── ITSM Agent Chat ──────────────────────────────────────────────────────────
 
@@ -2029,7 +2136,7 @@ class ItsmRequest(BaseModel):
 
 @app.post("/api/itsm", dependencies=[Depends(require_token)])
 async def itsm_chat(req: ItsmRequest):
-    model = req.model or "qwen2.5:7b"
+    model = await _pick_model(req.model, ITSM_MODEL)
 
     # Inject live Jira ticket context if configured
     jira_context = ""
@@ -2061,41 +2168,8 @@ async def itsm_chat(req: ItsmRequest):
     if jira_context:
         system += "\n\n" + jira_context
 
-    messages = [{"role": "system", "content": system}]
-    for m in req.messages:
-        messages.append({"role": m.role, "content": m.content})
-
-    async def generate():
-        try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                async with client.stream(
-                    "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True, "options": {"num_ctx": 32768}}
-                ) as response:
-                    if response.status_code != 200:
-                        yield f"data: {json.dumps({'type': 'error', 'content': f'Ollama error {response.status_code}'})}\n\n"
-                        return
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk   = json.loads(line)
-                            content = chunk.get("message", {}).get("content", "")
-                            if content:
-                                yield f"data: {json.dumps({'type': 'text', 'content': content})}\n\n"
-                            if chunk.get("done"):
-                                yield f"data: {json.dumps({'type': 'done'})}\n\n"
-                                return
-                        except json.JSONDecodeError:
-                            continue
-        except Exception as e:
-            yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    messages = [{"role": m.role, "content": m.content} for m in req.messages]
+    return _sse_response(_llm_sse(model, system, messages))
 
 
 # ── Jira Query & Ticket API ───────────────────────────────────────────────────
@@ -2489,8 +2563,8 @@ async def validate_script(script_id: str, body: ValidateRequest):
 MAX_AUTOFIX_RETRIES = 2
 
 async def _autofix_script(script: str, error: str, model: str | None = None) -> str | None:
-    """Send broken script + error to Ollama, return fixed script or None."""
-    fix_model = model or OLLAMA_MODEL
+    """Send broken script + error to the LLM, return fixed script or None."""
+    fix_model = await _pick_model(model, OLLAMA_MODEL)
     prompt = (
         "The following pyATS/Genie test script has an error. "
         "Fix the script and return ONLY the complete corrected Python script inside a single ```python code fence. "
@@ -2499,22 +2573,15 @@ async def _autofix_script(script: str, error: str, model: str | None = None) -> 
         f"SCRIPT:\n```python\n{script}\n```"
     )
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={"model": fix_model, "messages": [{"role": "user", "content": prompt}], "stream": False, "options": {"num_ctx": 32768}},
-            )
-            if r.status_code != 200:
-                return None
-            content = r.json().get("message", {}).get("content", "")
-            # Extract code from ```python ... ``` fence
-            m = re.search(r'```python\s*\n(.*?)```', content, re.DOTALL)
-            if m:
-                return m.group(1).strip()
-            # Fallback: try ``` ... ```
-            m = re.search(r'```\s*\n(.*?)```', content, re.DOTALL)
-            if m:
-                return m.group(1).strip()
+        content = await _llm_complete(fix_model, "", [{"role": "user", "content": prompt}], timeout=90.0)
+        # Extract code from ```python ... ``` fence
+        m = re.search(r'```python\s*\n(.*?)```', content, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        # Fallback: try ``` ... ```
+        m = re.search(r'```\s*\n(.*?)```', content, re.DOTALL)
+        if m:
+            return m.group(1).strip()
     except Exception as e:
         log.warning("Autofix request failed: %s", e)
     return None
@@ -3056,8 +3123,8 @@ def _dict_diff(a, b, prefix="") -> list[str]:
 
 @app.post("/api/learn/analyze", dependencies=[Depends(require_token)])
 async def analyze_diff(body: AnalyzeRequest):
-    """Send a diff to Ollama for natural language analysis."""
-    model = body.model or OLLAMA_MODEL
+    """Send a diff to the LLM (Ollama or Claude) for natural language analysis."""
+    model = await _pick_model(body.model, OLLAMA_MODEL)
     device_b = body.device_b or body.device
     before_ts = body.before_ts or "unknown time"
     after_ts = body.after_ts or "unknown time"
@@ -3105,15 +3172,9 @@ async def analyze_diff(body: AnalyzeRequest):
         f"3. Recommended actions if any"
     )
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(f"{OLLAMA_URL}/api/generate", json={
-                "model": model, "prompt": prompt, "stream": False,
-                "options": {"num_ctx": 32768}
-            })
-            r.raise_for_status()
-            analysis = r.json().get("response", "")
+        analysis = await _llm_complete(model, "", [{"role": "user", "content": prompt}], timeout=120.0)
     except Exception as e:
-        raise HTTPException(502, f"Ollama analysis failed: {e}")
+        raise HTTPException(502, f"Diff analysis failed ({model}): {_llm_error_text(model, e)}")
 
     return {"analysis": analysis, "model": model}
 
