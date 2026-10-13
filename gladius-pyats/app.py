@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from functools import lru_cache
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any, NamedTuple, Optional, Union
 from zoneinfo import ZoneInfo
@@ -1179,6 +1180,11 @@ class ScheduleCreate(BaseModel):
     def _check_cron(cls, v: str) -> str:
         return _validate_cron(v)
 
+    @field_validator("notify_slack")
+    @classmethod
+    def _check_slack(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_slack_webhook(v)
+
 class ScheduleUpdate(BaseModel):
     name:             Optional[str] = None
     device_ids:       Optional[list[str]] = None
@@ -1193,6 +1199,11 @@ class ScheduleUpdate(BaseModel):
     @classmethod
     def _check_cron(cls, v: Optional[str]) -> Optional[str]:
         return None if v is None else _validate_cron(v)
+
+    @field_validator("notify_slack")
+    @classmethod
+    def _check_slack(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_slack_webhook(v)
 
 
 # ── FastAPI App ───────────────────────────────────────────────────────────────
@@ -3299,10 +3310,27 @@ SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM     = os.getenv("SMTP_FROM_NAME", "Gladius Auto")
+SMTP_TIMEOUT  = 15   # seconds — a hung SMTP server must not stall a schedule run
+
+SLACK_WEBHOOK_PREFIX = "https://hooks.slack.com/"
+
+
+def _validate_slack_webhook(url: Optional[str]) -> Optional[str]:
+    """Allow only Slack incoming-webhook URLs (or empty) as notify_slack targets,
+    so the service can't be pointed at arbitrary hosts."""
+    if url is None:
+        return None
+    url = url.strip()
+    if url and not url.startswith(SLACK_WEBHOOK_PREFIX):
+        raise ValueError(f"notify_slack must be a Slack webhook URL starting with {SLACK_WEBHOOK_PREFIX}")
+    return url
 
 
 def _send_slack(webhook_url: str, text: str):
-    """Send a message to a Slack webhook."""
+    """Send a message to a Slack webhook (blocking — call from a worker thread)."""
+    if not webhook_url.startswith(SLACK_WEBHOOK_PREFIX):
+        log.warning("Slack notification skipped — not a Slack webhook URL")
+        return
     try:
         r = httpx.post(webhook_url, json={"text": text}, timeout=10)
         r.raise_for_status()
@@ -3321,7 +3349,7 @@ def _send_email_notification(to: str, subject: str, body_html: str):
         msg["From"] = f"{SMTP_FROM} <{SMTP_USERNAME}>"
         msg["To"] = to
         msg.attach(MIMEText(body_html, "html"))
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=SMTP_TIMEOUT) as s:
             s.starttls()
             s.login(SMTP_USERNAME, SMTP_PASSWORD)
             s.send_message(msg)
@@ -3330,7 +3358,8 @@ def _send_email_notification(to: str, subject: str, body_html: str):
 
 
 def _notify_schedule(sched: dict, subject: str, body: str, html: str):
-    """Send notifications for a schedule result."""
+    """Send notifications for a schedule result. Blocking (sync Slack POST and
+    SMTP) — callers on the event loop must run it via asyncio.to_thread."""
     slack_url = sched.get("notify_slack", "")
     email_to  = sched.get("notify_email", "")
     if slack_url:
@@ -3693,7 +3722,7 @@ async def _run_schedule_job(sched: dict, sched_type: str, device_ids: list, feat
     else:
         body_plain = summary + (f"\n\n{diff_text}" if diff_text else "")
         body_html = _build_schedule_email_html(sched, status, summary, diff_text, "")
-    _notify_schedule(sched, subject, body_plain, body_html)
+    await asyncio.to_thread(_notify_schedule, sched, subject, body_plain, body_html)
 
     # Jira auto-ticket for scheduled diffs with changes
     jira_auto = sched.get("jira_auto_ticket", "")
@@ -3736,15 +3765,16 @@ async def _run_schedule_job(sched: dict, sched_type: str, device_ids: list, feat
 
 
 def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text: str, analysis: str = "") -> str:
-    """Build an HTML email body for schedule results."""
-    import re as _re
+    """Build an HTML email body for schedule results. Every interpolated value
+    (schedule name, summary, device-derived diff lines, LLM analysis) is escaped."""
+    esc = html_escape
     status_color = "#00cc66" if status == "success" else "#ffaa00" if status == "partial" else "#ff4444"
 
     # AI Analysis section (primary content when available)
     analysis_html = ""
     if analysis:
-        sev_m = _re.search(r"SEVERITY:\s*(LOW|MEDIUM|HIGH)", analysis, _re.IGNORECASE)
-        sum_m = _re.search(r"SUMMARY:\s*(.+)", analysis, _re.IGNORECASE)
+        sev_m = re.search(r"SEVERITY:\s*(LOW|MEDIUM|HIGH)", analysis, re.IGNORECASE)
+        sum_m = re.search(r"SUMMARY:\s*(.+)", analysis, re.IGNORECASE)
         sev = sev_m.group(1).upper() if sev_m else None
         sev_summary = sum_m.group(1).strip() if sum_m else ""
         sev_colors = {"LOW": "#00cc66", "MEDIUM": "#ffaa00", "HIGH": "#ff4444"}
@@ -3758,13 +3788,13 @@ def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text
             analysis_html += f"""
             <div style="margin:16px 0 12px;padding:10px 14px;border-radius:6px;background:{sev_bgcolor};border-left:4px solid {sev_color}">
                 <span style="font-size:14px;font-weight:700;color:{sev_color}">{sev_icon} {sev} SEVERITY</span>
-                {'<div style="font-size:12px;color:#ccc;margin-top:4px">' + sev_summary + '</div>' if sev_summary else ''}
+                {'<div style="font-size:12px;color:#ccc;margin-top:4px">' + esc(sev_summary) + '</div>' if sev_summary else ''}
             </div>"""
 
         # Format analysis body — strip SEVERITY/SUMMARY lines
         body = analysis
-        body = _re.sub(r"^SEVERITY:\s*.+$", "", body, flags=_re.MULTILINE | _re.IGNORECASE)
-        body = _re.sub(r"^SUMMARY:\s*.+$", "", body, flags=_re.MULTILINE | _re.IGNORECASE)
+        body = re.sub(r"^SEVERITY:\s*.+$", "", body, flags=re.MULTILINE | re.IGNORECASE)
+        body = re.sub(r"^SUMMARY:\s*.+$", "", body, flags=re.MULTILINE | re.IGNORECASE)
         body = body.strip()
 
         # Convert numbered items and section headers
@@ -3773,26 +3803,26 @@ def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text
             stripped = line.strip()
             if not stripped:
                 formatted_lines.append("<br>")
-            elif _re.match(r"^ANALYSIS:?$", stripped, _re.IGNORECASE):
+            elif re.match(r"^ANALYSIS:?$", stripped, re.IGNORECASE):
                 formatted_lines.append(
                     '<h3 style="color:#00d4ff;font-size:13px;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #333">ANALYSIS</h3>'
                 )
-            elif _re.match(r"^\d+\.", stripped):
-                num_m = _re.match(r"^(\d+)\.\s*(.+)", stripped)
+            elif re.match(r"^\d+\.", stripped):
+                num_m = re.match(r"^(\d+)\.\s*(.+)", stripped)
                 if num_m:
                     formatted_lines.append(
                         f'<div style="display:flex;gap:8px;margin:4px 0;padding:8px 10px;background:#111;border-radius:4px;border-left:2px solid #00d4ff">'
                         f'<span style="color:#00d4ff;font-weight:700;min-width:18px">{num_m.group(1)}.</span>'
-                        f'<span style="color:#ccc">{num_m.group(2)}</span></div>'
+                        f'<span style="color:#ccc">{esc(num_m.group(2))}</span></div>'
                     )
                 else:
-                    formatted_lines.append(f'<div style="color:#ccc;margin:2px 0">{stripped}</div>')
+                    formatted_lines.append(f'<div style="color:#ccc;margin:2px 0">{esc(stripped)}</div>')
             elif stripped.startswith("-") or stripped.startswith("•"):
                 formatted_lines.append(
-                    f'<div style="margin:2px 0 2px 16px;color:#aaa">&#8226; {stripped.lstrip("-•").strip()}</div>'
+                    f'<div style="margin:2px 0 2px 16px;color:#aaa">&#8226; {esc(stripped.lstrip("-•").strip())}</div>'
                 )
             else:
-                formatted_lines.append(f'<div style="color:#ccc;margin:2px 0">{stripped}</div>')
+                formatted_lines.append(f'<div style="color:#ccc;margin:2px 0">{esc(stripped)}</div>')
 
         analysis_html += f"""
         <div style="margin-top:12px;font-size:12px;line-height:1.7">
@@ -3806,13 +3836,13 @@ def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text
         diff_lines = []
         for line in lines:
             if line.startswith("+"):
-                diff_lines.append(f'<span style="color:#00cc66">{line}</span>')
+                diff_lines.append(f'<span style="color:#00cc66">{esc(line)}</span>')
             elif line.startswith("-"):
-                diff_lines.append(f'<span style="color:#ff4444">{line}</span>')
+                diff_lines.append(f'<span style="color:#ff4444">{esc(line)}</span>')
             elif line.startswith("==="):
-                diff_lines.append(f'<br><strong style="color:#00d4ff">{line}</strong>')
+                diff_lines.append(f'<br><strong style="color:#00d4ff">{esc(line)}</strong>')
             else:
-                diff_lines.append(line)
+                diff_lines.append(esc(line))
         label = "RAW DIFF" if analysis else "DIFF RESULTS"
         diff_html = f"""
         <div style="margin-top:16px">
@@ -3825,13 +3855,13 @@ def _build_schedule_email_html(sched: dict, status: str, summary: str, diff_text
         <h2 style="color:#00d4ff;margin:0 0 8px 0;font-size:16px">GLADIUS AUTOMATION — SCHEDULED JOB</h2>
         <div style="margin-bottom:12px">
             <span style="font-size:12px;color:#888">Schedule:</span>
-            <strong style="color:#fff"> {sched['name']}</strong>
+            <strong style="color:#fff"> {esc(str(sched['name']))}</strong>
         </div>
         <div style="margin-bottom:12px">
             <span style="font-size:12px;color:#888">Status:</span>
-            <strong style="color:{status_color}"> {status.upper()}</strong>
+            <strong style="color:{status_color}"> {esc(status.upper())}</strong>
         </div>
-        <div style="margin-bottom:4px;font-size:12px;color:#aaa">{summary}</div>
+        <div style="margin-bottom:4px;font-size:12px;color:#aaa">{esc(summary)}</div>
         {analysis_html}
         {diff_html}
         <div style="margin-top:20px;font-size:10px;color:#555">Gladius Automation Factory · {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}</div>
