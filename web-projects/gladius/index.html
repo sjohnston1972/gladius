@@ -13232,6 +13232,9 @@ ${cves.length ? `<!-- CVE TAB -->
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendTshootMessage(); }
   }
 
+  // role 'user': `html` is plain text (typed input or an auto-built handoff
+  // prompt that may embed device/LLM text) and is escaped via formatMessage().
+  // role 'agent': `html` is trusted markup built by the caller.
   function appendTshootMsg(role, html) {
     const msgs = document.getElementById('tshoot-messages');
     if (!msgs) return;
@@ -13239,7 +13242,7 @@ ${cves.length ? `<!-- CVE TAB -->
     const div = document.createElement('div');
     if (role === 'user') {
       div.className = 'msg user';
-      div.innerHTML = `<div class="msg-bubble user">${html}</div><div class="msg-meta user">STEVEN JOHNSTON · ${now}</div>`;
+      div.innerHTML = `<div class="msg-bubble user">${formatMessage(html)}</div><div class="msg-meta user">STEVEN JOHNSTON · ${now}</div>`;
     } else {
       div.className = 'msg agent';
       div.innerHTML = `
@@ -13683,7 +13686,7 @@ ${cves.length ? `<!-- CVE TAB -->
     input.style.height = 'auto';
 
     // User bubble
-    _autoAppendMsg('user', text.replace(/</g,'&lt;').replace(/>/g,'&gt;'), text);
+    _autoAppendMsg('user', escHtml(text), text);
     _autoHistory.push({role:'user', content: text});
 
     // Agent typing bubble
