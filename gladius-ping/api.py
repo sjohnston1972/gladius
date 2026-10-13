@@ -179,7 +179,8 @@ def get_alerts(limit: int = 100):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "devices": len(storage.load_devices())}
+    return {"status": "ok", "devices": len(storage.load_devices()),
+            "last_purge": storage.last_purge_info()}
 
 
 # ── Settings endpoints ─────────────────────────────────────────────────────────
@@ -455,8 +456,7 @@ def ping_now(device_id: int):
 
 @app.post("/api/retention/purge")
 def retention_purge():
-    s = storage.load_settings()
-    rows_purged = storage.purge_old_data(s.get("retention_days", 30))
+    rows_purged = storage.run_retention()
     return {"ok": True, "rows_purged": rows_purged}
 
 

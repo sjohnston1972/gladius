@@ -631,11 +631,13 @@ def load_heatmap(device_id: int) -> list[dict]:
     return cells
 
 
-def purge_old_data(retention_days: int) -> int:
-    cutoff = datetime.utcnow() - timedelta(days=retention_days)
-    rows_purged = 0
-    for csv_path in list(RESULTS_DIR.glob("device_*.csv")) + list(TRACES_DIR.glob("device_*.csv")):
+def _purge_csv(csv_path: Path, cutoff: datetime) -> int:
+    """Drop rows older than cutoff from one CSV. Holds _lock across the read and
+    the rewrite so rows appended meanwhile can't be lost, and swaps the new file
+    in with os.replace so a crash never leaves a truncated file."""
+    with _lock:
         kept = []
+        purged = 0
         with open(csv_path, newline="") as f:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames
@@ -645,15 +647,69 @@ def purge_old_data(retention_days: int) -> int:
                     if ts >= cutoff:
                         kept.append(row)
                     else:
-                        rows_purged += 1
-                except (ValueError, KeyError):
+                        purged += 1
+                except (ValueError, KeyError, TypeError):
                     kept.append(row)
-        with _lock:
-            with open(csv_path, "w", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(kept)
+        if not purged or not fieldnames:
+            return 0
+        tmp = csv_path.with_name(csv_path.name + ".tmp")
+        with open(tmp, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(kept)
+        os.replace(tmp, csv_path)
+        return purged
+
+
+def purge_old_data(retention_days: int) -> int:
+    """Apply retention to every time-series file: results, traces, alerts, speedtests."""
+    cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    rows_purged = 0
+    paths = list(RESULTS_DIR.glob("device_*.csv")) + list(TRACES_DIR.glob("device_*.csv"))
+    paths += [p for p in (ALERT_LOG, SPEEDTEST_FILE) if p.exists()]
+    for csv_path in paths:
+        try:
+            rows_purged += _purge_csv(csv_path, cutoff)
+        except OSError as e:
+            print(f"[Retention] Failed to purge {csv_path.name}: {e}")
     return rows_purged
+
+
+RETENTION_INTERVAL_SEC = 24 * 3600
+_last_purge: dict = {"at": None, "rows_purged": None, "retention_days": None}
+
+
+def run_retention() -> int:
+    """Purge data older than the retention_days setting and record when it ran."""
+    days = load_settings().get("retention_days", 30)
+    if not isinstance(days, (int, float)) or isinstance(days, bool) or days < 1:
+        print(f"[Retention] Skipped: invalid retention_days={days!r}")
+        return 0
+    rows = purge_old_data(days)
+    _last_purge.update(at=datetime.utcnow().isoformat(), rows_purged=rows, retention_days=days)
+    return rows
+
+
+def last_purge_info() -> dict:
+    return dict(_last_purge)
+
+
+def _retention_loop(stop: threading.Event):
+    while True:
+        try:
+            rows = run_retention()
+            print(f"[Retention] Purged {rows} rows")
+        except Exception as e:
+            print(f"[Retention] Failed: {e!r}")
+        if stop.wait(RETENTION_INTERVAL_SEC):
+            break
+
+
+def start_retention() -> threading.Event:
+    """Run retention once now (in the background) and then daily."""
+    stop = threading.Event()
+    threading.Thread(target=_retention_loop, args=(stop,), daemon=True, name="retention").start()
+    return stop
 
 def log_alert(device_id: int, device_name: str, alert_type: str, value: float, threshold: float):
     with _lock:

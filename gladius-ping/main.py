@@ -8,6 +8,7 @@ import speedtest_runner
 import digest as digest_mod
 
 storage.init_storage()
+storage.start_retention()   # purge now, then daily (retention_days setting)
 collector.start_all()
 
 s = storage.load_settings()
