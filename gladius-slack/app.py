@@ -52,22 +52,34 @@ _history_lock = threading.Lock()
 # Slack hard limit for block text fields is 3001 chars; stay comfortably under
 SLACK_BLOCK_LIMIT = 2900
 
-# Tool name → emoji mapping for progress updates
+# Tool name → emoji mapping for progress updates (network-audit-mcp tool names)
 TOOL_EMOJI = {
     "connect_to_device":    "🔌",
-    "run_command":          "💻",
+    "run_show_command":     "💻",
     "push_config":          "📝",
-    "run_nmap":             "🔍",
+    "disconnect_device":    "🔌",
+    "query_knowledge_base": "📚",
+    "query_design_kb":      "📐",
+    "query_nvd":            "🛡️",
+    "get_cve_details":      "🛡️",
+    "query_psirt":          "🛡️",
+    "query_eox":            "📆",
+    "send_email":           "📧",
+    "save_audit_results":   "💾",
+    "stream_finding":       "🚩",
+    "run_nmap_scan":        "🔍",
     "run_dig":              "🌐",
     "run_scapy":            "📡",
-    "query_knowledge_base": "📚",
-    "search_cves":          "🛡️",
-    "cve_latest":           "📋",
-    "save_audit_results":   "💾",
-    "send_email":           "📧",
-    "read_file":            "📄",
-    "bash":                 "⚡",
+    "snmp_get_devices":     "📊",
+    "snmp_poll":            "📊",
+    "device_copy_file":     "📁",
+    "sftp_put_file":        "📤",
+    "sftp_get_file":        "📥",
 }
+
+# Minimum seconds between chat_update calls on the progress message; tool
+# events arriving faster are coalesced into the next update.
+PROGRESS_MIN_INTERVAL = 1.5
 
 
 # Same persistence pattern as gladius-overseer/app.py (separate containers, so
@@ -246,6 +258,59 @@ def _update_progress(client, channel: str, ts: str, tool_calls: list[dict]) -> N
         log.warning("Failed to update progress message: %s", e)
 
 
+class _ProgressThrottle:
+    """Coalesce progress updates to at most one per `min_interval` seconds.
+    The latest state is always shown eventually: an update arriving too soon
+    is held and sent by a timer. close() cancels anything pending so a late
+    update can't overwrite the final reply."""
+
+    def __init__(self, send, min_interval: float = PROGRESS_MIN_INTERVAL, clock=time.monotonic):
+        self._send = send
+        self._interval = min_interval
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._last_sent: float | None = None
+        self._pending: list[dict] | None = None
+        self._timer: threading.Timer | None = None
+        self._closed = False
+
+    def push(self, tool_calls: list[dict]) -> None:
+        snapshot = [dict(tc) for tc in tool_calls]
+        with self._lock:
+            if self._closed:
+                return
+            self._pending = snapshot
+            if self._timer is not None:
+                return
+            wait = 0.0 if self._last_sent is None else self._last_sent + self._interval - self._clock()
+            if wait <= 0:
+                self._flush_locked()
+            else:
+                self._timer = threading.Timer(wait, self._on_timer)
+                self._timer.daemon = True
+                self._timer.start()
+
+    def _on_timer(self) -> None:
+        with self._lock:
+            self._timer = None
+            if not self._closed:
+                self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        if self._pending is None:
+            return
+        snapshot, self._pending = self._pending, None
+        self._last_sent = self._clock()
+        self._send(snapshot)
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+
 def format_audit_blocks(audit: dict) -> list:
     """Build detailed Slack Block Kit sections for an audit result."""
     score    = audit.get("score", {})
@@ -380,6 +445,7 @@ def call_gladius_streaming(
     tool_calls: list[dict] = []   # tracks active/completed tool calls for progress display
 
     headers = {"Authorization": f"Bearer {GLADIUS_API_TOKEN}"} if GLADIUS_API_TOKEN else {}
+    progress = _ProgressThrottle(lambda calls: _update_progress(client, channel, ts, calls))
 
     try:
         with httpx.Client(timeout=300) as http:
@@ -404,7 +470,7 @@ def call_gladius_streaming(
                         # Build a short detail string from the most useful input fields
                         detail = _summarise_tool_input(name, inp)
                         tool_calls.append({"name": name, "status": "running", "detail": detail})
-                        _update_progress(client, channel, ts, tool_calls)
+                        progress.push(tool_calls)
 
                     elif etype == "tool_done":
                         name = event.get("tool", "unknown")
@@ -413,7 +479,7 @@ def call_gladius_streaming(
                             if tc["name"] == name and tc["status"] == "running":
                                 tc["status"] = "done"
                                 break
-                        _update_progress(client, channel, ts, tool_calls)
+                        progress.push(tool_calls)
 
                     elif etype == "audit_saved":
                         audit = event.get("audit")
@@ -425,7 +491,7 @@ def call_gladius_streaming(
                             if tc["status"] == "running":
                                 tc["status"] = "error"
                                 break
-                        _update_progress(client, channel, ts, tool_calls)
+                        progress.push(tool_calls)
                         break
 
                     elif etype == "done":
@@ -434,42 +500,63 @@ def call_gladius_streaming(
     except httpx.RequestError as e:
         log.error("Failed to reach Gladius API: %s", e)
         return f"_Could not reach Gladius API: {e}_", None
+    finally:
+        progress.close()
 
     return "".join(text_parts), audit
 
 
+# Input fields never shown in progress lines.
+_SENSITIVE_INPUT_KEYS = {"password", "username", "community", "attachment_html", "body"}
+
+
+def _clip(text, n: int = 60) -> str:
+    text = str(text or "")
+    return text[:n] + ("…" if len(text) > n else "")
+
+
 def _summarise_tool_input(tool_name: str, inp: dict) -> str:
     """Return a short human-readable summary of a tool's input for the progress display."""
-    if tool_name == "connect_to_device":
+    if not isinstance(inp, dict):
+        return ""
+    if tool_name in ("connect_to_device", "disconnect_device", "snmp_poll"):
         return inp.get("host", "")
-    if tool_name == "run_command":
+    if tool_name == "run_show_command":
+        host = inp.get("host")
+        return _clip(inp.get("command", "")) + (f" @ {host}" if host else "")
+    if tool_name == "push_config":
         cmds = inp.get("commands", [])
         if isinstance(cmds, list):
-            return ", ".join(cmds[:2]) + ("…" if len(cmds) > 2 else "")
-        return str(cmds)[:60]
-    if tool_name == "run_nmap":
-        return f"{inp.get('target','')} {inp.get('scan_type','')}".strip()
+            return _clip(", ".join(str(c) for c in cmds[:2]) + ("…" if len(cmds) > 2 else ""))
+        return _clip(cmds)
+    if tool_name == "run_nmap_scan":
+        return f"{inp.get('target', '')} {inp.get('profile', '')}".strip()
     if tool_name == "run_dig":
-        return f"{inp.get('domain','')} {inp.get('record_type','A')}".strip()
+        return f"{inp.get('target', '')} {inp.get('record_type', 'A')}".strip()
     if tool_name == "run_scapy":
-        return f"{inp.get('mode','')} → {inp.get('target','')}".strip()
-    if tool_name in ("search_cves", "cve_latest"):
-        return inp.get("keyword", inp.get("product", ""))
-    if tool_name == "query_knowledge_base":
-        q = inp.get("query", "")
-        return q[:60] + ("…" if len(q) > 60 else "")
+        return f"{inp.get('mode', '')} → {inp.get('target', '')}".strip()
+    if tool_name in ("query_nvd", "query_psirt"):
+        return _clip(inp.get("search_term") or inp.get("advisory_id") or inp.get("severity") or "")
+    if tool_name == "get_cve_details":
+        return inp.get("cve_id", "")
+    if tool_name == "query_eox":
+        pids = inp.get("pids", "")
+        return _clip(", ".join(str(p) for p in pids) if isinstance(pids, list) else pids)
+    if tool_name in ("query_knowledge_base", "query_design_kb"):
+        return _clip(inp.get("query", ""))
     if tool_name == "save_audit_results":
-        return inp.get("device_name", "")
+        return inp.get("device", "")
+    if tool_name == "stream_finding":
+        return _clip(f"{inp.get('severity', '')} {inp.get('title', '')}".strip())
     if tool_name == "send_email":
-        return inp.get("recipient", "")
-    if tool_name == "read_file":
-        return inp.get("path", "")
-    if tool_name == "bash":
-        cmd = inp.get("command", "")
-        return cmd[:60] + ("…" if len(cmd) > 60 else "")
-    # Generic fallback — first string value found
-    for v in inp.values():
-        if isinstance(v, str):
+        return _clip(inp.get("recipient") or inp.get("subject") or "")
+    if tool_name == "device_copy_file":
+        return _clip(f"{inp.get('protocol', '')} {inp.get('direction', 'to_device')} {inp.get('remote_file', '')}".strip())
+    if tool_name in ("sftp_put_file", "sftp_get_file"):
+        return _clip(f"{inp.get('host', '')}:{inp.get('remote_path', '')}")
+    # Generic fallback — first non-sensitive string value found
+    for k, v in inp.items():
+        if isinstance(v, str) and k not in _SENSITIVE_INPUT_KEYS:
             return v[:60]
     return ""
 
