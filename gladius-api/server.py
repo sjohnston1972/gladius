@@ -556,6 +556,37 @@ async def make_fresh_mcp_manager() -> "MCPManager":
     return mgr
 
 
+class DeviceSessionRouter:
+    """Per-request tool router that isolates SSH device sessions.
+
+    SSH session state (connect → show/push → disconnect) lives in a global inside
+    the MCP subprocess, so routing device tools through the single shared
+    mcp_manager lets two concurrent requests (e.g. a web audit and a Slack tshoot)
+    interleave on one SSH session. This router lazily spawns an isolated MCP
+    subprocess the first time a request uses an SSH tool and pins all of that
+    request's SSH tools to it; stateless tools (KB/NVD/PSIRT/EOX/nmap/scapy/…)
+    keep using the shared, pre-warmed mcp_manager. Call aclose() when the request
+    ends to tear the subprocess down."""
+
+    def __init__(self):
+        self._mgr: MCPManager | None = None
+
+    async def call_tool(self, name: str, arguments: dict):
+        if name in _SEQUENTIAL_DEVICE_TOOLS:
+            if self._mgr is None:
+                self._mgr = await make_fresh_mcp_manager()
+            return await self._mgr.call_tool(name, arguments)
+        return await mcp_manager.call_tool(name, arguments)
+
+    async def aclose(self):
+        if self._mgr is not None:
+            try:
+                await self._mgr.disconnect()
+            except Exception as e:
+                log.warning(f"DeviceSessionRouter: cleanup failed (non-fatal): {e}")
+            self._mgr = None
+
+
 async def _background_mcp_init():
     """
     Fire-and-forget task: connect the MCP session and pre-warm the embedding
@@ -1492,6 +1523,9 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
     _TRUNCATE_TOOLS = {"run_show_command", "run_nmap_scan"}
     _TOOL_MAX_CHARS  = 20000
 
+    # Isolate this request's SSH device session from other concurrent requests.
+    device_session = DeviceSessionRouter()
+
     try:
         loop_messages  = list(messages)
         loop_count     = 0
@@ -1625,7 +1659,7 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
                             result_text = f"Failed to close ticket: {data.get('detail', data)}"
                         is_error = not data.get("ok")
                     else:
-                        result      = await mcp_manager.call_tool(tool_name, tool_input)
+                        result      = await device_session.call_tool(tool_name, tool_input)
                         result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
                         is_error    = bool(result.isError)
                 except Exception as e:
@@ -1684,6 +1718,8 @@ async def stream_tshoot(messages: list, model: str = None) -> AsyncIterator[str]
     except Exception as e:
         log.error(f"[Tshoot] stream error: {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+    finally:
+        await device_session.aclose()
 
 async def stream_response(messages: list, model: str = None) -> AsyncIterator[str]:
     """
@@ -1711,6 +1747,9 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
     # Per-request audit state — kept in this generator's closure, NOT a module
     # global, so concurrent chat requests can't template each other's emails.
     last_audit: dict | None = None
+
+    # Isolate this request's SSH device session from other concurrent requests.
+    device_session = DeviceSessionRouter()
 
     global _last_claude_success
     try:
@@ -1845,7 +1884,7 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
                                 result_text = f"Jira ticket creation failed: {type(e).__name__}: {e}"
                                 is_error    = True
                     else:
-                        result      = await mcp_manager.call_tool(tool_name, tool_input)
+                        result      = await device_session.call_tool(tool_name, tool_input)
                         result_text = "\n".join(c.text for c in result.content if hasattr(c, "text"))
                         is_error    = bool(result.isError)
                         log.info(f"Tool {tool_name} done — {len(result_text)} chars")
@@ -1928,6 +1967,8 @@ async def stream_response(messages: list, model: str = None) -> AsyncIterator[st
     except Exception as e:
         log.error(f"Stream error: {type(e).__name__}: {e}", exc_info=True)
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
+    finally:
+        await device_session.aclose()
 
 
 async def call_claude_no_tools(messages: list) -> AsyncIterator[str]:
